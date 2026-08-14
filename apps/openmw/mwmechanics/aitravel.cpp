@@ -42,7 +42,6 @@ namespace MWMechanics
         , mZ(z)
         , mHidden(false)
         , mDestinationTimer(TRAVEL_FINISH_TIME)
-        , mDestinationTolerance(-1.f)
     {
     }
 
@@ -53,19 +52,12 @@ namespace MWMechanics
         , mZ(z)
         , mHidden(true)
         , mDestinationTimer(TRAVEL_FINISH_TIME)
-        , mDestinationTolerance(-1.f)
     {
     }
 
     AiTravel::AiTravel(float x, float y, float z, bool repeat)
         : AiTravel(x, y, z, repeat, this)
     {
-    }
-
-    AiTravel::AiTravel(float x, float y, float z, bool repeat, float destinationTolerance)
-        : AiTravel(x, y, z, repeat, this)
-    {
-        mDestinationTolerance = std::max(0.f, destinationTolerance);
     }
 
     AiTravel::AiTravel(const ESM::AiSequence::AiTravel* travel)
@@ -75,7 +67,6 @@ namespace MWMechanics
         , mZ(travel->mData.mZ)
         , mHidden(false)
         , mDestinationTimer(TRAVEL_FINISH_TIME)
-        , mDestinationTolerance(travel->mDestinationTolerance)
     {
         // Hidden ESM::AiSequence::AiTravel package should be converted into MWMechanics::AiInternalTravel type
         assert(!travel->mHidden);
@@ -89,7 +80,7 @@ namespace MWMechanics
 
         if (!stats.getMovementFlag(CreatureStats::Flag_ForceJump)
             && !stats.getMovementFlag(CreatureStats::Flag_ForceSneak)
-            && mechMgr->getGreetingState(actor) == GreetingState::InProgress)
+            && (mechMgr->isTurningToPlayer(actor) || mechMgr->getGreetingState(actor) == GreetingState::InProgress))
             return false;
 
         const osg::Vec3f actorPos(actor.getRefData().getPosition().asVec3());
@@ -102,28 +93,8 @@ namespace MWMechanics
         if (!isWithinMaxRange(targetPos, actorPos))
             return mHidden;
 
-        const bool requireDestinationTolerance = mDestinationTolerance >= 0.f;
-        const float destinationTolerance = requireDestinationTolerance ? mDestinationTolerance : 0.f;
-        const bool reached = pathTo(actor, targetPos, duration,
-            characterController.getSupportedMovementDirections(), destinationTolerance, destinationTolerance,
-            PathType::Full, requireDestinationTolerance);
-        ++mRouteTraceExecutions;
-        const bool routeTraceSample = mRouteTraceExecutions == 1 || mRouteTraceExecutions == 30
-            || mRouteTraceExecutions == 120 || mRouteTraceExecutions == 300
-            || (reached && !mRouteTraceCompletionLogged);
-        if (std::getenv("OPENMW_COMPAT_ROUTE_PATH") != nullptr && routeTraceSample)
-        {
-            Log(Debug::Info) << "FNV/ESM4 route AI: travel execution actor="
-                             << actor.getCellRef().getRefId() << " sample=" << mRouteTraceExecutions
-                             << " pos=(" << actorPos.x() << ',' << actorPos.y() << ',' << actorPos.z() << ")"
-                             << " target=(" << targetPos.x() << ',' << targetPos.y() << ',' << targetPos.z() << ")"
-                             << " distance=" << (targetPos - actorPos).length()
-                             << " horizontalDistance=" << distanceIgnoreZ(actorPos, targetPos)
-                             << " pathPoints=" << mPathFinder.getPathSize() << " reached=" << reached
-                             << " destinationTolerance=" << mDestinationTolerance;
-        }
-        if (reached)
-            mRouteTraceCompletionLogged = true;
+        const bool reached
+            = pathTo(actor, targetPos, duration, characterController.getSupportedMovementDirections());
         if (std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY") != nullptr)
         {
             static unsigned int sTravelTelemetryLines = 0;
@@ -136,8 +107,7 @@ namespace MWMechanics
                                  << " target=(" << targetPos.x() << "," << targetPos.y() << "," << targetPos.z()
                                  << ") distance=" << (targetPos - actorPos).length()
                                  << " horizontalDistance=" << distanceIgnoreZ(actorPos, targetPos)
-                                 << " pathPoints=" << mPathFinder.getPathSize() << " reached=" << reached
-                                 << " destinationTolerance=" << mDestinationTolerance;
+                                 << " pathPoints=" << mPathFinder.getPathSize() << " reached=" << reached;
             }
         }
         if (reached)
@@ -145,13 +115,6 @@ namespace MWMechanics
             actor.getClass().getMovementSettings(actor).mPosition[1] = 0;
             return true;
         }
-
-        // Fallout PACK travel carries an explicit location radius. Its
-        // OnPackageDone/OnEnd scripts must not fire merely because the actor
-        // spent two seconds near a blocked doorway. The native path follower
-        // remains in charge until the authored radius is actually reached.
-        if (requireDestinationTolerance)
-            return false;
 
         // If we've been close enough to the destination for some time give up like Morrowind.
         // The end condition should be pretty much accurate.
@@ -199,7 +162,6 @@ namespace MWMechanics
         travel->mData.mZ = mZ;
         travel->mHidden = mHidden;
         travel->mRepeat = getRepeat();
-        travel->mDestinationTolerance = mDestinationTolerance;
 
         ESM::AiSequence::AiPackageContainer package;
         package.mType = ESM::AiSequence::Ai_Travel;

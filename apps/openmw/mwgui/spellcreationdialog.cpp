@@ -1,7 +1,5 @@
 #include "spellcreationdialog.hpp"
 
-#include <format>
-
 #include <MyGUI_Button.h>
 #include <MyGUI_Gui.h>
 #include <MyGUI_ImageBox.h>
@@ -35,19 +33,25 @@
 namespace
 {
 
-    bool sortMagicEffects(const ESM::MagicEffect* effect1, const ESM::MagicEffect* effect2)
+    bool sortMagicEffects(short id1, short id2)
     {
-        return effect1->mName < effect2->mName;
+        const MWWorld::Store<ESM::GameSetting>& gmst
+            = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
+
+        return gmst.find(ESM::MagicEffect::indexToGmstString(id1))->mValue.getString()
+            < gmst.find(ESM::MagicEffect::indexToGmstString(id2))->mValue.getString();
     }
 
     void init(ESM::ENAMstruct& effect)
     {
         effect.mArea = 0;
         effect.mDuration = 0;
-        effect.mEffectID = ESM::RefId();
+        effect.mEffectID = -1;
         effect.mMagnMax = 0;
         effect.mMagnMin = 0;
         effect.mRange = 0;
+        effect.mSkill = -1;
+        effect.mAttribute = -1;
     }
 }
 
@@ -141,8 +145,8 @@ namespace MWGui
         mEffect.mMagnMax = 1;
         mEffect.mDuration = 1;
         mEffect.mArea = 0;
-        mEffect.mSkill = ESM::RefId();
-        mEffect.mAttribute = ESM::RefId();
+        mEffect.mSkill = -1;
+        mEffect.mAttribute = -1;
         eventEffectAdded(mEffect);
 
         onRangeButtonClicked(mRangeButton);
@@ -216,11 +220,11 @@ namespace MWGui
     void EditEffectDialog::setMagicEffect(const ESM::MagicEffect* effect)
     {
         mEffectImage->setImageTexture(Misc::ResourceHelpers::correctIconPath(
-            VFS::Path::toNormalized(effect->mIcon), *MWBase::Environment::get().getResourceSystem()->getVFS()));
+            effect->mIcon, MWBase::Environment::get().getResourceSystem()->getVFS()));
 
-        mEffectName->setCaption(effect->mName);
+        mEffectName->setCaptionWithReplacing("#{" + ESM::MagicEffect::indexToGmstString(effect->mIndex) + "}");
 
-        mEffect.mEffectID = effect->mId;
+        mEffect.mEffectID = effect->mIndex;
 
         mMagicEffect = effect;
 
@@ -329,20 +333,20 @@ namespace MWGui
 
     void EditEffectDialog::setSkill(ESM::RefId skill)
     {
-        mEffect.mSkill = skill;
+        mEffect.mSkill = ESM::Skill::refIdToIndex(skill);
         eventEffectModified(mEffect);
     }
 
     void EditEffectDialog::setAttribute(ESM::RefId attribute)
     {
-        mEffect.mAttribute = attribute;
+        mEffect.mAttribute = ESM::Attribute::refIdToIndex(attribute);
         eventEffectModified(mEffect);
     }
 
     void EditEffectDialog::onMagnitudeMinChanged(MyGUI::ScrollBar* sender, size_t pos)
     {
         mMagnitudeMinValue->setCaption(MyGUI::utility::toString(pos + 1));
-        mEffect.mMagnMin = static_cast<int32_t>(pos + 1);
+        mEffect.mMagnMin = pos + 1;
 
         // trigger the check again (see below)
         onMagnitudeMaxChanged(mMagnitudeMaxSlider, mMagnitudeMaxSlider->getScrollPosition());
@@ -360,7 +364,7 @@ namespace MWGui
             sender->setScrollPosition(pos);
         }
 
-        mEffect.mMagnMax = static_cast<int32_t>(pos + 1);
+        mEffect.mMagnMax = pos + 1;
         const std::string to{ MWBase::Environment::get().getWindowManager()->getGameSettingString("sTo", "-") };
 
         mMagnitudeMaxValue->setCaption(to + " " + MyGUI::utility::toString(pos + 1));
@@ -371,14 +375,14 @@ namespace MWGui
     void EditEffectDialog::onDurationChanged(MyGUI::ScrollBar* sender, size_t pos)
     {
         mDurationValue->setCaption(MyGUI::utility::toString(pos + 1));
-        mEffect.mDuration = static_cast<int32_t>(pos + 1);
+        mEffect.mDuration = pos + 1;
         eventEffectModified(mEffect);
     }
 
     void EditEffectDialog::onAreaChanged(MyGUI::ScrollBar* sender, size_t pos)
     {
         mAreaValue->setCaption(MyGUI::utility::toString(pos));
-        mEffect.mArea = static_cast<int32_t>(pos);
+        mEffect.mArea = pos;
         eventEffectModified(mEffect);
     }
 
@@ -757,7 +761,7 @@ namespace MWGui
         , mUsedEffectsView(nullptr)
         , mAddEffectDialog()
         , mSelectedEffect(0)
-        , mSelectedKnownEffectId(ESM::RefId())
+        , mSelectedKnownEffectId(0)
         , mConstantEffect(false)
         , mType(type)
     {
@@ -768,7 +772,7 @@ namespace MWGui
         mAddEffectDialog.setVisible(false);
     }
 
-    EffectEditorBase::~EffectEditorBase() = default;
+    EffectEditorBase::~EffectEditorBase() {}
 
     void EffectEditorBase::startEditing()
     {
@@ -778,7 +782,7 @@ namespace MWGui
         MWMechanics::CreatureStats& stats = player.getClass().getCreatureStats(player);
         MWMechanics::Spells& spells = stats.getSpells();
 
-        std::vector<const ESM::MagicEffect*> knownEffects;
+        std::vector<short> knownEffects;
 
         for (const ESM::Spell* spell : spells)
         {
@@ -788,8 +792,9 @@ namespace MWGui
 
             for (const ESM::IndexedENAMstruct& effectInfo : spell->mEffects.mList)
             {
-                const ESM::MagicEffect* effect = MWBase::Environment::get().getESMStore()->get<ESM::MagicEffect>().find(
-                    effectInfo.mData.mEffectID);
+                int16_t effectId = effectInfo.mData.mEffectID;
+                const ESM::MagicEffect* effect
+                    = MWBase::Environment::get().getESMStore()->get<ESM::MagicEffect>().find(effectId);
 
                 // skip effects that do not allow spellmaking/enchanting
                 int requiredFlags
@@ -797,8 +802,8 @@ namespace MWGui
                 if (!(effect->mData.mFlags & requiredFlags))
                     continue;
 
-                if (std::find(knownEffects.begin(), knownEffects.end(), effect) == knownEffects.end())
-                    knownEffects.push_back(effect);
+                if (std::find(knownEffects.begin(), knownEffects.end(), effectId) == knownEffects.end())
+                    knownEffects.push_back(effectId);
             }
         }
 
@@ -807,22 +812,31 @@ namespace MWGui
         mAvailableEffectsList->clear();
 
         int i = 0;
-        for (const auto effect : knownEffects)
+        for (const short effectId : knownEffects)
         {
-            mAvailableEffectsList->addItem(effect->mName);
-            mButtonMapping[i] = effect->mId;
+            mAvailableEffectsList->addItem(MWBase::Environment::get()
+                                               .getESMStore()
+                                               ->get<ESM::GameSetting>()
+                                               .find(ESM::MagicEffect::indexToGmstString(effectId))
+                                               ->mValue.getString());
+            mButtonMapping[i] = effectId;
             ++i;
         }
         mAvailableEffectsList->adjustSize();
         mAvailableEffectsList->scrollToTop();
 
         mAvailableButtons.clear();
-        for (const auto effect : knownEffects)
+        for (const short effectId : knownEffects)
         {
-            MyGUI::Button* w = mAvailableEffectsList->getItemWidget(effect->mName);
+            const std::string& name = MWBase::Environment::get()
+                                          .getESMStore()
+                                          ->get<ESM::GameSetting>()
+                                          .find(ESM::MagicEffect::indexToGmstString(effectId))
+                                          ->mValue.getString();
+            MyGUI::Button* w = mAvailableEffectsList->getItemWidget(name);
             mAvailableButtons.emplace_back(w);
 
-            ToolTips::createMagicEffectToolTip(w, effect->mId);
+            ToolTips::createMagicEffectToolTip(w, effectId);
         }
 
         mEffects.clear();
@@ -833,11 +847,10 @@ namespace MWGui
             mAvailableFocus = 0;
             mEffectFocus = 0;
             mRightColumn = false;
-            if (!mAvailableButtons.empty())
+            if (mAvailableButtons.size() > 0)
             {
-                MWBase::WindowManager& winMgr = *MWBase::Environment::get().getWindowManager();
                 mAvailableButtons[0]->setStateSelected(true);
-                if (winMgr.getControllerTooltipVisible())
+                if (MWBase::Environment::get().getWindowManager()->getControllerTooltipVisible())
                     MWBase::Environment::get().getInputManager()->warpMouseToWidget(mAvailableButtons[0]);
             }
         }
@@ -958,8 +971,8 @@ namespace MWGui
         {
             Widgets::SpellEffectParams params;
             params.mEffectID = effectInfo.mEffectID;
-            params.mSkill = effectInfo.mSkill;
-            params.mAttribute = effectInfo.mAttribute;
+            params.mSkill = ESM::Skill::indexToRefId(effectInfo.mSkill);
+            params.mAttribute = ESM::Attribute::indexToRefId(effectInfo.mAttribute);
             params.mDuration = effectInfo.mDuration;
             params.mMagnMin = effectInfo.mMagnMin;
             params.mMagnMax = effectInfo.mMagnMax;
@@ -1001,7 +1014,7 @@ namespace MWGui
     void EffectEditorBase::onEffectAdded(ESM::ENAMstruct effect)
     {
         mEffects.push_back(effect);
-        mSelectedEffect = static_cast<int>(mEffects.size() - 1);
+        mSelectedEffect = mEffects.size() - 1;
 
         updateEffectsView();
     }
@@ -1031,12 +1044,12 @@ namespace MWGui
 
         if (arg.button == SDL_CONTROLLER_BUTTON_A)
         {
-            if (!mRightColumn && mAvailableFocus < mAvailableButtons.size())
+            if (!mRightColumn && mAvailableFocus >= 0 && mAvailableFocus < static_cast<int>(mAvailableButtons.size()))
             {
                 onAvailableEffectClicked(mAvailableButtons[mAvailableFocus]);
                 winMgr->playSound(ESM::RefId::stringRefId("Menu Click"));
             }
-            else if (mRightColumn && mEffectFocus < mEffectButtons.size())
+            else if (mRightColumn && mEffectFocus >= 0 && mEffectFocus < static_cast<int>(mEffectButtons.size()))
             {
                 onEditEffect(mEffectButtons[mEffectFocus].second);
                 winMgr->playSound(ESM::RefId::stringRefId("Menu Click"));
@@ -1049,44 +1062,44 @@ namespace MWGui
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
         {
-            if (mRightColumn && !mEffectButtons.empty())
+            if (mRightColumn && mEffectButtons.size() > 0)
             {
-                if (mEffectFocus < mEffectButtons.size())
+                if (mEffectFocus >= 0 && mEffectFocus < static_cast<int>(mEffectButtons.size()))
                     mEffectButtons[mEffectFocus].first->setStateSelected(false);
-                mEffectFocus = wrap(mEffectFocus, mEffectButtons.size(), -1);
+                mEffectFocus = wrap(mEffectFocus - 1, mEffectButtons.size());
                 mEffectButtons[mEffectFocus].first->setStateSelected(true);
             }
-            else if (!mRightColumn && !mAvailableButtons.empty())
+            else if (!mRightColumn && mAvailableButtons.size() > 0)
             {
-                if (mAvailableFocus < mAvailableButtons.size())
+                if (mAvailableFocus >= 0 && mAvailableFocus < static_cast<int>(mAvailableButtons.size()))
                     mAvailableButtons[mAvailableFocus]->setStateSelected(false);
-                mAvailableFocus = wrap(mAvailableFocus, mAvailableButtons.size(), -1);
+                mAvailableFocus = wrap(mAvailableFocus - 1, mAvailableButtons.size());
                 mAvailableButtons[mAvailableFocus]->setStateSelected(true);
             }
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
         {
-            if (mRightColumn && !mEffectButtons.empty())
+            if (mRightColumn && mEffectButtons.size() > 0)
             {
-                if (mEffectFocus < mEffectButtons.size())
+                if (mEffectFocus >= 0 && mEffectFocus < static_cast<int>(mEffectButtons.size()))
                     mEffectButtons[mEffectFocus].first->setStateSelected(false);
-                mEffectFocus = wrap(mEffectFocus, mEffectButtons.size(), 1);
+                mEffectFocus = wrap(mEffectFocus + 1, mEffectButtons.size());
                 mEffectButtons[mEffectFocus].first->setStateSelected(true);
             }
-            else if (!mRightColumn && !mAvailableButtons.empty())
+            else if (!mRightColumn && mAvailableButtons.size() > 0)
             {
-                if (mAvailableFocus < mAvailableButtons.size())
+                if (mAvailableFocus >= 0 && mAvailableFocus < static_cast<int>(mAvailableButtons.size()))
                     mAvailableButtons[mAvailableFocus]->setStateSelected(false);
-                mAvailableFocus = wrap(mAvailableFocus, mAvailableButtons.size(), 1);
+                mAvailableFocus = wrap(mAvailableFocus + 1, mAvailableButtons.size());
                 mAvailableButtons[mAvailableFocus]->setStateSelected(true);
             }
         }
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT && mRightColumn)
         {
             mRightColumn = false;
-            if (mEffectFocus < mEffectButtons.size())
+            if (mEffectFocus >= 0 && mEffectFocus < static_cast<int>(mEffectButtons.size()))
                 mEffectButtons[mEffectFocus].first->setStateSelected(false);
-            if (mAvailableFocus < mAvailableButtons.size())
+            if (mAvailableFocus >= 0 && mAvailableFocus < static_cast<int>(mAvailableButtons.size()))
                 mAvailableButtons[mAvailableFocus]->setStateSelected(true);
 
             winMgr->setControllerTooltipVisible(Settings::gui().mControllerTooltips);
@@ -1094,9 +1107,9 @@ namespace MWGui
         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT && !mRightColumn && mEffectButtons.size() > 0)
         {
             mRightColumn = true;
-            if (mAvailableFocus < mAvailableButtons.size())
+            if (mAvailableFocus >= 0 && mAvailableFocus < static_cast<int>(mAvailableButtons.size()))
                 mAvailableButtons[mAvailableFocus]->setStateSelected(false);
-            if (mEffectFocus < mEffectButtons.size())
+            if (mEffectFocus >= 0 && mEffectFocus < static_cast<int>(mEffectButtons.size()))
                 mEffectButtons[mEffectFocus].first->setStateSelected(true);
 
             winMgr->setControllerTooltipVisible(false);
@@ -1110,10 +1123,10 @@ namespace MWGui
         else
         {
             const int lineHeight = Settings::gui().mFontSize + 3;
-            mAvailableEffectsList->setViewOffset(-lineHeight * static_cast<int>(mAvailableFocus - 5));
+            mAvailableEffectsList->setViewOffset(-lineHeight * (mAvailableFocus - 5));
         }
 
-        if (!mRightColumn && mAvailableFocus < mAvailableButtons.size())
+        if (!mRightColumn && mAvailableFocus >= 0 && mAvailableFocus < static_cast<int>(mAvailableButtons.size()))
         {
             // Warp the mouse to the selected spell to show the tooltip
             if (winMgr->getControllerTooltipVisible())

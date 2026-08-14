@@ -1,7 +1,7 @@
 #ifndef OPENMW_LUAUI_WINDOW
 #define OPENMW_LUAUI_WINDOW
 
-#include <vector>
+#include <optional>
 
 #include "text.hpp"
 #include "widget.hpp"
@@ -24,8 +24,6 @@ namespace LuaUi
         MyGUI::IntCoord mChangeScale;
 
         MyGUI::IntCoord mMoveResize;
-
-        const std::vector<std::string_view>& allUsedProperties() const override;
 
     protected:
         void notifyMousePress(MyGUI::Widget* sender, int left, int top, MyGUI::MouseButton id);

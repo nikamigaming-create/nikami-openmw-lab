@@ -2,7 +2,6 @@
 #define OPENMW_NAVMESHTOOL_WORLDSPACEDATA_H
 
 #include <components/bullethelpers/collisionobject.hpp>
-#include <components/detournavigator/settings.hpp>
 #include <components/detournavigator/tilecachedrecastmeshmanager.hpp>
 #include <components/esm3/loadland.hpp>
 #include <components/misc/convert.hpp>
@@ -13,8 +12,7 @@
 #include <LinearMath/btVector3.h>
 
 #include <memory>
-#include <regex>
-#include <span>
+#include <string>
 #include <vector>
 
 namespace ESM
@@ -38,11 +36,25 @@ namespace EsmLoader
     struct EsmData;
 }
 
+namespace DetourNavigator
+{
+    struct Settings;
+}
+
 namespace NavMeshTool
 {
     using DetourNavigator::ObjectTransform;
-    using DetourNavigator::RecastSettings;
     using DetourNavigator::TileCachedRecastMeshManager;
+
+    struct WorldspaceNavMeshInput
+    {
+        ESM::RefId mWorldspace;
+        TileCachedRecastMeshManager mTileCachedRecastMeshManager;
+        btAABB mAabb;
+        bool mAabbInitialized = false;
+
+        explicit WorldspaceNavMeshInput(ESM::RefId worldspace, const DetourNavigator::RecastSettings& settings);
+    };
 
     class BulletObject
     {
@@ -68,38 +80,17 @@ namespace NavMeshTool
         std::unique_ptr<btCollisionObject> mCollisionObject;
     };
 
-    struct TilesData
+    struct WorldspaceData
     {
-        const RecastSettings mSettings;
-        TileCachedRecastMeshManager mTileCachedRecastMeshManager;
+        std::vector<std::unique_ptr<WorldspaceNavMeshInput>> mNavMeshInputs;
         std::vector<BulletObject> mObjects;
         std::vector<std::unique_ptr<ESM::Land::LandData>> mLandData;
         std::vector<std::vector<float>> mHeightfields;
-
-        explicit TilesData(const RecastSettings& settings)
-            : mSettings(settings)
-            , mTileCachedRecastMeshManager(mSettings)
-        {
-        }
     };
-
-    struct WorldspaceData
-    {
-        ESM::RefId mWorldspace;
-        btAABB mAabb;
-        bool mAabbInitialized = false;
-        std::vector<DetourNavigator::TilePosition> mTiles;
-        std::shared_ptr<TilesData> mTilesData;
-
-        WorldspaceData(ESM::RefId worldspace, const RecastSettings& settings);
-    };
-
-    std::unordered_map<ESM::RefId, std::vector<std::size_t>> collectWorldspaceCells(
-        const EsmLoader::EsmData& esmData, bool processInteriorCells, const std::regex& worldspaceFilter);
 
     WorldspaceData gatherWorldspaceData(const DetourNavigator::Settings& settings, ESM::ReadersCache& readers,
         const VFS::Manager& vfs, Resource::BulletShapeManager& bulletShapeManager, const EsmLoader::EsmData& esmData,
-        bool writeBinaryLog, ESM::RefId worldspace, std::span<const std::size_t> cells);
+        bool processInteriorCells, bool writeBinaryLog);
 }
 
 #endif

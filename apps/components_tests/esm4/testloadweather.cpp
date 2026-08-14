@@ -90,6 +90,7 @@ namespace
         appendSubRecord(payload, std::string_view("\4IAD", 4), std::uint32_t{ 0x0cee18 });
         appendSubRecord(payload, "DNAM", std::string_view("textures/sky/layer0.dds\0", 24));
         appendSubRecord(payload, "CNAM", std::string_view("textures/sky/layer1.dds\0", 24));
+        appendSubRecord(payload, "LNAM", std::uint32_t{ ESM4::Weather::sCloudLayerCount });
         const std::array<std::uint8_t, 4> cloudSpeeds{ 25, 50, 75, 100 };
         appendSubRecord(payload, "ONAM", cloudSpeeds);
         std::array<std::array<ESM4::Weather::Color, ESM4::Weather::sTimeCount>,
@@ -123,9 +124,18 @@ namespace
         EXPECT_EQ(weather.mColors[ESM4::Weather::Color_Ambient][ESM4::Weather::Time_HighNoon].b, 154);
         EXPECT_EQ(weather.mColors[ESM4::Weather::Color_Sunlight][ESM4::Weather::Time_Day].g, 227);
         EXPECT_EQ(weather.mCloudTextures[0], "textures/sky/layer0.dds");
+        EXPECT_TRUE(weather.mHasMaxCloudLayers);
+        EXPECT_EQ(weather.mMaxCloudLayers, ESM4::Weather::sCloudLayerCount);
+        EXPECT_TRUE(weather.mHasCloudSpeeds);
         EXPECT_EQ(weather.mCloudSpeeds[2], 75);
+        EXPECT_TRUE(weather.mHasCloudColors);
+        EXPECT_EQ(weather.mCloudColorSampleCount, ESM4::Weather::sTimeCount);
         EXPECT_EQ(weather.mCloudColors[2][ESM4::Weather::Time_HighNoon].unused, 40);
+        EXPECT_TRUE(weather.mHasColors);
+        EXPECT_EQ(weather.mColorSampleCount, ESM4::Weather::sTimeCount);
+        EXPECT_TRUE(weather.mHasFogDistance);
         EXPECT_FLOAT_EQ(weather.mFogDistance[1], 120000.f);
+        EXPECT_TRUE(weather.mHasData);
         EXPECT_EQ(weather.mData.transitionDelta, 255);
         EXPECT_EQ(weather.mData.classification, 1);
     }
@@ -143,6 +153,8 @@ namespace
 
         EXPECT_EQ(weather.mColors[ESM4::Weather::Color_Ambient][ESM4::Weather::Time_Night].b, 56);
         EXPECT_EQ(weather.mColors[ESM4::Weather::Color_Ambient][ESM4::Weather::Time_HighNoon].r, 0);
+        EXPECT_TRUE(weather.mHasColors);
+        EXPECT_EQ(weather.mColorSampleCount, ESM4::Weather::sLegacyTimeCount);
     }
 
     TEST(Esm4WeatherTest, shouldConsumeTes5AndLaterCloudLayersAndKnownFields)
@@ -228,17 +240,47 @@ namespace
 
         EXPECT_TRUE(weather.mUsesExtendedCloudSpeeds);
         EXPECT_EQ(weather.mCloudSpeeds[2], 254);
+        EXPECT_TRUE(weather.mHasCloudColors);
+        EXPECT_EQ(weather.mCloudColorSampleCount, 8u);
         EXPECT_EQ(weather.mCloudColors[2][ESM4::Weather::Time_Day].g, 60);
         EXPECT_TRUE(weather.mHasCloudAlphas);
         EXPECT_FLOAT_EQ(weather.mCloudAlphas[2][ESM4::Weather::Time_Day], 0.25f);
         EXPECT_EQ(weather.mColors[ESM4::Weather::Color_Ambient][ESM4::Weather::Time_Day].b, 103);
         EXPECT_EQ(weather.mColors[ESM4::Weather::Color_SkyUpper][ESM4::Weather::Time_Night].r, 20);
+        EXPECT_TRUE(weather.mHasColors);
+        EXPECT_EQ(weather.mColorSampleCount, 8u);
         EXPECT_FLOAT_EQ(weather.mUnknownCloudLayerValues[4], 0.75f);
+        EXPECT_TRUE(weather.mHasFogDistance);
         EXPECT_FLOAT_EQ(weather.mFogDistance[1], 250000.f);
+        EXPECT_TRUE(weather.mHasData);
         EXPECT_EQ(weather.mData.windSpeed, 42);
         EXPECT_EQ(weather.mData.transitionDelta, 77);
         EXPECT_EQ(weather.mData.classification, 0x41);
         EXPECT_EQ(weather.mData.lightningColor.b, 30);
         EXPECT_EQ(weather.mImageSpaceModifiers[ESM4::Weather::Time_Sunset], ESM::FormId::fromUint32(0x01000003));
+    }
+
+    TEST(Esm4WeatherTest, shouldNotClaimMissingOrMalformedFNVWeatherFields)
+    {
+        std::string payload;
+        appendSubRecord(payload, "LNAM", std::array<std::uint8_t, 3>{});
+        appendSubRecord(payload, "ONAM", std::array<std::uint8_t, 3>{});
+        appendSubRecord(payload, "PNAM", std::array<std::uint8_t, 5>{});
+        appendSubRecord(payload, "NAM0", std::array<std::uint8_t, 159>{});
+        appendSubRecord(payload, "FNAM", std::array<float, 5>{});
+        appendSubRecord(payload, "DATA", std::array<std::uint8_t, 14>{});
+
+        auto reader = makeReader(payload);
+        ESM4::Weather weather;
+        ASSERT_NO_THROW(weather.load(*reader));
+
+        EXPECT_FALSE(weather.mHasMaxCloudLayers);
+        EXPECT_FALSE(weather.mHasCloudSpeeds);
+        EXPECT_FALSE(weather.mHasCloudColors);
+        EXPECT_EQ(weather.mCloudColorSampleCount, 0u);
+        EXPECT_FALSE(weather.mHasColors);
+        EXPECT_EQ(weather.mColorSampleCount, 0u);
+        EXPECT_FALSE(weather.mHasFogDistance);
+        EXPECT_FALSE(weather.mHasData);
     }
 }

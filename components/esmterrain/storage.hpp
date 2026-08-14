@@ -158,9 +158,9 @@ namespace ESMTerrain
         virtual void adjustColor(int col, int row, const ESM::LandData* heightData, osg::Vec4ub& color) const;
         virtual float getAlteredHeight(int col, int row) const;
 
-        VFS::Path::Normalized getTextureName(UniqueTextureId id);
+        std::string getTextureName(UniqueTextureId id);
 
-        std::map<VFS::Path::Normalized, Terrain::LayerInfo, std::less<>> mLayerInfoMap;
+        std::map<std::string, Terrain::LayerInfo> mLayerInfoMap;
         std::mutex mLayerInfoMutex;
 
         std::string mNormalMapPattern;
@@ -170,7 +170,7 @@ namespace ESMTerrain
         std::string mSpecularMapPattern;
         bool mAutoUseSpecularMaps;
 
-        Terrain::LayerInfo getLayerInfo(VFS::Path::NormalizedView texture);
+        Terrain::LayerInfo getLayerInfo(const std::string& texture);
         Terrain::LayerInfo getTextureSetLayerInfo(const ESM4::TextureSet& txst);
         Terrain::LayerInfo getLandTextureLayerInfo(ESM::FormId id, const Terrain::LayerInfo* defaultLayer = nullptr);
 

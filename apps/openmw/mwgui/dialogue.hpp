@@ -69,7 +69,7 @@ namespace MWGui
         Gui::AutoSizedTextBox* mGoldLabel;
 
         std::vector<MyGUI::Button*> mButtons;
-        size_t mControllerFocus = 0;
+        int mControllerFocus = 0;
 
         void adjustAction(MyGUI::Widget* action, int& totalHeight);
 
@@ -79,13 +79,14 @@ namespace MWGui
 
     struct Link
     {
-        virtual ~Link() = default;
+        virtual ~Link() {}
         virtual void activated() = 0;
     };
 
     struct Topic : Link
     {
-        MyGUI::delegates::MultiDelegate<const std::string&> eventTopicActivated;
+        typedef MyGUI::delegates::MultiDelegate<const std::string&> EventHandle_TopicId;
+        EventHandle_TopicId eventTopicActivated;
         Topic(const std::string& id)
             : mTopicId(id)
         {
@@ -96,7 +97,8 @@ namespace MWGui
 
     struct Choice : Link
     {
-        MyGUI::delegates::MultiDelegate<int> eventChoiceActivated;
+        typedef MyGUI::delegates::MultiDelegate<int> EventHandle_ChoiceId;
+        EventHandle_ChoiceId eventChoiceActivated;
         Choice(int id)
             : mChoiceId(id)
         {
@@ -107,23 +109,27 @@ namespace MWGui
 
     struct Goodbye : Link
     {
-        MyGUI::delegates::MultiDelegate<> eventActivated;
+        typedef MyGUI::delegates::MultiDelegate<> Event_Activated;
+        Event_Activated eventActivated;
         void activated() override;
     };
+
+    typedef MWDialogue::KeywordSearch<intptr_t> KeywordSearchT;
 
     struct DialogueText
     {
         virtual ~DialogueText() = default;
-        virtual void write(std::shared_ptr<BookTypesetter> typesetter, const MWDialogue::KeywordSearch& keywordSearch,
-            std::unordered_map<std::string, std::unique_ptr<Link>>& topicLinks) const = 0;
+        virtual void write(BookTypesetter::Ptr typesetter, KeywordSearchT* keywordSearch,
+            std::map<std::string, std::unique_ptr<Link>>& topicLinks) const = 0;
         std::string mText;
     };
 
     struct Response : DialogueText
     {
         Response(std::string_view text, std::string_view title = {}, bool needMargin = true);
-        void write(std::shared_ptr<BookTypesetter> typesetter, const MWDialogue::KeywordSearch& keywordSearch,
-            std::unordered_map<std::string, std::unique_ptr<Link>>& topicLinks) const override;
+        void write(BookTypesetter::Ptr typesetter, KeywordSearchT* keywordSearch,
+            std::map<std::string, std::unique_ptr<Link>>& topicLinks) const override;
+        void addTopicLink(BookTypesetter::Ptr typesetter, intptr_t topicId, size_t begin, size_t end) const;
         std::string mTitle;
         bool mNeedMargin;
     };
@@ -131,8 +137,8 @@ namespace MWGui
     struct Message : DialogueText
     {
         Message(std::string_view text);
-        void write(std::shared_ptr<BookTypesetter> typesetter, const MWDialogue::KeywordSearch& keywordSearch,
-            std::unordered_map<std::string, std::unique_ptr<Link>>& topicLinks) const override;
+        void write(BookTypesetter::Ptr typesetter, KeywordSearchT* keywordSearch,
+            std::map<std::string, std::unique_ptr<Link>>& topicLinks) const override;
     };
 
     class DialogueWindow : public WindowBase, public ReferenceInterface
@@ -143,6 +149,9 @@ namespace MWGui
         void onTradeComplete();
 
         bool exit() override;
+
+        // Events
+        typedef MyGUI::delegates::MultiDelegate<> EventHandle_Void;
 
         void notifyLinkClicked(TypesetBook::InteractiveId link);
 
@@ -172,7 +181,7 @@ namespace MWGui
         void onSelectListItem(const std::string& topic, int id);
         void onByeClicked(MyGUI::Widget* sender);
         void onMouseWheel(MyGUI::Widget* sender, int rel);
-        void onWindowResize(MyGUI::Window* sender);
+        void onWindowResize(MyGUI::Window* sender) override;
         void onTopicActivated(const std::string& topicId);
         void onChoiceActivated(int id);
         void onGoodbyeActivated();
@@ -200,11 +209,11 @@ namespace MWGui
         bool mGoodbye;
 
         std::vector<std::unique_ptr<Link>> mLinks;
-        std::unordered_map<std::string, std::unique_ptr<Link>> mTopicLinks;
+        std::map<std::string, std::unique_ptr<Link>> mTopicLinks;
 
         std::vector<std::unique_ptr<Link>> mDeleteLater;
 
-        MWDialogue::KeywordSearch mKeywordSearch;
+        KeywordSearchT mKeywordSearch;
 
         BookPage* mHistory;
         Gui::MWList* mTopicsList;
@@ -221,7 +230,7 @@ namespace MWGui
         std::unique_ptr<ResponseCallback> mGreetingCallback;
 
         void setControllerFocus(size_t index, bool focused);
-        size_t mControllerFocus = 0;
+        int mControllerFocus = 0;
         int mControllerChoice = -1;
 
         void updateTopicFormat();

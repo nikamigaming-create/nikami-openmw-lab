@@ -17,26 +17,26 @@ public:
     static UnicodeChar sBadChar() { return UnicodeChar(0xFFFFFFFF); }
 
     Utf8Stream(Point begin, Point end)
-        : mCur(begin)
-        , mNxt(begin)
-        , mEnd(end)
-        , mVal(Utf8Stream::sBadChar())
+        : cur(begin)
+        , nxt(begin)
+        , end(end)
+        , val(Utf8Stream::sBadChar())
     {
     }
 
     Utf8Stream(const char* str)
-        : mCur(reinterpret_cast<const unsigned char*>(str))
-        , mNxt(reinterpret_cast<const unsigned char*>(str))
-        , mEnd(reinterpret_cast<const unsigned char*>(str) + strlen(str))
-        , mVal(Utf8Stream::sBadChar())
+        : cur(reinterpret_cast<const unsigned char*>(str))
+        , nxt(reinterpret_cast<const unsigned char*>(str))
+        , end(reinterpret_cast<const unsigned char*>(str) + strlen(str))
+        , val(Utf8Stream::sBadChar())
     {
     }
 
     Utf8Stream(std::pair<Point, Point> range)
-        : mCur(range.first)
-        , mNxt(range.first)
-        , mEnd(range.second)
-        , mVal(Utf8Stream::sBadChar())
+        : cur(range.first)
+        , nxt(range.first)
+        , end(range.second)
+        , val(Utf8Stream::sBadChar())
     {
     }
 
@@ -45,23 +45,23 @@ public:
     {
     }
 
-    bool eof() const { return mCur == mEnd; }
+    bool eof() const { return cur == end; }
 
-    Point current() const { return mCur; }
+    Point current() const { return cur; }
 
     UnicodeChar peek()
     {
-        if (mCur == mNxt)
+        if (cur == nxt)
             next();
-        return mVal;
+        return val;
     }
 
     UnicodeChar consume()
     {
-        if (mCur == mNxt)
+        if (cur == nxt)
             next();
-        mCur = mNxt;
-        return mVal;
+        cur = nxt;
+        return val;
     }
 
     static bool isAscii(unsigned char value) { return (value & 0x80) == 0; }
@@ -189,12 +189,12 @@ public:
     }
 
 private:
-    void next() { std::tie(mVal, mNxt) = decode(mNxt, mEnd); }
+    void next() { std::tie(val, nxt) = decode(nxt, end); }
 
-    Point mCur;
-    Point mNxt;
-    Point mEnd;
-    UnicodeChar mVal;
+    Point cur;
+    Point nxt;
+    Point end;
+    UnicodeChar val;
 };
 
 #endif

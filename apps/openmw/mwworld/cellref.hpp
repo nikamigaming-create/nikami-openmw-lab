@@ -275,15 +275,6 @@ namespace MWWorld
             return reference != nullptr ? &reference->mRadio : nullptr;
         }
 
-        // ONAM is an authored ESM4 reference property rather than a base-door
-        // property.  It is used while materialising an ESM4 DOOR so its first
-        // collision state matches the shipped world data.
-        bool isEsm4OpenByDefault() const
-        {
-            const ESM4::Reference* reference = std::get_if<ESM4::Reference>(&mCellRef.mVariant);
-            return reference != nullptr && reference->mOpenByDefault;
-        }
-
         const ESM4::Primitive* getEsm4Primitive() const
         {
             const ESM4::Reference* reference = std::get_if<ESM4::Reference>(&mCellRef.mVariant);

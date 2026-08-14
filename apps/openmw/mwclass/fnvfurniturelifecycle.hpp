@@ -16,8 +16,7 @@ namespace MWClass
     {
         Approach,
         Entering,
-        Seated,
-        Exiting
+        Seated
     };
 
     struct FalloutFurnitureLifecycleAction
@@ -37,8 +36,6 @@ namespace MWClass
                 return FalloutFurnitureState::Entering;
             case FalloutFurniturePackagePhase::Seated:
                 return FalloutFurnitureState::Seated;
-            case FalloutFurniturePackagePhase::Exiting:
-                return FalloutFurnitureState::Exiting;
         }
         return FalloutFurnitureState::None;
     }
@@ -64,6 +61,13 @@ namespace MWClass
         FalloutFurnitureState state, bool placementValid, bool sameFurniture)
     {
         return state != FalloutFurnitureState::None && placementValid && sameFurniture;
+    }
+
+    inline bool hasReachedFalloutFurnitureEntry(const osg::Vec3f& currentPosition,
+        const osg::Vec3f& entryPosition, float positionTolerance = 8.f)
+    {
+        const osg::Vec3f positionDelta = currentPosition - entryPosition;
+        return positionDelta.length2() <= positionTolerance * positionTolerance;
     }
 
     inline bool needsFalloutFurnitureAnchorRecovery(const FalloutFurnitureLifecycleAction& action,

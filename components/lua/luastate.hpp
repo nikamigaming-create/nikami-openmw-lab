@@ -50,8 +50,7 @@ namespace LuaUtil
         }
 
     public:
-        template <class Function>
-        friend int invokeProtectedCall(lua_State*, Function&&);
+        friend class LuaState;
         // Returns underlying sol::state.
         sol::state_view& sol() { return mSol; }
 
@@ -66,45 +65,6 @@ namespace LuaUtil
         for (const auto& [k, v] : list)
             res[k] = v;
         return res;
-    }
-
-    // Pushing to the stack from outside a Lua context crashes the engine if no memory can be allocated to grow the
-    // stack
-    template <class Function>
-    [[nodiscard]] int invokeProtectedCall(lua_State* luaState, Function&& function)
-    {
-        if (!lua_checkstack(luaState, 2))
-            return LUA_ERRMEM;
-        lua_pushcfunction(luaState, [](lua_State* state) {
-            void* f = lua_touserdata(state, 1);
-            LuaView view(state);
-            (*static_cast<Function*>(f))(view);
-            return 0;
-        });
-        lua_pushlightuserdata(luaState, &function);
-        return lua_pcall(luaState, 1, 0, 0);
-    }
-
-    template <class Lambda>
-    void protectedCall(lua_State* luaState, Lambda&& f)
-    {
-        int result = invokeProtectedCall(luaState, std::forward<Lambda>(f));
-        switch (result)
-        {
-            case LUA_OK:
-                break;
-            case LUA_ERRMEM:
-                throw std::runtime_error("Lua error: out of memory");
-            case LUA_ERRRUN:
-            {
-                sol::optional<std::string> error = sol::stack::check_get<std::string>(luaState);
-                if (error)
-                    throw std::runtime_error(*error);
-            }
-                [[fallthrough]];
-            default:
-                throw std::runtime_error("Lua error: " + std::to_string(result));
-        }
     }
 
     // Holds Lua state.
@@ -127,10 +87,43 @@ namespace LuaUtil
         LuaState(const LuaState&) = delete;
         LuaState(LuaState&&) = delete;
 
+        // Pushing to the stack from outside a Lua context crashes the engine if no memory can be allocated to grow the
+        // stack
+        template <class Function>
+        [[nodiscard]] int invokeProtectedCall(Function&& function) const
+        {
+            if (!lua_checkstack(mSol.lua_state(), 2))
+                return LUA_ERRMEM;
+            lua_pushcfunction(mSol.lua_state(), [](lua_State* state) {
+                void* f = lua_touserdata(state, 1);
+                LuaView view(state);
+                (*static_cast<Function*>(f))(view);
+                return 0;
+            });
+            lua_pushlightuserdata(mSol.lua_state(), &function);
+            return lua_pcall(mSol.lua_state(), 1, 0, 0);
+        }
+
         template <class Lambda>
         void protectedCall(Lambda&& f) const
         {
-            LuaUtil::protectedCall(mSol.lua_state(), std::forward<Lambda>(f));
+            int result = invokeProtectedCall(std::forward<Lambda>(f));
+            switch (result)
+            {
+                case LUA_OK:
+                    break;
+                case LUA_ERRMEM:
+                    throw std::runtime_error("Lua error: out of memory");
+                case LUA_ERRRUN:
+                {
+                    sol::optional<std::string> error = sol::stack::check_get<std::string>(mSol.lua_state());
+                    if (error)
+                        throw std::runtime_error(*error);
+                }
+                    [[fallthrough]];
+                default:
+                    throw std::runtime_error("Lua error: " + std::to_string(result));
+            }
         }
 
         // Note that constructing a sol::state_view is only safe from a Lua context. Use protectedCall to get one
@@ -286,7 +279,7 @@ namespace LuaUtil
     // work around for a (likely) sol3 bug
     // when the index meta method throws, simply calling table.get crashes instead of re-throwing the error
     template <class Key>
-    sol::object safeGet(const sol::lua_table& table, const Key& key)
+    sol::object safeGet(const sol::table& table, const Key& key)
     {
         auto index = table.traverse_raw_get<sol::optional<sol::main_protected_function>>(
             sol::metatable_key, sol::meta_function::index);
@@ -306,9 +299,9 @@ namespace LuaUtil
     template <class... Str>
     sol::object getFieldOrNil(const sol::object& table, std::string_view first, const Str&... str)
     {
-        if (!table.is<sol::lua_table>())
+        if (!table.is<sol::table>())
             return sol::nil;
-        sol::object value = safeGet(table.as<sol::lua_table>(), first);
+        sol::object value = safeGet(table.as<sol::table>(), first);
         if constexpr (sizeof...(str) == 0)
             return value;
         else
@@ -368,6 +361,15 @@ namespace LuaUtil
     {
         for (const T& t : v)
             out.add(t);
+    }
+
+    template <class T>
+    sol::table tableFromVector(lua_State* L, const std::vector<T>& v)
+    {
+        sol::table res(L, sol::create);
+        for (const T& t : v)
+            res.add(t);
+        return res;
     }
 }
 

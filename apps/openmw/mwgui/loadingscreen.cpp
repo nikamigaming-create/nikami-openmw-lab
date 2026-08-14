@@ -12,7 +12,6 @@
 #include <MyGUI_UString.h>
 
 #include <components/debug/debuglog.hpp>
-#include <components/debug/fnvseamlesstelemetry.hpp>
 #include <components/misc/pathhelpers.hpp>
 #include <components/misc/rng.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
@@ -27,6 +26,10 @@
 #include "../mwbase/windowmanager.hpp"
 
 #include "backgroundimage.hpp"
+
+//## VR_PATCH BEGIN
+#include <components/misc/callbackmanager.hpp>
+//## VR_PATCH END
 
 namespace MWGui
 {
@@ -119,31 +122,32 @@ namespace MWGui
             return mTargetFrameRate;
     }
 
-    class CopyFramebufferToTextureCallback : public osg::Camera::DrawCallback
+//## VR_PATCH BEGIN
+// Ported to Misc::CallbackManager::MwDrawCallback
+    class CopyFramebufferToTextureCallback : public Misc::CallbackManager::MwDrawCallback
     {
     public:
         CopyFramebufferToTextureCallback(osg::Texture2D* texture)
-            : mOneshot(true)
-            , mTexture(texture)
+            : mTexture(texture)
         {
         }
 
-        void operator()(osg::RenderInfo& renderInfo) const override
+        bool operator()(osg::RenderInfo& renderInfo, Misc::CallbackManager::View view) const override
         {
-            const osg::Viewport* viewPort = renderInfo.getCurrentCamera()->getViewport();
-            int w = static_cast<int>(viewPort->width());
-            int h = static_cast<int>(viewPort->height());
+            if (view == Misc::CallbackManager::View::Right)
+                return false;
+
+            int w = renderInfo.getCurrentCamera()->getViewport()->width();
+            int h = renderInfo.getCurrentCamera()->getViewport()->height();
             mTexture->copyTexImage2D(*renderInfo.getState(), 0, 0, w, h);
 
-            mOneshot = false;
+            return true;
         }
 
-        void reset() { mOneshot = true; }
-
     private:
-        mutable bool mOneshot;
         osg::ref_ptr<osg::Texture2D> mTexture;
     };
+//## VR_PATCH END
 
     class DontComputeBoundCallback : public osg::Node::ComputeBoundingSphereCallback
     {
@@ -154,16 +158,9 @@ namespace MWGui
     void LoadingScreen::loadingOn()
     {
         // Early-out if already on
-        const int loadingDepth = ++mNestedLoadingCount;
-        Debug::FNVSeamlessTelemetry::Event("loading-scope-enter")
-            .integer("depth", loadingDepth)
-            .boolean("alreadyVisible", mMainWidget->getVisible())
-            .emit();
-        if (loadingDepth > 1 && mMainWidget->getVisible())
+        if (mNestedLoadingCount++ > 0 && mMainWidget->getVisible())
             return;
 
-        if (loadingDepth == 1)
-            mSeamlessTelemetryDrawCount = 0;
         mLoadingOnTime = mTimer.time_m();
 
         // Assign dummy bounding sphere callback to avoid the bounding sphere of the entire scene being recomputed after
@@ -190,22 +187,8 @@ namespace MWGui
 
     void LoadingScreen::loadingOff()
     {
-        const int loadingDepth = --mNestedLoadingCount;
-        if (loadingDepth > 0)
-        {
-            Debug::FNVSeamlessTelemetry::Event("loading-scope-exit")
-                .integer("depth", loadingDepth)
-                .boolean("outermost", false)
-                .emit();
+        if (--mNestedLoadingCount > 0)
             return;
-        }
-
-        Debug::FNVSeamlessTelemetry::Event("loading-scope-exit")
-            .integer("depth", loadingDepth)
-            .boolean("outermost", true)
-            .integer("visibleDrawCount", mSeamlessTelemetryDrawCount)
-            .number("elapsedMs", mTimer.time_m() - mLoadingOnTime)
-            .emit();
 
         if (mLastRenderTime < mLoadingOnTime)
         {
@@ -290,10 +273,10 @@ namespace MWGui
             return false;
 
         // the minimal delay before a loading screen shows
-        constexpr float initialDelay = 0.05f;
+        const float initialDelay = 0.05;
 
         bool alreadyShown = (mLastRenderTime > mLoadingOnTime);
-        double diff = (mTimer.time_m() - mLoadingOnTime);
+        float diff = (mTimer.time_m() - mLoadingOnTime);
 
         if (!alreadyShown)
         {
@@ -329,19 +312,20 @@ namespace MWGui
 
         if (!mCopyFramebufferToTextureCallback)
         {
-            mCopyFramebufferToTextureCallback = new CopyFramebufferToTextureCallback(mTexture);
+//## VR_PATCH BEGIN
+// Ported to Misc::CallbackManager::MwDrawCallback
+            mCopyFramebufferToTextureCallback = std::make_shared<CopyFramebufferToTextureCallback>(mTexture);
         }
 
-        mViewer->getCamera()->removeInitialDrawCallback(mCopyFramebufferToTextureCallback);
-        mViewer->getCamera()->addInitialDrawCallback(mCopyFramebufferToTextureCallback);
-        mCopyFramebufferToTextureCallback->reset();
+        Misc::CallbackManager::instance().addCallbackOneshot(
+            Misc::CallbackManager::DrawStage::Initial, mCopyFramebufferToTextureCallback);
+//## VR_PATCH END
 
         mSplashImage->setBackgroundImage({});
         mSplashImage->setVisible(false);
 
         mSceneImage->setRenderItemTexture(mGuiTexture.get());
-        // The widget is Y-down, the RTT image is Y-up, so this UV is inverted
-        mSceneImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
+        mSceneImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
         mSceneImage->setVisible(true);
     }
 
@@ -361,22 +345,10 @@ namespace MWGui
             setupCopyFramebufferToTextureCallback();
         }
 
-        // Fallout-family profiles do not mount Morrowind's legacy UI art. They
-        // supply a profile-local fallback skin, so defer generic focus updates
-        // until the loading screen has completed its first stable frame.
-        if (!Settings::Manager::getBool("defer loading input update", "OpenNV Compatibility"))
-            MWBase::Environment::get().getInputManager()->update(0, true, true);
+        MWBase::Environment::get().getInputManager()->update(0, true, true);
 
         osg::Stats* const stats = mViewer->getViewerStats();
         const unsigned frameNumber = mViewer->getFrameStamp()->getFrameNumber();
-
-        ++mSeamlessTelemetryDrawCount;
-        Debug::FNVSeamlessTelemetry::Event("loading-screen-draw")
-            .integer("frame", frameNumber)
-            .integer("drawIndex", mSeamlessTelemetryDrawCount)
-            .number("elapsedMs", mTimer.time_m() - mLoadingOnTime)
-            .boolean("wallpaper", mShowWallpaper)
-            .emit();
 
         stats->setAttribute(frameNumber, "Loading", 1);
 
@@ -390,9 +362,9 @@ namespace MWGui
         // at the time this function is called we are in the middle of a frame,
         // so out of order calls are necessary to get a correct frameNumber for the next frame.
         // refer to the advance() and frame() order in Engine::go()
-        mViewer->eventTraversal();
-        mViewer->updateTraversal();
-        mViewer->renderingTraversals();
+//## VR_PATCH BEGIN
+        MWBase::Environment::get().getWindowManager()->viewerTraversals();
+//## VR_PATCH END
         mViewer->advance(mViewer->getFrameStamp()->getSimulationTime());
 
         mLastRenderTime = mTimer.time_m();

@@ -253,7 +253,7 @@ namespace MWWorld
         const ESM4::Activator* storedStation
             = station != nullptr ? store.get<ESM4::Activator>().search(ESM::RefId(station->mId)) : nullptr;
         const std::optional<ESM::FormId> mappedCategory
-            = station != nullptr ? getFnvCraftingStationCategory(*station) : std::nullopt;
+            = station != nullptr ? getFnvCraftingStationCategory(store, *station) : std::nullopt;
         const ESM4::RecipeCategory* category
             = store.get<ESM4::RecipeCategory>().search(ESM::RefId(mCatalog.getCategory()));
         if (store.getESM4Game() != ESM4Game::FalloutNewVegas || station == nullptr || storedStation != station

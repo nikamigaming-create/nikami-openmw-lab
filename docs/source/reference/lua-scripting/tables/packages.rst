@@ -10,16 +10,13 @@
      - Controls background sounds for given player.
    * - :doc:`animation </reference/lua-scripting/openmw_animation>`
      - |bdg-ctx-local|
-     - Animation controls.
+     - Animation controls
    * - :doc:`async </reference/lua-scripting/openmw_async>`
      - |bdg-ctx-all|
      - Timers and callbacks.
    * - :doc:`camera </reference/lua-scripting/openmw_camera>`
      - |bdg-ctx-player|
      - Controls camera.
-   * - :doc:`content </reference/lua-scripting/openmw_content>`
-     - |bdg-ctx-load|
-     - Content manipulation.
    * - :doc:`core </reference/lua-scripting/openmw_core>`
      - |bdg-ctx-all|
      - Functions that are common for both global and local scripts
@@ -51,7 +48,7 @@
      - |bdg-ctx-all|
      - Storage API. In particular can be used to store data between game sessions.
    * - :doc:`types </reference/lua-scripting/openmw_types>`
-     - |bdg-ctx-non-load|
+     - |bdg-ctx-all|
      - Functions for specific types of game objects.
    * - :doc:`ui </reference/lua-scripting/openmw_ui>`
      - |bdg-ctx-menu| |bdg-ctx-player|
@@ -62,6 +59,9 @@
    * - :doc:`vfs </reference/lua-scripting/openmw_vfs>`
      - |bdg-ctx-all|
      - Read-only access to data directories via VFS.
+   * - :doc:`vr </reference/lua-scripting/openmw_vr>`
+     - |bdg-ctx-player| |bdg-ctx-menu|
+     - VR related API
    * - :doc:`world </reference/lua-scripting/openmw_world>`
      - |bdg-ctx-global|
      - Read-write access to the game world.

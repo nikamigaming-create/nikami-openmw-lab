@@ -12,7 +12,7 @@
 #include <string_view>
 #include <tuple>
 
-namespace Std140
+namespace std140
 {
     struct Mat4
     {

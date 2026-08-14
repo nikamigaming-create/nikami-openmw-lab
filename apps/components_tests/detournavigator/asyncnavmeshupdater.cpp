@@ -82,7 +82,6 @@ namespace
         updater.post(mAgentBounds, navMeshCacheItem, mPlayerTile, mWorldspace, changedTiles);
         updater.wait(WaitConditionType::allJobsDone, &mListener);
         EXPECT_NE(navMeshCacheItem->lockConst()->getImpl().getTileRefAt(0, 0, 0), 0u);
-        EXPECT_EQ(updater.getStats().mPosted, 1);
     }
 
     TEST_F(DetourNavigatorAsyncNavMeshUpdaterTest, repeated_post_should_lead_to_cache_hit)
@@ -380,7 +379,7 @@ namespace
         mRecastMeshManager.setWorldspace(mWorldspace, nullptr);
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteRecastMeshToFile = true;
-        const std::filesystem::path dir = TestingOpenMW::currentTestDirPath();
+        const std::filesystem::path dir = TestingOpenMW::outputDirPath("DetourNavigatorAsyncNavMeshUpdaterTest");
         mSettings.mRecastMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);
@@ -397,7 +396,7 @@ namespace
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteRecastMeshToFile = true;
         mSettings.mEnableRecastMeshFileNameRevision = true;
-        const std::filesystem::path dir = TestingOpenMW::currentTestDirPath();
+        const std::filesystem::path dir = TestingOpenMW::outputDirPath("DetourNavigatorAsyncNavMeshUpdaterTest");
         mSettings.mRecastMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);
@@ -413,7 +412,7 @@ namespace
         mRecastMeshManager.setWorldspace(mWorldspace, nullptr);
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteRecastMeshToFile = true;
-        const std::filesystem::path dir = TestingOpenMW::currentTestDirPath() / "absent";
+        const std::filesystem::path dir = TestingOpenMW::outputDir() / "absent";
         mSettings.mRecastMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);
@@ -430,7 +429,7 @@ namespace
         mRecastMeshManager.setWorldspace(mWorldspace, nullptr);
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteNavMeshToFile = true;
-        const std::filesystem::path dir = TestingOpenMW::currentTestDirPath();
+        const std::filesystem::path dir = TestingOpenMW::outputDirPath("DetourNavigatorAsyncNavMeshUpdaterTest");
         mSettings.mNavMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);
@@ -447,7 +446,7 @@ namespace
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteNavMeshToFile = true;
         mSettings.mEnableNavMeshFileNameRevision = true;
-        const std::filesystem::path dir = TestingOpenMW::currentTestDirPath();
+        const std::filesystem::path dir = TestingOpenMW::outputDirPath("DetourNavigatorAsyncNavMeshUpdaterTest");
         mSettings.mNavMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);
@@ -463,7 +462,7 @@ namespace
         mRecastMeshManager.setWorldspace(mWorldspace, nullptr);
         addHeightFieldPlane(mRecastMeshManager);
         mSettings.mEnableWriteNavMeshToFile = true;
-        const std::filesystem::path dir = TestingOpenMW::currentTestDirPath() / "absent";
+        const std::filesystem::path dir = TestingOpenMW::outputDir() / "absent";
         mSettings.mNavMeshPathPrefix = Files::pathToUnicodeString(dir) + "/";
         Log(Debug::Verbose) << mSettings.mRecastMeshPathPrefix;
         AsyncNavMeshUpdater updater(mSettings, mRecastMeshManager, mOffMeshConnectionsManager, nullptr);

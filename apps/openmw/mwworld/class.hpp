@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <optional>
+#include <algorithm>
 
 #include <osg/Vec4f>
 
@@ -60,6 +62,13 @@ namespace MWWorld
     class InventoryStore;
     class CellStore;
     class Action;
+
+    struct MeleeHit
+    {
+        MWWorld::Ptr mVictim;
+        osg::Vec3f mHitPosition;
+        bool mSuccess;
+    };
 
     /// \brief Base class for referenceable esm records
     class Class
@@ -133,24 +142,32 @@ namespace MWWorld
         ///< Return item max health or throw an exception, if class does not have item health
         /// (default implementation: throw an exception)
 
-        virtual bool evaluateHit(const Ptr& ptr, Ptr& victim, osg::Vec3f& hitPosition) const;
-        ///< Evaluate the victim of a melee hit produced by ptr in the current circumstances and return dice roll
-        ///< success.
+        // ## VR_PATCH BEGIN
+        //  split evaluateHit into evaluateHit and findMeleeVictim so VR realistic combat can provide
+        //  its victim as a parameter.
+        virtual std::optional<std::pair<Ptr, osg::Vec3f>> findMeleeVictim(const Ptr& ptr) const;
+        ///< Find the victim of a melee hit produced by ptr in the current circumstances
         /// (default implementation: throw an exception)
 
+        virtual MeleeHit evaluateHit(const Ptr& ptr, std::optional<std::pair<Ptr, osg::Vec3f>> victim = std::nullopt) const;
+        ///< Evaluate the victim of a melee hit produced by ptr in the current circumstances and return dice roll
+        ///< success. If no victim is provided, uses findMeleeVictim to find a victim.
+        /// (default implementation: throw an exception)
+        // ## VR_PATCH END
+
         virtual void hit(const Ptr& ptr, float attackStrength, int type = -1, const Ptr& victim = Ptr(),
-            const osg::Vec3f& hitPosition = osg::Vec3f(), bool success = false) const;
+            const osg::Vec3f& hitPosition = osg::Vec3f(), bool success = false, bool ignoreReach = false) const;
         ///< Execute a melee hit on the victim at hitPosition, using the current weapon. If the hit was successful,
         ///< apply damage and process corresponding events.
         /// \param attackStrength how long the attack was charged for, a value in 0-1 range.
         /// \param type - type of attack, one of the MWMechanics::CreatureStats::AttackType
         ///               enums. ignored for creature attacks.
+        /// @return True if the attack had a victim, regardless if hit was successful or not.
         /// (default implementation: throw an exception)
 
         virtual void onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages, ESM::RefId object,
             const MWWorld::Ptr& attacker, bool successful, const MWMechanics::DamageSourceType sourceType) const;
         ///< Alerts \a ptr that it's being hit for \a damages by \a object (sword, arrow, etc). \a attacker specifies
-        ///< the
         /// actor responsible for the attack. \a successful specifies if the hit is
         /// successful or not. \a sourceType classifies the damage source.
 

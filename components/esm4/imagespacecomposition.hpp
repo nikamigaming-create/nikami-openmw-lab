@@ -14,16 +14,6 @@ namespace ESM4
     struct Cell;
     struct World;
 
-    // A live, source-scripted IMAD instance. The record itself remains in
-    // the ESM store; this carries only the per-instance playback state that
-    // crosses from the quest runtime to the renderer.
-    struct ImageSpaceModifierRuntimeState
-    {
-        ESM::FormId mId{};
-        float mTime = 0.f;
-        float mStrength = 0.f;
-    };
-
     struct ImageSpaceModifierContribution
     {
         const ImageSpaceModifier* mModifier = nullptr;

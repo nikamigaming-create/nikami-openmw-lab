@@ -11,6 +11,8 @@
 #include "messages.hpp"
 #include "state.hpp"
 
+class QTimer;
+
 namespace CSMDoc
 {
     class Stage;
@@ -25,8 +27,11 @@ namespace CSMDoc
         int mCurrentStep;
         int mCurrentStepTotal;
         int mTotalSteps;
+        int mOrdered;
         bool mFinalAlways;
         bool mError;
+        bool mConnected;
+        QTimer* mTimer;
         bool mPrepared;
         Message::Severity mDefaultSeverity;
         std::optional<std::chrono::steady_clock::time_point> mStart;
@@ -34,7 +39,8 @@ namespace CSMDoc
         void prepareStages();
 
     public:
-        Operation(State type, bool finalAlways = false);
+        Operation(State type, bool ordered, bool finalAlways = false);
+        ///< \param ordered Stages must be executed in the given order.
         /// \param finalAlways Execute last stage even if an error occurred during earlier stages.
 
         virtual ~Operation();
@@ -62,11 +68,6 @@ namespace CSMDoc
         void abort();
 
         void run();
-
-        /// Stop the timer and move this operation back to the main thread.
-        /// Called via DirectConnection from QThread::finished so it executes
-        /// on the worker thread before it fully exits.
-        void cleanup();
 
     private slots:
 

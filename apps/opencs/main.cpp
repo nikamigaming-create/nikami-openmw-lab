@@ -35,7 +35,6 @@ void setQSurfaceFormat()
     format.setSamples(ds->getMultiSamples());
     format.setStencilBufferSize(ds->getMinimumNumStencilBits());
     format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
-    format.setAlphaBufferSize(ds->getMinimumNumAlphaBits());
     QSurfaceFormat::setDefaultFormat(format);
 }
 

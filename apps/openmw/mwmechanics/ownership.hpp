@@ -1,37 +1,36 @@
 #ifndef OPENMW_MWMECHANICS_OWNERSHIP_H
 #define OPENMW_MWMECHANICS_OWNERSHIP_H
 
-#include <map>
+#include <span>
 
-#include <components/esm/formid.hpp>
 #include <components/esm/refid.hpp>
+#include <components/esm4/actor.hpp>
 
 namespace MWWorld
 {
+    class Cell;
+    class CellRef;
     class ESMStore;
-    class Ptr;
 }
 
 namespace MWMechanics
 {
-    struct Ownership
+    struct ObjectOwnership
     {
         ESM::RefId mOwner;
         ESM::RefId mFaction;
-        int mRequiredFactionRank = -1;
-        bool mOwnerIsFaction = false;
+        int mFactionRank = -1;
     };
 
-    /// Resolve the owner which applies to a live object. An explicit
-    /// reference owner takes precedence; otherwise the containing cell owner
-    /// is inherited.
-    Ownership resolveOwnership(const MWWorld::Ptr& target, const MWWorld::ESMStore& store);
+    /// Resolve authored ownership without losing ESM4's polymorphic XOWN field. Reference ownership takes
+    /// precedence; otherwise an ESM4 reference inherits its CELL XOWN. An XOWN that names a FACT is returned as
+    /// faction ownership rather than actor ownership.
+    [[nodiscard]] ObjectOwnership resolveObjectOwnership(
+        const MWWorld::CellRef& cellRef, const MWWorld::Cell* cell, const MWWorld::ESMStore& store);
 
-    /// Check personal and faction ownership without performing crime or world
-    /// side effects. A null faction map represents an actor without faction
-    /// membership.
-    bool isOwnershipAllowed(const Ownership& ownership, const ESM::RefId& actorBase,
-        ESM::FormId actorReference, const std::map<ESM::RefId, int>* actorFactions);
+    /// Return whether an FNV actor's authored faction membership satisfies the ownership rank requirement.
+    [[nodiscard]] bool isFactionOwnershipAllowed(
+        const ObjectOwnership& ownership, std::span<const ESM4::ActorFaction> factions);
 }
 
 #endif

@@ -16,7 +16,7 @@
 namespace MWMechanics
 {
 
-    float getEffectMultiplier(ESM::RefId effectId, const MWWorld::Ptr& actor, const MWWorld::Ptr& caster,
+    float getEffectMultiplier(short effectId, const MWWorld::Ptr& actor, const MWWorld::Ptr& caster,
         const ESM::Spell* spell, const MagicEffects* effects)
     {
         if (!actor.getClass().isActor())
@@ -26,11 +26,11 @@ namespace MWMechanics
         return 1 - resistance / 100.f;
     }
 
-    float getEffectResistance(ESM::RefId effectId, const MWWorld::Ptr& actor, const MWWorld::Ptr& caster,
+    float getEffectResistance(short effectId, const MWWorld::Ptr& actor, const MWWorld::Ptr& caster,
         const ESM::Spell* spell, const MagicEffects* effects)
     {
         // Effects with no resistance attribute belonging to them can not be resisted
-        if (ESM::MagicEffect::getResistanceEffect(effectId).empty())
+        if (ESM::MagicEffect::getResistanceEffect(effectId) == -1)
             return 0.f;
 
         const auto magicEffect = MWBase::Environment::get().getESMStore()->get<ESM::MagicEffect>().find(effectId);
@@ -72,16 +72,15 @@ namespace MWMechanics
         return x;
     }
 
-    float getEffectResistanceAttribute(ESM::RefId effectId, const MagicEffects* actorEffects)
+    float getEffectResistanceAttribute(short effectId, const MagicEffects* actorEffects)
     {
+        short resistanceEffect = ESM::MagicEffect::getResistanceEffect(effectId);
+        short weaknessEffect = ESM::MagicEffect::getWeaknessEffect(effectId);
+
         float resistance = 0;
-
-        ESM::RefId resistanceEffect = ESM::MagicEffect::getResistanceEffect(effectId);
-        ESM::RefId weaknessEffect = ESM::MagicEffect::getWeaknessEffect(effectId);
-
-        if (!resistanceEffect.empty())
+        if (resistanceEffect != -1)
             resistance += actorEffects->getOrDefault(resistanceEffect).getMagnitude();
-        if (!weaknessEffect.empty())
+        if (weaknessEffect != -1)
             resistance -= actorEffects->getOrDefault(weaknessEffect).getMagnitude();
 
         if (effectId == ESM::MagicEffect::FireDamage)
@@ -93,4 +92,5 @@ namespace MWMechanics
 
         return resistance;
     }
+
 }

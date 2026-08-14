@@ -194,6 +194,8 @@ void CSVRender::CellArrow::buildShape()
 
     geometry->setColorArray(colours, osg::Array::BIND_PER_VERTEX);
 
+    geometry->getOrCreateStateSet()->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+
     mBaseNode->addChild(geometry);
 }
 

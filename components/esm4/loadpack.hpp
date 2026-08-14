@@ -98,14 +98,6 @@ namespace ESM4
         float mIdleTimer = 0.f;
         std::vector<ESM::FormId> mIdleAnim;
 
-        // Fallout 3/New Vegas PACK records carry three embedded script slots:
-        // On Begin, On End, and On Change.  Retain them losslessly so the
-        // normal AI lifecycle can execute authored package transitions rather
-        // than treating a package as movement data only.
-        ScriptDefinition mOnBeginScript;
-        ScriptDefinition mOnEndScript;
-        ScriptDefinition mOnChangeScript;
-
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;
 

@@ -3,7 +3,6 @@
 
 #include <filesystem>
 #include <string>
-#include <vector>
 
 #if defined(__linux__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__)
 #ifndef ANDROID
@@ -57,16 +56,17 @@ namespace Files
         /**
          * \brief Path constructor.
          *
-         * \param [in] applicationName - Name of the application
+         * \param [in] application_name - Name of the application
          */
-        FixedPath(const std::string& applicationName)
-            : mPath(applicationName + "/")
+        FixedPath(const std::string& application_name)
+            : mPath(application_name + "/")
             , mUserConfigPath(mPath.getUserConfigPath())
             , mUserDataPath(mPath.getUserDataPath())
             , mGlobalConfigPath(mPath.getGlobalConfigPath())
             , mLocalPath(mPath.getLocalPath())
             , mGlobalDataPath(mPath.getGlobalDataPath())
             , mCachePath(mPath.getCachePath())
+            , mInstallPath(mPath.getInstallPath())
         {
         }
 
@@ -87,7 +87,7 @@ namespace Files
          */
         const std::filesystem::path& getLocalPath() const { return mLocalPath; }
 
-        std::vector<std::filesystem::path> getInstallPaths() const { return mPath.getInstallPaths(); }
+        const std::filesystem::path& getInstallPath() const { return mInstallPath; }
 
         const std::filesystem::path& getGlobalDataPath() const { return mGlobalDataPath; }
 
@@ -104,6 +104,8 @@ namespace Files
         std::filesystem::path mGlobalDataPath; /**< Global application data path */
 
         std::filesystem::path mCachePath;
+
+        std::filesystem::path mInstallPath;
     };
 
 } /* namespace Files */

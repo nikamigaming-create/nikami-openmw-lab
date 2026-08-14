@@ -9,6 +9,11 @@
 #include <osg/Vec3d>
 #include <osg/ref_ptr>
 
+//## VR_PATCH BEGIN
+#include <components/stereo/types.hpp>
+#include <components/vr/session.hpp>
+//## VR_PATCH END
+
 #include "../mwworld/ptr.hpp"
 
 namespace osg
@@ -16,16 +21,20 @@ namespace osg
     class Camera;
     class Callback;
     class Node;
+    class Quat;
 }
 
 namespace MWRender
 {
-    class Animation;
     class NpcAnimation;
 
     /// \brief Camera control
     class Camera
+    // ## VR_PATCH BEGIN
+        : private VR::Session::Listener
     {
+        void onSpaceUpdate() override;
+    //## VR_PATCH END
     public:
         enum class Mode : int
         {
@@ -33,11 +42,17 @@ namespace MWRender
             FirstPerson = 1,
             ThirdPerson = 2,
             Vanity = 3,
-            Preview = 4
+//## VR_PATCH BEGIN
+            Preview = 4,
+            VR = 5
+//## VR_PATCH END
         };
 
         Camera(osg::Camera* camera);
-        ~Camera();
+//## VR_PATCH BEGIN
+// Make this virtual
+        virtual ~Camera();
+//## VR_PATCH END
 
         /// Attach camera to object
         void attachTo(const MWWorld::Ptr& ptr) { mTrackingPtr = ptr; }
@@ -47,14 +62,29 @@ namespace MWRender
         float getFocalPointTransitionSpeed() const { return mFocalPointTransitionSpeedCoef; }
         void setFocalPointTargetOffset(const osg::Vec2d& v);
         osg::Vec2d getFocalPointTargetOffset() const { return mFocalPointTargetOffset; }
-        void instantTransition();
+
+//## VR_PATCH BEGIN
+// Make this virtual
+        virtual void instantTransition();
+//## VR_PATCH END
         void showCrosshair(bool v) { mShowCrosshair = v; }
 
         /// Update the view matrix of \a cam
-        void updateCamera(osg::Camera* cam);
+//## VR_PATCH BEGIN
+// Make this virtual
+        virtual void updateCamera(osg::Camera* cam);
+//## VR_PATCH END
+
+//## VR_PATCH BEGIN
+        /// Update the view matrix of the current camera
+        virtual void updateCamera();
+//## VR_PATCH END
 
         /// Reset to defaults
-        void reset() { setMode(Mode::FirstPerson); }
+//## VR_PATCH BEGIN
+// Make this virtual
+        virtual void reset() { setMode(Mode::FirstPerson); }
+//## VR_PATCH END
 
         void rotateCameraToTrackingPtr();
 
@@ -76,7 +106,10 @@ namespace MWRender
         osg::Quat getOrient() const;
 
         /// @param Force view mode switch, even if currently not allowed by the animation.
-        void toggleViewMode(bool force = false);
+//## VR_PATCH BEGIN
+// Make this virtual
+        virtual void toggleViewMode(bool force = false);
+//## VR_PATCH END
         bool toggleVanityMode(bool enable);
 
         void applyDeferredPreviewRotationToPlayer(float dt);
@@ -85,17 +118,17 @@ namespace MWRender
         /// \brief Lowers the camera for sneak.
         void setSneakOffset(float offset);
 
-        void processViewChange();
+//## VR_PATCH BEGIN
+// Make this virtual
+        virtual void processViewChange();
+//## VR_PATCH END
 
         void update(float duration, bool paused = false);
 
         float getCameraDistance() const { return mCameraDistance; }
         void setPreferredCameraDistance(float v) { mPreferredCameraDistance = v; }
 
-        /// Most gameplay uses an NpcAnimation camera rig. Data-driven Fallout cinematics can instead expose an
-        /// authored camera transform on a native ESM4 body Animation. In that case the target owns both position
-        /// and orientation; gameplay eye offsets and player look angles must not be layered over it.
-        void setAnimation(Animation* anim, bool useTrackingNodeTransform = false);
+        void setAnimation(NpcAnimation* anim);
 
         osg::Vec3d getTrackedPosition() const { return mTrackedPosition; }
         const osg::Vec3d& getPosition() const { return mPosition; }
@@ -120,7 +153,18 @@ namespace MWRender
         const osg::Matrixf& getProjectionMatrix() const { return mProjectionMatrix; }
         float getLodScale() const;
 
-    private:
+//## VR_PATCH BEGIN
+        void setPose(const Stereo::Pose& pose);
+
+    protected:
+        virtual void getOrientation(osg::Quat& orientation) const;
+
+        virtual void getPosition(osg::Vec3d& position) const;
+
+    protected:
+        Stereo::Pose mTrackedPose;
+        mutable osg::Matrix mTrackedWorldMatrix;
+//## VR_PATCH END
         MWWorld::Ptr mTrackingPtr;
         osg::ref_ptr<const osg::Node> mTrackingNode;
         bool mFirstPersonUsesTrackingRoot = false;
@@ -130,8 +174,7 @@ namespace MWRender
 
         osg::ref_ptr<osg::Camera> mCamera;
 
-        Animation* mAnimation;
-        bool mUseTrackingNodeTransform = false;
+        NpcAnimation* mAnimation;
 
         // Always 'true' if mMode == `FirstPerson`. Also it is 'true' in `Vanity` or `Preview` modes if
         // the camera should return to `FirstPerson` view after it.
@@ -172,7 +215,9 @@ namespace MWRender
 
         bool mShowCrosshair;
 
-        osg::Vec3d calculateTrackedPosition() const;
+//## VR_PATCH BEGIN
+        void updateTrackedPosition() const;
+//## VR_PATCH END
         osg::Vec3d calculateFirstPersonPosition(const osg::Vec3d& trackedPosition) const;
         osg::Vec3d getFocalPointOffset() const;
         void updateFocalPointOffset(float duration);

@@ -1,21 +1,32 @@
 #ifndef OPENMW_COMPONENTS_DETOURNAVIGATOR_RECASTMESHPROVIDER_H
 #define OPENMW_COMPONENTS_DETOURNAVIGATOR_RECASTMESHPROVIDER_H
 
+#include "recastmesh.hpp"
+#include "tilecachedrecastmeshmanager.hpp"
 #include "tileposition.hpp"
 
-#include <components/esm/refid.hpp>
-
+#include <functional>
 #include <memory>
 
 namespace DetourNavigator
 {
     class RecastMesh;
 
-    struct RecastMeshProvider
+    class RecastMeshProvider
     {
-        virtual ~RecastMeshProvider() = default;
+    public:
+        RecastMeshProvider(TileCachedRecastMeshManager& impl)
+            : mImpl(impl)
+        {
+        }
 
-        virtual std::shared_ptr<RecastMesh> getMesh(ESM::RefId worldspace, const TilePosition& tilePosition) const = 0;
+        std::shared_ptr<RecastMesh> getMesh(ESM::RefId worldspace, const TilePosition& tilePosition) const
+        {
+            return mImpl.get().getNewMesh(worldspace, tilePosition);
+        }
+
+    private:
+        std::reference_wrapper<TileCachedRecastMeshManager> mImpl;
     };
 }
 

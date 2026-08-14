@@ -88,14 +88,14 @@ namespace SceneUtil
 
     void CompositeStateSetUpdater::apply(osg::StateSet* stateset, osg::NodeVisitor* nv)
     {
-        for (const auto& ctrl : mCtrls)
-            ctrl->apply(stateset, nv);
+        for (unsigned int i = 0; i < mCtrls.size(); ++i)
+            mCtrls[i]->apply(stateset, nv);
     }
 
     void CompositeStateSetUpdater::setDefaults(osg::StateSet* stateset)
     {
-        for (const auto& ctrl : mCtrls)
-            ctrl->setDefaults(stateset);
+        for (unsigned int i = 0; i < mCtrls.size(); ++i)
+            mCtrls[i]->setDefaults(stateset);
     }
 
     CompositeStateSetUpdater::CompositeStateSetUpdater() {}
@@ -103,16 +103,16 @@ namespace SceneUtil
     CompositeStateSetUpdater::CompositeStateSetUpdater(const CompositeStateSetUpdater& copy, const osg::CopyOp& copyop)
         : StateSetUpdater(copy, copyop)
     {
-        for (const auto& ctrl : copy.mCtrls)
-            mCtrls.emplace_back(osg::clone(ctrl.get(), copyop));
+        for (unsigned int i = 0; i < copy.mCtrls.size(); ++i)
+            mCtrls.emplace_back(osg::clone(copy.mCtrls[i].get(), copyop));
     }
 
-    size_t CompositeStateSetUpdater::getNumControllers()
+    unsigned int CompositeStateSetUpdater::getNumControllers()
     {
         return mCtrls.size();
     }
 
-    StateSetUpdater* CompositeStateSetUpdater::getController(size_t i)
+    StateSetUpdater* CompositeStateSetUpdater::getController(int i)
     {
         return mCtrls[i];
     }

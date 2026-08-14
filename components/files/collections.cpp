@@ -2,6 +2,7 @@
 #include "conversion.hpp"
 
 #include <components/misc/strings/algorithm.hpp>
+#include <components/misc/strings/lower.hpp>
 
 namespace Files
 {
@@ -17,12 +18,14 @@ namespace Files
     {
     }
 
-    const MultiDirCollection& Collections::getCollection(std::string_view extension) const
+    const MultiDirCollection& Collections::getCollection(const std::string& extension) const
     {
-        auto iter = mCollections.find(extension);
+        std::string ext = Misc::StringUtils::lowerCase(extension);
+        auto iter = mCollections.find(ext);
         if (iter == mCollections.end())
         {
-            auto result = mCollections.emplace(extension, MultiDirCollection(mDirectories, extension));
+            std::pair<MultiDirCollectionContainer::iterator, bool> result
+                = mCollections.emplace(ext, MultiDirCollection(mDirectories, ext));
 
             iter = result.first;
         }
@@ -30,7 +33,7 @@ namespace Files
         return iter->second;
     }
 
-    std::filesystem::path Collections::getPath(std::string_view file) const
+    std::filesystem::path Collections::getPath(const std::string& file) const
     {
         for (auto iter = mDirectories.rbegin(); iter != mDirectories.rend(); iter++)
         {
@@ -44,10 +47,10 @@ namespace Files
             }
         }
 
-        throw std::runtime_error("file " + std::string(file) + " not found");
+        throw std::runtime_error("file " + file + " not found");
     }
 
-    bool Collections::doesExist(std::string_view file) const
+    bool Collections::doesExist(const std::string& file) const
     {
         for (auto iter = mDirectories.rbegin(); iter != mDirectories.rend(); iter++)
         {

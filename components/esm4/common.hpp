@@ -174,7 +174,6 @@ namespace ESM4
         REC_IMOD = fourCC("IMOD"), // Item Mod
         REC_PWAT = fourCC("PWAT"), // Placeable Water
         REC_SCOL = fourCC("SCOL"), // Static Collection
-        REC_CHIP = fourCC("CHIP"), // Casino Chip (Fallout: New Vegas)
         REC_PKIN = fourCC("PKIN"), // Starfield Pack-In (authored storage-cell set piece)
         REC_CCRD = fourCC("CCRD"), // Caravan Card
         REC_CMNY = fourCC("CMNY"), // Caravan Money

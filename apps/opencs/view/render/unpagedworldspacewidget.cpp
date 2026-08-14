@@ -365,10 +365,10 @@ std::string CSVRender::UnpagedWorldspaceWidget::getStartupInstruction()
     return stream.str();
 }
 
-CSVRender::WorldspaceWidget::DropRequirements CSVRender::UnpagedWorldspaceWidget::getDropRequirements(
+CSVRender::WorldspaceWidget::dropRequirments CSVRender::UnpagedWorldspaceWidget::getDropRequirements(
     CSVRender::WorldspaceWidget::DropType type) const
 {
-    DropRequirements requirements = WorldspaceWidget::getDropRequirements(type);
+    dropRequirments requirements = WorldspaceWidget::getDropRequirements(type);
 
     if (requirements != ignored)
         return requirements;

@@ -9,12 +9,9 @@
 #include <string>
 #include <vector>
 
-#include <components/esm/attr.hpp>
 #include <components/esm3/effectlist.hpp>
 #include <components/esm3/loadmgef.hpp> // for converting magic effect id to string & back
-#include <components/esm3/loadskil.hpp>
 
-#include "idcollection.hpp"
 #include "nestedcolumnadapter.hpp"
 #include "nestedtablewrapper.hpp"
 
@@ -251,13 +248,8 @@ namespace CSMWorld
     template <typename ESXRecordT>
     class EffectsListAdapter : public NestedColumnAdapter<ESXRecordT>
     {
-        const IdCollection<ESM::MagicEffect>& mMagicEffects;
-
     public:
-        EffectsListAdapter(const IdCollection<ESM::MagicEffect>& magicEffects)
-            : mMagicEffects(magicEffects)
-        {
-        }
+        EffectsListAdapter() = default;
 
         void addRow(Record<ESXRecordT>& record, int position) const override
         {
@@ -268,7 +260,9 @@ namespace CSMWorld
             // blank row
             ESM::IndexedENAMstruct effect;
             effect.mIndex = position;
-            effect.mData.mEffectID = ESM::MagicEffect::WaterBreathing;
+            effect.mData.mEffectID = 0;
+            effect.mData.mSkill = -1;
+            effect.mData.mAttribute = -1;
             effect.mData.mRange = 0;
             effect.mData.mArea = 0;
             effect.mData.mDuration = 0;
@@ -322,33 +316,37 @@ namespace CSMWorld
                 throw std::runtime_error("index out of range");
 
             ESM::ENAMstruct effect = effectsList[subRowIndex].mData;
-            bool targetSkill = false, targetAttribute = false;
-
-            int recordIndex = mMagicEffects.searchId(effect.mEffectID);
-            if (recordIndex != -1)
-            {
-                const ESM::MagicEffect& mgef = mMagicEffects.getRecord(recordIndex).get();
-                targetSkill = mgef.mData.mFlags & ESM::MagicEffect::TargetSkill;
-                targetAttribute = mgef.mData.mFlags & ESM::MagicEffect::TargetAttribute;
-            }
-
             switch (subColIndex)
             {
                 case 0:
-                    return ESM::MagicEffect::refIdToIndex(effect.mEffectID);
+                    return effect.mEffectID;
                 case 1:
                 {
-                    if (targetSkill)
-                        return ESM::Skill::refIdToIndex(effect.mSkill);
-                    else
-                        return QVariant();
+                    switch (effect.mEffectID)
+                    {
+                        case ESM::MagicEffect::DrainSkill:
+                        case ESM::MagicEffect::DamageSkill:
+                        case ESM::MagicEffect::RestoreSkill:
+                        case ESM::MagicEffect::FortifySkill:
+                        case ESM::MagicEffect::AbsorbSkill:
+                            return effect.mSkill;
+                        default:
+                            return QVariant();
+                    }
                 }
                 case 2:
                 {
-                    if (targetAttribute)
-                        return ESM::Attribute::refIdToIndex(effect.mAttribute);
-                    else
-                        return QVariant();
+                    switch (effect.mEffectID)
+                    {
+                        case ESM::MagicEffect::DrainAttribute:
+                        case ESM::MagicEffect::DamageAttribute:
+                        case ESM::MagicEffect::RestoreAttribute:
+                        case ESM::MagicEffect::FortifyAttribute:
+                        case ESM::MagicEffect::AbsorbAttribute:
+                            return effect.mAttribute;
+                        default:
+                            return QVariant();
+                    }
                 }
                 case 3:
                     return effect.mRange;
@@ -379,29 +377,37 @@ namespace CSMWorld
             {
                 case 0:
                 {
-                    bool targetSkill = false, targetAttribute = false;
-                    effect.mEffectID = ESM::MagicEffect::indexToRefId(value.toInt());
-                    int recordIndex = mMagicEffects.searchId(effect.mEffectID);
-                    if (recordIndex != -1)
+                    effect.mEffectID = static_cast<short>(value.toInt());
+                    switch (effect.mEffectID)
                     {
-                        const ESM::MagicEffect& mgef = mMagicEffects.getRecord(recordIndex).get();
-                        targetSkill = mgef.mData.mFlags & ESM::MagicEffect::TargetSkill;
-                        targetAttribute = mgef.mData.mFlags & ESM::MagicEffect::TargetAttribute;
+                        case ESM::MagicEffect::DrainSkill:
+                        case ESM::MagicEffect::DamageSkill:
+                        case ESM::MagicEffect::RestoreSkill:
+                        case ESM::MagicEffect::FortifySkill:
+                        case ESM::MagicEffect::AbsorbSkill:
+                            effect.mAttribute = -1;
+                            break;
+                        case ESM::MagicEffect::DrainAttribute:
+                        case ESM::MagicEffect::DamageAttribute:
+                        case ESM::MagicEffect::RestoreAttribute:
+                        case ESM::MagicEffect::FortifyAttribute:
+                        case ESM::MagicEffect::AbsorbAttribute:
+                            effect.mSkill = -1;
+                            break;
+                        default:
+                            effect.mSkill = -1;
+                            effect.mAttribute = -1;
                     }
-                    if (!targetSkill)
-                        effect.mSkill = ESM::RefId();
-                    if (!targetAttribute)
-                        effect.mAttribute = ESM::RefId();
                     break;
                 }
                 case 1:
                 {
-                    effect.mSkill = ESM::Skill::indexToRefId(value.toInt());
+                    effect.mSkill = static_cast<signed char>(value.toInt());
                     break;
                 }
                 case 2:
                 {
-                    effect.mAttribute = ESM::Attribute::indexToRefId(value.toInt());
+                    effect.mAttribute = static_cast<signed char>(value.toInt());
                     break;
                 }
                 case 3:

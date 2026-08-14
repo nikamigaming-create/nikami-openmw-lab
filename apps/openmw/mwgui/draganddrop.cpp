@@ -26,8 +26,8 @@ namespace MWGui
     {
     }
 
-    void DragAndDrop::startDrag(int index, SortFilterItemModel* sortModel, ItemModel* sourceModel, ItemView* sourceView,
-        std::size_t count, bool playSound)
+    void DragAndDrop::startDrag(
+        int index, SortFilterItemModel* sortModel, ItemModel* sourceModel, ItemView* sourceView, std::size_t count)
     {
         mItem = sourceModel->getItem(index);
         mDraggedCount = count;
@@ -48,9 +48,9 @@ namespace MWGui
             ItemModel::ModelIndex newIndex = -1;
             for (size_t i = 0; i < playerModel->getItemCount(); ++i)
             {
-                if (playerModel->getItem(static_cast<ItemModel::ModelIndex>(i)).mBase == item)
+                if (playerModel->getItem(i).mBase == item)
                 {
-                    newIndex = static_cast<ItemModel::ModelIndex>(i);
+                    newIndex = i;
                     break;
                 }
             }
@@ -62,11 +62,8 @@ namespace MWGui
             mSourceSortModel = playerFilterModel;
         }
 
-        if (playSound)
-        {
-            const ESM::RefId& sound = mItem.mBase.getClass().getUpSoundId(mItem.mBase);
-            MWBase::Environment::get().getWindowManager()->playSound(sound);
-        }
+        const ESM::RefId& sound = mItem.mBase.getClass().getUpSoundId(mItem.mBase);
+        MWBase::Environment::get().getWindowManager()->playSound(sound);
 
         if (mSourceSortModel)
         {
@@ -85,7 +82,7 @@ namespace MWGui
 
         mDraggedWidget->setItem(mItem.mBase);
         mDraggedWidget->setNeedMouseFocus(false);
-        mDraggedWidget->setCount(static_cast<int>(count));
+        mDraggedWidget->setCount(count);
 
         MWBase::Environment::get().getWindowManager()->setDragDrop(true);
 
@@ -95,17 +92,13 @@ namespace MWGui
         mSourceView->update();
     }
 
-    void DragAndDrop::drop(ItemModel* targetModel, ItemView* targetView, bool playSound)
+    void DragAndDrop::drop(ItemModel* targetModel, ItemView* targetView)
     {
-        if (playSound)
-        {
-            const ESM::RefId& sound = mItem.mBase.getClass().getDownSoundId(mItem.mBase);
-            MWBase::Environment::get().getWindowManager()->playSound(sound);
-        }
+        const ESM::RefId& sound = mItem.mBase.getClass().getDownSoundId(mItem.mBase);
+        MWBase::Environment::get().getWindowManager()->playSound(sound);
 
         // We can't drop a conjured item to the ground; the target container should always be the source container
-        if (mItem.mFlags & (ItemStack::Flag_Bound | ItemStack::Flag_Quest)
-            && targetModel != mSourceModel)
+        if (mItem.mFlags & ItemStack::Flag_Bound && targetModel != mSourceModel)
         {
             MWBase::Environment::get().getWindowManager()->messageBox("#{sBarterDialog12}");
             return;
@@ -141,7 +134,7 @@ namespace MWGui
 
         mItem.mCount = count;
         mDraggedCount = count;
-        mDraggedWidget->setCount(static_cast<int>(mDraggedCount));
+        mDraggedWidget->setCount(mDraggedCount);
         mSourceSortModel->clearDragItems();
         mSourceSortModel->addDragItem(mItem.mBase, mDraggedCount);
     }

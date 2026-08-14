@@ -3,14 +3,13 @@
 #include <MyGUI_TextIterator.h>
 #include <MyGUI_UString.h>
 
-#include <format>
+#include <cassert>
 #include <memory>
-#include <stdexcept>
+#include <optional>
 
 #include <components/misc/constants.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/rng.hpp>
-#include <components/misc/strings/algorithm.hpp>
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm3/loadbody.hpp>
@@ -25,6 +24,7 @@
 
 #include "../mwbase/dialoguemanager.hpp"
 #include "../mwbase/environment.hpp"
+#include "../mwbase/inputmanager.hpp"
 #include "../mwbase/luamanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/soundmanager.hpp"
@@ -54,6 +54,7 @@
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/failedaction.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/localscripts.hpp"
 #include "../mwworld/ptr.hpp"
@@ -87,24 +88,24 @@ namespace
 
     const NpcParts npcParts;
 
-    bool isEven(double d)
+    int is_even(double d)
     {
         double intPart;
-        std::modf(d / 2.0, &intPart);
+        modf(d / 2.0, &intPart);
         return 2.0 * intPart == d;
     }
 
-    float round_ieee_754(float f)
+    int round_ieee_754(double d)
     {
-        float i = std::floor(f);
-        f -= i;
-        if (f < 0.5)
-            return i;
-        if (f > 0.5)
-            return i + 1.f;
-        if (isEven(i))
-            return i;
-        return i + 1.f;
+        double i = floor(d);
+        d -= i;
+        if (d < 0.5)
+            return static_cast<int>(i);
+        if (d > 0.5)
+            return static_cast<int>(i) + 1;
+        if (is_even(i))
+            return static_cast<int>(i);
+        return static_cast<int>(i) + 1;
     }
 
     void autoCalculateAttributes(const ESM::NPC* npc, MWMechanics::CreatureStats& creatureStats)
@@ -117,8 +118,7 @@ namespace
         const auto& attributes = MWBase::Environment::get().getESMStore()->get<ESM::Attribute>();
         int level = creatureStats.getLevel();
         for (const ESM::Attribute& attribute : attributes)
-            creatureStats.setAttribute(
-                attribute.mId, static_cast<float>(race->mData.getAttribute(attribute.mId, male)));
+            creatureStats.setAttribute(attribute.mId, race->mData.getAttribute(attribute.mId, male));
 
         // class bonus
         const ESM::Class* npcClass = MWBase::Environment::get().getESMStore()->get<ESM::Class>().find(npc->mClass);
@@ -158,7 +158,7 @@ namespace
             creatureStats.setAttribute(attribute.mId,
                 std::min(
                     round_ieee_754(creatureStats.getAttribute(attribute.mId).getBase() + (level - 1) * modifierSum),
-                    100.f));
+                    100));
         }
 
         // initial health
@@ -251,7 +251,7 @@ namespace
             npcStats.getSkill(skill.mId).setBase(
                 std::min(round_ieee_754(npcStats.getSkill(skill.mId).getBase() + 5 + raceBonus + specBonus
                              + (int(level) - 1) * (majorMultiplier + specMultiplier)),
-                    100.f)); // Must gracefully handle level 0
+                    100)); // Must gracefully handle level 0
         }
 
         if (!spellsInitialised)
@@ -337,12 +337,10 @@ namespace MWClass
                 gold = ref->mBase->mNpdt.mGold;
 
                 for (size_t i = 0; i < ref->mBase->mNpdt.mSkills.size(); ++i)
-                    data->mNpcStats.getSkill(ESM::Skill::indexToRefId(static_cast<int>(i)))
-                        .setBase(ref->mBase->mNpdt.mSkills[i]);
+                    data->mNpcStats.getSkill(ESM::Skill::indexToRefId(i)).setBase(ref->mBase->mNpdt.mSkills[i]);
 
                 for (size_t i = 0; i < ref->mBase->mNpdt.mAttributes.size(); ++i)
-                    data->mNpcStats.setAttribute(
-                        ESM::Attribute::indexToRefId(static_cast<int>(i)), ref->mBase->mNpdt.mAttributes[i]);
+                    data->mNpcStats.setAttribute(ESM::Attribute::indexToRefId(i), ref->mBase->mNpdt.mAttributes[i]);
 
                 data->mNpcStats.setHealth(ref->mBase->mNpdt.mHealth);
                 data->mNpcStats.setMagicka(ref->mBase->mNpdt.mMana);
@@ -442,21 +440,18 @@ namespace MWClass
         {
             constexpr std::string_view prefix = "meshes/";
             std::string_view model = ref->mBase->mModel;
-            if (model.size() > prefix.size() && Misc::StringUtils::ciStartsWith(model, prefix))
+            if (model.size() > prefix.size() && VFS::Path::pathEqual(prefix, model.substr(0, prefix.size())))
                 return model.substr(prefix.size());
             return model;
         }
 
-        const VFS::Path::Normalized* modelPath = &Settings::models().mBaseanim.get();
+        std::string_view model = Settings::models().mBaseanim.get();
         const ESM::Race* race = MWBase::Environment::get().getESMStore()->get<ESM::Race>().find(ref->mBase->mRace);
         if (race->mData.mFlags & ESM::Race::Beast)
-            modelPath = &Settings::models().mBaseanimkna.get();
+            model = Settings::models().mBaseanimkna.get();
         // Base animations should be in the meshes dir
         constexpr std::string_view prefix = "meshes/";
-        const std::string_view model = modelPath->view();
-        if (!Misc::StringUtils::ciStartsWith(model, prefix))
-            throw std::runtime_error(std::format("NPC {} model path does not start with \"{}\": {}",
-                ref->mRef.getRefId().toDebugString(), prefix, model));
+        assert(VFS::Path::pathEqual(prefix, model.substr(0, prefix.size())));
         return model.substr(prefix.size());
     }
 
@@ -580,11 +575,11 @@ namespace MWClass
         return ptr.getRefData().getCustomData()->asNpcCustomData().mNpcStats;
     }
 
-    bool Npc::evaluateHit(const MWWorld::Ptr& ptr, MWWorld::Ptr& victim, osg::Vec3f& hitPosition) const
+    //## VR_PATCH BEGIN
+    // split evaluateHit into evaluateHit and findMeleeVictim so VR realistic combat can provide
+    // its victim as a parameter.
+    std::optional<std::pair<MWWorld::Ptr, osg::Vec3f>> Npc::findMeleeVictim(const MWWorld::Ptr& ptr) const
     {
-        victim = MWWorld::Ptr();
-        hitPosition = osg::Vec3f();
-
         // Get the weapon used (if hand-to-hand, weapon = inv.end())
         MWWorld::InventoryStore& inv = getInventoryStore(ptr);
         MWWorld::ContainerStoreIterator weaponslot = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
@@ -592,29 +587,50 @@ namespace MWClass
         if (weaponslot != inv.end() && weaponslot->getType() == ESM::Weapon::sRecordId)
             weapon = *weaponslot;
 
-        MWBase::World* world = MWBase::Environment::get().getWorld();
-
         const float dist = MWMechanics::getMeleeWeaponReach(ptr, weapon);
         const std::pair<MWWorld::Ptr, osg::Vec3f> result = MWMechanics::getHitContact(ptr, dist);
         if (result.first.isEmpty()) // Didn't hit anything
-            return true;
+            return std::nullopt;
+        return result;
+    }
 
-        // Note that earlier we returned true in spite of an apparent failure to hit anything alive.
-        // This is because hitting nothing is not a "miss" and should be handled as such character controller-side.
-        victim = result.first;
-        hitPosition = result.second;
+    MWWorld::MeleeHit Npc::evaluateHit(const MWWorld::Ptr& ptr, std::optional<std::pair<MWWorld::Ptr, osg::Vec3f>> victim) const
+    {
+        MWWorld::MeleeHit result = {
+            .mVictim = MWWorld::Ptr(),
+            .mHitPosition = osg::Vec3f(),
+            .mSuccess = true
+        };
+        if (!victim)
+            victim = findMeleeVictim(ptr);
+        // Note that we return true in spite of an apparent failure to hit anything alive.
+        // This is because hitting nothing is not a "miss" and should be handled as such character-controller-side.
+        if (!victim)
+            return result;
+        result.mVictim = victim->first;
+        result.mHitPosition = victim->second;
 
+        // Note: If getHitChance was moved into Class, we could move evaluateHit and findMeleeVictim to Actor instead of duplicating a lot of logic like this.
+        // But this would diverge me from upstream more than i already am. And maybe it'll be dehardcoded by .50 anyway.
+        MWWorld::InventoryStore& inv = getInventoryStore(ptr);
+        MWWorld::ContainerStoreIterator weaponslot = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+        MWWorld::Ptr weapon;
+        if (weaponslot != inv.end() && weaponslot->getType() == ESM::Weapon::sRecordId)
+            weapon = *weaponslot;
         ESM::RefId weapskill = ESM::Skill::HandToHand;
         if (!weapon.isEmpty())
             weapskill = weapon.getClass().getEquipmentSkill(weapon);
 
-        float hitchance = MWMechanics::getHitChance(ptr, victim, static_cast<int>(getSkill(ptr, weapskill)));
+        float hitchance = MWMechanics::getHitChance(ptr, victim->first, getSkill(ptr, weapskill));
 
-        return Misc::Rng::roll0to99(world->getPrng()) < hitchance;
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        result.mSuccess = Misc::Rng::roll0to99(world->getPrng()) < hitchance;
+        return result;
     }
+    // ## VR_PATCH END
 
     void Npc::hit(const MWWorld::Ptr& ptr, float attackStrength, int type, const MWWorld::Ptr& victim,
-        const osg::Vec3f& hitPosition, bool success) const
+        const osg::Vec3f& hitPosition, bool success, bool ignoreReach) const
     {
         MWWorld::InventoryStore& inv = getInventoryStore(ptr);
         MWWorld::ContainerStoreIterator weaponslot = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
@@ -632,7 +648,7 @@ namespace MWClass
         if (otherstats.isDead()) // Can't hit dead actors
             return;
 
-        if (!MWMechanics::isInMeleeReach(ptr, victim, MWMechanics::getMeleeWeaponReach(ptr, weapon)))
+        if (!ignoreReach && !MWMechanics::isInMeleeReach(ptr, victim, MWMechanics::getMeleeWeaponReach(ptr, weapon)))
             return;
 
         if (ptr == MWMechanics::getPlayer())
@@ -724,6 +740,10 @@ namespace MWClass
     {
         MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
         bool wasDead = stats.isDead();
+//## VR_PATCH BEGIN
+// Set aside raw damage before adjustments, to use for haptics
+        //float rawDamage = damage;
+//## VR_PATCH END
 
         bool setOnPcHitMe = true;
 
@@ -744,14 +764,14 @@ namespace MWClass
         {
             MWMechanics::CreatureStats& statsAttacker = attacker.getClass().getCreatureStats(attacker);
             // First handle the attacked actor
-            if (!stats.getHitAttemptActor().isSet()
+            if ((stats.getHitAttemptActorId() == -1)
                 && (statsAttacker.getAiSequence().isInCombat(ptr) || attacker == MWMechanics::getPlayer()))
-                stats.setHitAttemptActor(attacker.getCellRef().getRefNum());
+                stats.setHitAttemptActorId(statsAttacker.getActorId());
 
             // Next handle the attacking actor
-            if (!statsAttacker.getHitAttemptActor().isSet()
+            if ((statsAttacker.getHitAttemptActorId() == -1)
                 && (statsAttacker.getAiSequence().isInCombat(ptr) || attacker == MWMechanics::getPlayer()))
-                statsAttacker.setHitAttemptActor(ptr.getCellRef().getRefNum());
+                statsAttacker.setHitAttemptActorId(stats.getActorId());
         }
 
         if (!object.empty())
@@ -821,16 +841,26 @@ namespace MWClass
             if (Misc::Rng::roll0to99(prng) < chance)
                 MWBase::Environment::get().getDialogueManager()->say(ptr, ESM::RefId::stringRefId("hit"));
 
-            // Check for knockdown
-            float agilityTerm
-                = stats.getAttribute(ESM::Attribute::Agility).getModified() * gmst.fKnockDownMult->mValue.getFloat();
-            float knockdownTerm = stats.getAttribute(ESM::Attribute::Agility).getModified()
-                    * gmst.iKnockDownOddsMult->mValue.getInteger() * 0.01f
-                + gmst.iKnockDownOddsBase->mValue.getInteger();
-            if (hasHealthDamage && agilityTerm <= healthDamage && knockdownTerm <= Misc::Rng::roll0to99(prng))
-                stats.setKnockedDown(true);
+            // The native FNV player is represented by the shared ESM3 NPC class, but ordinary FNV weapon hits do
+            // not use Morrowind's agility-based knockdown roll. Explicit Fallout effects (for example explosions)
+            // apply knockdown after onHit; a regular impact only requests the same hit-recovery response used by
+            // native ESM4 actors.
+            if (store.getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas)
+                stats.setHitRecovery(true);
             else
-                stats.setHitRecovery(true); // Is this supposed to always occur?
+            {
+                // Check for knockdown
+                float agilityTerm = stats.getAttribute(ESM::Attribute::Agility).getModified()
+                    * gmst.fKnockDownMult->mValue.getFloat();
+                float knockdownTerm = stats.getAttribute(ESM::Attribute::Agility).getModified()
+                        * gmst.iKnockDownOddsMult->mValue.getInteger() * 0.01f
+                    + gmst.iKnockDownOddsBase->mValue.getInteger();
+                if (hasHealthDamage && agilityTerm <= healthDamage
+                    && knockdownTerm <= Misc::Rng::roll0to99(prng))
+                    stats.setKnockedDown(true);
+                else
+                    stats.setHitRecovery(true); // Is this supposed to always occur?
+            }
         }
 
         if (hasHealthDamage && healthDamage > 0.0f)
@@ -850,6 +880,25 @@ namespace MWClass
 
             MWBase::Environment::get().getMechanicsManager()->actorKilled(ptr, attacker);
         }
+//## VR_PATCH BEGIN
+        // TODO: Port to lua
+        // Apply haptics
+        // if (successful)
+        // {
+        //     auto inputManager = MWBase::Environment::get().getInputManager();
+        //     if (ptr == MWMechanics::getPlayer())
+        //     {
+        //         float maxHealth = getCreatureStats(ptr).getHealth().getModified();
+        //         float hapticIntensity = std::max(0.25f, std::min(1.f, rawDamage / (maxHealth / 4.f)));
+        //         inputManager->applyHapticsLeftHand(hapticIntensity);
+        //     }
+        //     else if (attacker == MWMechanics::getPlayer() && hitStrength > 0.f)
+        //     {
+        //         float hapticIntensity = std::max(0.25f, std::min(1.f, hitStrength));
+        //         inputManager->applyHapticsRightHand(hapticIntensity);
+        //     }
+        // }
+//## VR_PATCH END
     }
 
     std::unique_ptr<MWWorld::Action> Npc::activate(const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const
@@ -1067,6 +1116,13 @@ namespace MWClass
 
     float Npc::getCapacity(const MWWorld::Ptr& ptr) const
     {
+        MWBase::World* world = MWBase::Environment::tryGetWorld();
+        if (world != nullptr && ptr == world->getPlayerPtr())
+        {
+            if (const std::optional<float> capacity = world->getFalloutPlayerRuntimeState().getCarryCapacity())
+                return *capacity;
+        }
+
         const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
         static const float fEncumbranceStrMult = MWBase::Environment::get()
                                                      .getESMStore()
@@ -1424,7 +1480,7 @@ namespace MWClass
 
     void Npc::setBaseAISetting(const ESM::RefId& id, MWMechanics::AiSetting setting, int value) const
     {
-        MWMechanics::setBaseAISetting<ESM::NPC>(id, setting, static_cast<unsigned char>(value));
+        MWMechanics::setBaseAISetting<ESM::NPC>(id, setting, value);
     }
 
     void Npc::modifyBaseInventory(const ESM::RefId& actorId, const ESM::RefId& itemId, int amount) const
@@ -1439,8 +1495,23 @@ namespace MWClass
         const float normalizedEncumbrance = getNormalizedEncumbrance(ptr);
         const bool sneaking = MWBase::Environment::get().getMechanicsManager()->isSneaking(ptr);
 
+        float speedAttribute = stats.getAttribute(ESM::Attribute::Speed).getModified();
+        MWBase::World* world = MWBase::Environment::tryGetWorld();
+        if (world != nullptr && ptr == world->getPlayerPtr())
+        {
+            const MWWorld::FalloutPlayerRuntimeState& runtime = world->getFalloutPlayerRuntimeState();
+            const std::optional<MWWorld::FalloutRuntimeActorValue> baseSpeed
+                = runtime.getBaseActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue);
+            const std::optional<MWWorld::FalloutRuntimeActorValue> currentSpeed
+                = runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpeedMultiplierActorValue);
+            // Preserve ordinary ESM3 SetSpeed effects while the FNV value is unchanged. A native-save modifier or
+            // Fallout SetAV/ModAV becomes authoritative as soon as SpeedMult differs from its authored base.
+            if (baseSpeed && currentSpeed && currentSpeed->mValue != baseSpeed->mValue)
+                speedAttribute = currentSpeed->mValue;
+        }
+
         float walkSpeed = gmst.fMinWalkSpeed->mValue.getFloat()
-            + 0.01f * stats.getAttribute(ESM::Attribute::Speed).getModified()
+            + 0.01f * speedAttribute
                 * (gmst.fMaxWalkSpeed->mValue.getFloat() - gmst.fMinWalkSpeed->mValue.getFloat());
         walkSpeed *= 1.0f - gmst.fEncumberedMoveEffect->mValue.getFloat() * normalizedEncumbrance;
         walkSpeed = std::max(0.0f, walkSpeed);

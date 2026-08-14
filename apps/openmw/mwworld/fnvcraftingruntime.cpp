@@ -2,9 +2,11 @@
 
 #include <bit>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -18,7 +20,9 @@
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadrcct.hpp>
 #include <components/esm4/loadrcpe.hpp>
+#include <components/esm4/loadscpt.hpp>
 #include <components/esm4/loadweap.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 #include "containerstore.hpp"
 #include "esmstore.hpp"
@@ -40,7 +44,7 @@ namespace
     // slice and is deliberately not projected onto a MISC object or caps.
     constexpr std::uint32_t sCoinShotCurrency = 0x00176ac4;
 
-    std::optional<ESM::FormId> getStationCategory(const ESM4::Activator& station)
+    std::optional<ESM::FormId> getFrozenStationCategory(const ESM4::Activator& station)
     {
         if (station.mId == ESM::FormId::fromUint32(sWorkbenchBase)
             && station.mScriptId == ESM::FormId::fromUint32(sWorkbenchScript))
@@ -49,6 +53,78 @@ namespace
             && station.mScriptId == ESM::FormId::fromUint32(sReloadingBenchScript))
             return ESM::FormId::fromUint32(sReloadingBenchCategory);
         return std::nullopt;
+    }
+
+    bool tokensEqual(const std::vector<std::string>& actual, std::initializer_list<std::string_view> expected)
+    {
+        if (actual.size() != expected.size())
+            return false;
+        return std::equal(actual.begin(), actual.end(), expected.begin(),
+            [](const std::string& left, std::string_view right) { return Misc::StringUtils::ciEqual(left, right); });
+    }
+
+    std::optional<std::string> getCanonicalRecipeMenuCategory(std::string_view source)
+    {
+        std::vector<std::vector<std::string>> lines;
+        std::istringstream stream{ std::string(source) };
+        for (std::string storage; std::getline(stream, storage);)
+        {
+            std::string_view line = storage;
+            if (const std::size_t comment = line.find(';'); comment != std::string_view::npos)
+                line = line.substr(0, comment);
+
+            std::istringstream words{ std::string(line) };
+            std::vector<std::string> tokens;
+            for (std::string token; words >> token;)
+                tokens.push_back(std::move(token));
+            if (!tokens.empty())
+                lines.push_back(std::move(tokens));
+        }
+
+        // This is the complete executable shape shared by the authored Workbench, Reloading Bench, and ordinary
+        // Campfire scripts. Requiring the entire wrapper keeps quest-gated variants fail-closed.
+        if (lines.size() != 10 || lines[0].size() != 2
+            || !(Misc::StringUtils::ciEqual(lines[0][0], "scn")
+                || Misc::StringUtils::ciEqual(lines[0][0], "ScriptName"))
+            || lines[1].size() != 2 || !Misc::StringUtils::ciEqual(lines[1][0], "Ref"))
+            return std::nullopt;
+
+        const std::string& user = lines[1][1];
+        const std::string userActivate = user + ".Activate";
+        if (!tokensEqual(lines[2], { "Begin", "OnActivate" })
+            || !tokensEqual(lines[3], { "Set", user, "to", "GetActionRef" })
+            || !tokensEqual(lines[4], { "If", "GetActionRef", "!=", "Player" })
+            || !tokensEqual(lines[5], { userActivate })
+            || !tokensEqual(lines[6], { "Elseif", "GetActionRef", "==", "Player" })
+            || lines[7].size() != 2 || !Misc::StringUtils::ciEqual(lines[7][0], "player.showrecipemenu")
+            || !tokensEqual(lines[8], { "Endif" }) || !tokensEqual(lines[9], { "End" }))
+            return std::nullopt;
+        return lines[7][1];
+    }
+
+    std::optional<ESM::FormId> getAuthoredStationCategory(
+        const MWWorld::ESMStore& store, const ESM4::Activator& station)
+    {
+        if (station.mScriptId.isZeroOrUnset())
+            return std::nullopt;
+        const ESM4::Script* script = store.get<ESM4::Script>().search(ESM::RefId(station.mScriptId));
+        if (script == nullptr || (script->mFlags & ESM4::Rec_Deleted) != 0)
+            return std::nullopt;
+        const std::optional<std::string> editorId = getCanonicalRecipeMenuCategory(script->mScript.scriptSource);
+        if (!editorId)
+            return std::nullopt;
+
+        std::optional<ESM::FormId> result;
+        for (const ESM4::RecipeCategory& category : store.get<ESM4::RecipeCategory>())
+        {
+            if ((category.mFlags & ESM4::Rec_Deleted) != 0
+                || !Misc::StringUtils::ciEqual(category.mEditorId, *editorId))
+                continue;
+            if (result)
+                return std::nullopt;
+            result = category.mId;
+        }
+        return result;
     }
 
     bool isDeleted(std::uint32_t flags)
@@ -358,7 +434,15 @@ namespace MWWorld
 
     std::optional<ESM::FormId> getFnvCraftingStationCategory(const ESM4::Activator& station)
     {
-        return getStationCategory(station);
+        return getFrozenStationCategory(station);
+    }
+
+    std::optional<ESM::FormId> getFnvCraftingStationCategory(
+        const ESMStore& store, const ESM4::Activator& station)
+    {
+        if (const std::optional<ESM::FormId> frozen = getFrozenStationCategory(station))
+            return frozen;
+        return getAuthoredStationCategory(store, station);
     }
 
     std::optional<PreparedFnvCraftingCatalog> prepareFnvCraftingCatalog(
@@ -378,7 +462,8 @@ namespace MWWorld
             return failCatalog(FnvCraftingPreparationError::StationNotInStore, error);
         if (isDeleted(source.mStation->mFlags))
             return failCatalog(FnvCraftingPreparationError::DeletedRecord, error);
-        const std::optional<ESM::FormId> stationCategory = getStationCategory(*source.mStation);
+        const std::optional<ESM::FormId> stationCategory
+            = getFnvCraftingStationCategory(store, *source.mStation);
         if (!stationCategory)
             return failCatalog(FnvCraftingPreparationError::UnsupportedStation, error);
 
@@ -591,7 +676,8 @@ namespace MWWorld
             return fail(FnvCraftingPreparationError::StationNotInStore, error);
         if (isDeleted(source.mStation->mFlags))
             return fail(FnvCraftingPreparationError::DeletedRecord, error);
-        const std::optional<ESM::FormId> stationMapping = getStationCategory(*source.mStation);
+        const std::optional<ESM::FormId> stationMapping
+            = getFnvCraftingStationCategory(store, *source.mStation);
         if (!stationMapping)
             return fail(FnvCraftingPreparationError::UnsupportedStation, error);
 

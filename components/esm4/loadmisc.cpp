@@ -33,18 +33,8 @@
 
 void ESM4::MiscItem::load(ESM4::Reader& reader)
 {
-    MiscItem value;
-    value.mOriginalRecordType = reader.hdr().record.typeId;
-    const bool ordinaryMisc = value.mOriginalRecordType == ESM4::REC_MISC;
-    const bool casinoChip = value.mOriginalRecordType == ESM4::REC_CHIP;
-    const bool caravanCard = value.mOriginalRecordType == ESM4::REC_CCRD;
-    const bool caravanMoney = value.mOriginalRecordType == ESM4::REC_CMNY;
-    if (!ordinaryMisc && !casinoChip && !caravanCard && !caravanMoney)
-        throw std::runtime_error("ESM4::MiscItem::load - unsupported record type "
-            + ESM::printName(value.mOriginalRecordType));
-
-    value.mId = reader.getFormIdFromHeader();
-    value.mFlags = reader.hdr().record.flags;
+    mId = reader.getFormIdFromHeader();
+    mFlags = reader.hdr().record.flags;
 
     while (reader.getSubRecordHeader())
     {
@@ -52,57 +42,34 @@ void ESM4::MiscItem::load(ESM4::Reader& reader)
         switch (subHdr.typeId)
         {
             case ESM::fourCC("EDID"):
-                reader.getZString(value.mEditorId);
+                reader.getZString(mEditorId);
                 break;
             case ESM::fourCC("FULL"):
-                reader.getLocalizedString(value.mFullName);
+                reader.getLocalizedString(mFullName);
                 break;
             case ESM::fourCC("MODL"):
-                reader.getZString(value.mModel);
+                reader.getZString(mModel);
                 break;
             case ESM::fourCC("ICON"):
-                reader.getZString(value.mIcon);
+                reader.getZString(mIcon);
                 break;
             case ESM::fourCC("MICO"):
-                reader.getZString(value.mMiniIcon);
+                reader.getZString(mMiniIcon);
                 break; // FO3
             case ESM::fourCC("SCRI"):
-                reader.getFormId(value.mScriptId);
+                reader.getFormId(mScriptId);
                 break;
             case ESM::fourCC("DATA"):
-                if (ordinaryMisc)
-                    reader.get(value.mData);
-                else
-                    reader.get(value.mData.value);
+                reader.get(mData);
                 break;
             case ESM::fourCC("MODB"):
-                reader.get(value.mBoundRadius);
+                reader.get(mBoundRadius);
                 break;
             case ESM::fourCC("YNAM"):
-                reader.getFormId(value.mPickUpSound);
+                reader.getFormId(mPickUpSound);
                 break;
             case ESM::fourCC("ZNAM"):
-                reader.getFormId(value.mDropSound);
-                break;
-            case ESM::fourCC("TX00"):
-                if (!caravanCard)
-                    throw std::runtime_error("ESM4::MiscItem::load - TX00 outside CCRD");
-                reader.getZString(value.mCardFaceTexture);
-                break;
-            case ESM::fourCC("TX01"):
-                if (!caravanCard)
-                    throw std::runtime_error("ESM4::MiscItem::load - TX01 outside CCRD");
-                reader.getZString(value.mCardBackTexture);
-                break;
-            case ESM::fourCC("INTV"):
-                if (!caravanCard)
-                    throw std::runtime_error("ESM4::MiscItem::load - INTV outside CCRD");
-                if (value.mCardSuit == 0)
-                    reader.get(value.mCardSuit);
-                else if (value.mCardRank == 0)
-                    reader.get(value.mCardRank);
-                else
-                    throw std::runtime_error("ESM4::MiscItem::load - too many CCRD INTV fields");
+                reader.getFormId(mDropSound);
                 break;
             case ESM::fourCC("MODT"): // Model data
             case ESM::fourCC("MODC"):
@@ -134,8 +101,6 @@ void ESM4::MiscItem::load(ESM4::Reader& reader)
                 throw std::runtime_error("ESM4::MISC::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }
-
-    *this = std::move(value);
 }
 
 // void ESM4::MiscItem::save(ESM4::Writer& writer) const

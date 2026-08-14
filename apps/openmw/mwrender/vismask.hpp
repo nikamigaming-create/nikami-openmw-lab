@@ -56,12 +56,13 @@ namespace MWRender
         Mask_Lighting = (1 << 19),
 
         Mask_Groundcover = (1 << 20),
+//## VR_PATCH BEGIN
 
-        // VR interface geometry and pointers use independent masks so they can
-        // be rendered and intersected separately from the flat desktop GUI.
+        // Vr masks
         Mask_3DGUI = (1 << 21),
         Mask_3DGUI_NonIntersectable = (1 << 22),
-        Mask_Pointer = (1 << 23),
+        Mask_Pointer = (1 << 23)
+//## VR_PATCH END
     };
 
     // Defines masks to remove when using ToggleWorld command

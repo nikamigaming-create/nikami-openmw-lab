@@ -63,9 +63,10 @@ CONFIGURATIONS=()
 TEST_FRAMEWORK=""
 INSTALL_PREFIX="."
 BUILD_BENCHMARKS=""
+SKIP_VR=""
 USE_WERROR=""
 USE_CLANG_TIDY=""
-
+OSG_MULTIVIEW_BUILD=""
 ACTIVATE_MSVC=""
 SINGLE_CONFIG=""
 
@@ -137,6 +138,9 @@ while [ $# -gt 0 ]; do
 			T )
 				USE_CLANG_TIDY=true ;;
 
+            M )
+                OSG_MULTIVIEW_BUILD=true ;;
+
 			h )
 				cat <<EOF
 Usage: $0 [-cdehkpuvVi]
@@ -161,7 +165,7 @@ Options:
 		Build unit tests / Google test
 	-u
 		Configure for unity builds.
-	-v <2022/2026>
+	-v <2019/2022>
 		Choose the Visual Studio version to use.
 	-n
 		Produce NMake makefiles instead of a Visual Studio solution. Cannot be used with -N.
@@ -248,7 +252,7 @@ download() {
 		shift
 
 		if ! [ -f $FILE ]; then
-			printf "  Downloading $FILE from $URL... "
+			printf "  Downloading $FILE... "
 
 			if [ -z $VERBOSE ]; then
 				RET=0
@@ -366,34 +370,30 @@ if [ -z $PLATFORM ]; then
 fi
 
 if [ -z $VS_VERSION ]; then
-	VS_VERSION="2022"
+	VS_VERSION="2019"
 fi
 
 case $VS_VERSION in
-	18|18.0|2026 )
-		GENERATOR="Visual Studio 18 2026"
-		MSVC_REAL_VER="18"
-		MSVC_DISPLAY_YEAR="2026"
-
-		DEPS_MSVC_YEAR="2022"
-		QT_MSVC_YEAR="2019"
-
-		VCPKG_TRIPLET="x64-windows"
-		;;
 	17|17.0|2022 )
 		GENERATOR="Visual Studio 17 2022"
+		MSVC_TOOLSET="vc143"
 		MSVC_REAL_VER="17"
 		MSVC_DISPLAY_YEAR="2022"
 
-		DEPS_MSVC_YEAR="2022"
 		QT_MSVC_YEAR="2019"
 
 		VCPKG_TRIPLET="x64-windows"
 		;;
 
 	16|16.0|2019 )
-		echo "Visual Studio 2019 is no longer supported"
-		wrappedExit 1
+		GENERATOR="Visual Studio 16 2019"
+		MSVC_TOOLSET="vc142"
+		MSVC_REAL_VER="16"
+		MSVC_DISPLAY_YEAR="2019"
+
+		QT_MSVC_YEAR="2019"
+
+		VCPKG_TRIPLET="x64-windows-2019"
 		;;
 
 	15|15.0|2017 )
@@ -534,9 +534,9 @@ fi
 
 if [ -n "$USE_CCACHE" ]; then
 	if [ -n "$NMAKE" ] || [ -n "$NINJA" ]; then
-		add_cmake_opts "-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+		add_cmake_opts "-DCMAKE_C_COMPILER_LAUNCHER=ccache  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DPRECOMPILE_HEADERS_WITH_MSVC=OFF"
 	else
-		add_cmake_opts "-DOPENMW_MSBUILD_COMPILER_OVERRIDE=ccache"
+		echo "Ignoring -C (CCache) as it is incompatible with Visual Studio CMake generators"
 	fi
 fi
 
@@ -551,16 +551,17 @@ if [[ -n "$USE_CLANG_TIDY" ]]; then
   add_cmake_opts "-DCMAKE_CXX_CLANG_TIDY=\"clang-tidy --warnings-as-errors=*\""
 fi
 
-# these are defined in a separate file so its hash can be used as a CI cache key
-source "$(dirname -- "${BASH_SOURCE[0]}")/deps_versions.msvc.sh"
-
-# versions that don't affect the CI cache can go here
+QT_VER='6.6.3'
 AQT_VERSION='v3.1.15'
 
-VCPKG_PATH="vcpkg-x64-windows-${DEPS_MSVC_YEAR:?}-${VCPKG_TAG:?}"
-VCPKG_PDB_PATH="vcpkg-x64-windows-${DEPS_MSVC_YEAR:?}-pdb-${VCPKG_TAG:?}"
-VCPKG_MANIFEST="${VCPKG_PATH:?}-manifest.txt"
-VCPKG_PDB_MANIFEST="${VCPKG_PDB_PATH:?}-manifest.txt"
+VCPKG_TAG="2025-07-23"
+if [[ -n "$OSG_MULTIVIEW_BUILD" ]]; then
+    VCPKG_TAG="m1.0"
+fi
+VCPKG_PATH="vcpkg-x64-${VS_VERSION:?}-${VCPKG_TAG:?}"
+VCPKG_PDB_PATH="vcpkg-x64-${VS_VERSION:?}-pdb-${VCPKG_TAG:?}"
+VCPKG_MANIFEST="${VCPKG_PATH:?}.txt"
+VCPKG_PDB_MANIFEST="${VCPKG_PDB_PATH:?}.txt"
 
 echo
 echo "==================================="
@@ -578,6 +579,9 @@ if [ -z $SKIP_DOWNLOAD ]; then
 	echo
 
 	DEPS_BASE_URL="https://gitlab.com/OpenMW/openmw-deps/-/raw/main/windows"
+    if [[ -n "$OSG_MULTIVIEW_BUILD" ]]; then
+        DEPS_BASE_URL="https://gitlab.com/madsbuvi/openmw-deps/-/raw/openmw-vr/windows"
+    fi
 
 	download "${VCPKG_MANIFEST:?}" \
 		"${DEPS_BASE_URL}/${VCPKG_MANIFEST:?}" \
@@ -750,6 +754,7 @@ if [ ! -z $CI ]; then
 				-DBUILD_MWINIIMPORTER=no \
 				-DBUILD_OPENCS=no \
 				-DBUILD_OPENMW=no \
+				-DBUILD_OPENMW_VR=no \
 				-DBUILD_WIZARD=no
 			;;
 		openmw )
@@ -766,12 +771,14 @@ if [ ! -z $CI ]; then
 				-DBUILD_LAUNCHER=no \
 				-DBUILD_MWINIIMPORTER=no \
 				-DBUILD_OPENMW=no \
+				-DBUILD_OPENMW_VR=no \
 				-DBUILD_WIZARD=no
 			;;
 		misc )
 			echo "  Building subprojects: Misc."
 			add_cmake_opts -DBUILD_OPENCS=no \
 				-DBUILD_OPENMW=no
+				-DBUILD_OPENMW_VR=no
 			;;
 	esac
 fi
@@ -859,13 +866,13 @@ if [ -n "$ACTIVATE_MSVC" ]; then
 		echo "vswhere was unable to find MSVC $MSVC_DISPLAY_YEAR"
 		wrappedExit 1
 	fi
-
+	
 	echo "@\"${MSVC_INSTALLATION_PATH}\Common7\Tools\VsDevCmd.bat\" -no_logo -arch=$([ $BITS -eq 64 ] && echo "amd64" || echo "x86") -host_arch=$([ $(uname -m) == 'x86_64' ] && echo "amd64" || echo "x86")" > ActivateMSVC.bat
-
+	
 	cp "../CI/activate_msvc.sh" .
 	sed -i "s/\$MSVC_DISPLAY_YEAR/$MSVC_DISPLAY_YEAR/g" activate_msvc.sh
 	source ./activate_msvc.sh
-
+	
 	cp "../CI/ActivateMSVC.ps1" .
 	sed -i "s/\$MSVC_DISPLAY_YEAR/$MSVC_DISPLAY_YEAR/g" ActivateMSVC.ps1
 
@@ -918,7 +925,7 @@ if [ -n "$ACTIVATE_MSVC" ]; then
 			inheritEnvironments=msvc_x86
 		fi
 	fi
-	echo "In Visual Studio, try setting '\"inheritEnvironments\": [ \"$inheritEnvironments\" ]' in CMakeSettings.json to build in the IDE."
+	echo "In Visual Studio 15.3 (2017 Update 3) or later, try setting '\"inheritEnvironments\": [ \"$inheritEnvironments\" ]' in CMakeSettings.json to build in the IDE."
 fi
 
 wrappedExit $RET

@@ -1,16 +1,16 @@
 #include "camera.hpp"
 
-#include "animation.hpp"
-
 #include <osg/Camera>
 
 #include <components/misc/mathutil.hpp>
 #include <components/sceneutil/nodecallback.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/visitor.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
+#include "../mwbase/statemanager.hpp"
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/ptr.hpp"
@@ -21,6 +21,16 @@
 #include "../mwphysics/raycasting.hpp"
 
 #include "npcanimation.hpp"
+
+//## VR_PATCH BEGIN
+#include <components/vr/session.hpp>
+#include <components/vr/trackinglistener.hpp>
+#include <components/vr/trackingmanager.hpp>
+#include <components/vr/viewer.hpp>
+#include <components/vr/vr.hpp>
+#include "../mwvr/openxrinput.hpp"
+#include "../mwvr/vranimation.hpp"
+//## VR_PATCH END
 
 namespace
 {
@@ -49,7 +59,6 @@ namespace
 
 namespace MWRender
 {
-
     Camera::Camera(osg::Camera* camera)
         : mHeightScale(1.f)
         , mCollisionType(
@@ -78,12 +87,33 @@ namespace MWRender
         , mDeferredRotationDisabled(false)
     {
         mUpdateCallback = new UpdateRenderCameraCallback(this);
-        mCamera->addUpdateCallback(mUpdateCallback);
-    }
+//## VR_PATCH BEGIN
+// VR-TODO: Instead of this convoluted method of forcing the desired order, why am i not
+// just calling my callback from the regular update callback...
+        if (mCamera->getUpdateCallback())
+        {
+            // Have to make sure the camera's callback is always called first
+            std::vector<osg::ref_ptr<osg::Callback>> cbs;
+            while (auto* cb = mCamera->getUpdateCallback())
+            {
+                cbs.push_back(cb);
+                mCamera->removeUpdateCallback(cb);
+            }
+            mCamera->addUpdateCallback(mUpdateCallback);
+            for (auto& cb : cbs)
+                mCamera->addUpdateCallback(cb);
+        }
+        else
+        {
+            mCamera->addUpdateCallback(mUpdateCallback);
+        }
 
-    float Camera::getLodScale() const
-    {
-        return mCamera.valid() ? mCamera->getLODScale() : 1.f;
+        if (VR::getVR())
+        {
+            mMode = Mode::VR;
+            processViewChange();
+        }
+//## VR_PATCH END
     }
 
     float Camera::getLodScale() const
@@ -96,19 +126,50 @@ namespace MWRender
         mCamera->removeUpdateCallback(mUpdateCallback);
     }
 
-    osg::Vec3d Camera::calculateTrackedPosition() const
+//## VR_PATCH BEGIN
+    void Camera::updateTrackedPosition() const
     {
         if (!mTrackingNode)
-            return osg::Vec3d();
+            return;
         osg::NodePathList nodepaths = mTrackingNode->getParentalNodePaths();
         if (nodepaths.empty())
-            return osg::Vec3d();
-        osg::Matrix worldMat = osg::computeLocalToWorld(nodepaths[0]);
-        osg::Vec3d result = worldMat.getTrans();
-        if (mMode != Mode::FirstPerson || mFirstPersonUsesTrackingRoot)
-            result.z() += mHeight * mHeightScale;
-        return result;
+            return;
+        mTrackedWorldMatrix = osg::computeLocalToWorld(nodepaths[0]);
+        if (mMode == Mode::FirstPerson && mFirstPersonUsesTrackingRoot)
+        {
+            osg::Vec3d trans = mTrackedWorldMatrix.getTrans();
+            trans.z() += mHeight * mHeightScale;
+            mTrackedWorldMatrix.setTrans(trans);
+        }
+        else if (mMode != Mode::FirstPerson && mMode != Mode::VR)
+        {
+            osg::Vec3d trans = mTrackedWorldMatrix.getTrans();
+            trans.z() += mHeight * mHeightScale;
+            mTrackedWorldMatrix.setTrans(trans);
+        }
     }
+
+    void Camera::updateCamera()
+    {
+        updateCamera(mCamera);
+    }
+
+    void Camera::setPose(const Stereo::Pose& pose)
+    {
+        mTrackedPose = pose;
+        mPosition = mTrackedPose.position.asMWUnits();
+        updateCamera();
+    }
+
+    void Camera::onSpaceUpdate() 
+    {
+        auto tp = MWVR::OpenXRInput::instance().getSpace(MWVR::OpenXRInput::DefaultReferenceSpaceView)->locateInWorld();
+        if (!tp.status)
+            setPose(mTrackedPose);
+        else
+            setPose(tp.pose);
+    }
+    // ## VR_PATCH END
 
     osg::Vec3d Camera::getFocalPointOffset() const
     {
@@ -119,19 +180,27 @@ namespace MWRender
         return offset;
     }
 
-    void Camera::updateCamera(osg::Camera* cam)
+//## VR_PATCH BEGIN
+// Include VR pose in position/orientation
+    void Camera::getOrientation(osg::Quat& orientation) const
     {
-        osg::Quat orient = getOrient();
-        if (mUseTrackingNodeTransform && mTrackingNode)
+        if (mMode == Mode::VR)
         {
-            const osg::NodePathList nodePaths = mTrackingNode->getParentalNodePaths();
-            if (!nodePaths.empty())
-                orient = osg::computeLocalToWorld(nodePaths.front()).getRotate();
+            orientation = mTrackedPose.orientation;
         }
-        osg::Vec3d forward = orient * osg::Vec3d(0, 1, 0);
-        osg::Vec3d up = orient * osg::Vec3d(0, 0, 1);
+        else
+        {
+            orientation = osg::Quat(mRoll + mExtraRoll, osg::Vec3d(0, 1, 0))
+                * osg::Quat(mPitch + mExtraPitch, osg::Vec3d(1, 0, 0))
+                * osg::Quat(mYaw + mExtraYaw, osg::Vec3d(0, 0, 1));
+            ;
+        }
+    }
 
-        osg::Vec3d pos = mPosition;
+    void Camera::getPosition(osg::Vec3d& position) const
+    {
+
+        position = mPosition;
         if (mMode == Mode::FirstPerson)
         {
             // It is a hack. Camera position depends on neck animation.
@@ -139,9 +208,28 @@ namespace MWRender
             // recalculate the position here. Note that it becomes different from mPosition that
             // is used in other parts of the code.
             // TODO: detach camera from OSG animation and get rid of this hack.
-            osg::Vec3d recalculatedTrackedPosition = calculateTrackedPosition();
-            pos = calculateFirstPersonPosition(recalculatedTrackedPosition);
+
+            updateTrackedPosition();
+            position = calculateFirstPersonPosition(mTrackedWorldMatrix.getTrans());
         }
+
+        if (mMode == Mode::VR)
+        {
+            position = mTrackedPose.position.asMWUnits();
+        }
+    }
+
+    void Camera::updateCamera(osg::Camera* cam)
+    {
+        osg::Vec3d pos;
+        getPosition(pos);
+
+        osg::Quat orient;
+        getOrientation(orient);
+
+        osg::Vec3d forward = orient * osg::Vec3d(0, 1, 0);
+        osg::Vec3d up = orient * osg::Vec3d(0, 0, 1);
+//## VR_PATCH END
         cam->setViewMatrixAsLookAt(pos, pos + forward, up);
         mViewMatrix = cam->getViewMatrix();
         mProjectionMatrix = cam->getProjectionMatrix();
@@ -166,9 +254,6 @@ namespace MWRender
 
     osg::Vec3d Camera::calculateFirstPersonPosition(const osg::Vec3d& trackedPosition) const
     {
-        if (mUseTrackingNodeTransform)
-            return trackedPosition;
-
         osg::Vec3d res = trackedPosition;
         const osg::Vec3f totalOffset = mFirstPersonOffset + mFirstPersonProfileOffset;
         osg::Vec2f horizontalOffset
@@ -181,7 +266,10 @@ namespace MWRender
 
     void Camera::updatePosition()
     {
-        mTrackedPosition = calculateTrackedPosition();
+//## VR_PATCH BEGIN
+        updateTrackedPosition();
+        mTrackedPosition = mTrackedWorldMatrix.getTrans();
+//## VR_PATCH END
         if (mMode == Mode::Static)
             return;
         if (mMode == Mode::FirstPerson)
@@ -190,6 +278,12 @@ namespace MWRender
             mCameraDistance = 0;
             return;
         }
+//## VR_PATCH BEGIN
+        if (mMode == Mode::VR)
+        {
+            return;
+        }
+//## VR_PATCH END
 
         constexpr float cameraObstacleLimit = 5.0f;
         constexpr float focalObstacleLimit = 10.f;
@@ -201,7 +295,7 @@ namespace MWRender
         osg::Vec3d focal = mTrackedPosition + focalOffset;
         focalOffset.z() += 10.f; // Needed to avoid camera clipping through the ceiling because
                                  // character's head can be a bit higher than the collision area.
-        double offsetLen = focalOffset.length();
+        float offsetLen = focalOffset.length();
         if (offsetLen > 0)
         {
             MWPhysics::RayCastingResult result
@@ -243,6 +337,10 @@ namespace MWRender
             mQueuedMode = std::nullopt;
             return;
         }
+//## VR_PATCH BEGIN
+        if (newMode != Mode::VR && VR::getVR())
+            return;
+//## VR_PATCH END
         Mode oldMode = mMode;
         if (!force && (newMode == Mode::FirstPerson || oldMode == Mode::FirstPerson) && mAnimation
             && !mAnimation->upperBodyReady())
@@ -254,11 +352,15 @@ namespace MWRender
         }
         mMode = newMode;
         mQueuedMode = std::nullopt;
-        if (newMode == Mode::FirstPerson)
+//## VR_PATCH BEGIN
+        if (newMode == Mode::FirstPerson || newMode == Mode::VR)
             mFirstPersonView = true;
         else if (newMode == Mode::ThirdPerson)
+        {
             mFirstPersonView = false;
-        calculateDeferredRotation();
+            calculateDeferredRotation();
+        }
+//## VR_PATCH END
         if (oldMode == Mode::FirstPerson || newMode == Mode::FirstPerson)
         {
             instantTransition();
@@ -302,9 +404,9 @@ namespace MWRender
         osg::Vec2d delta = mFocalPointTargetOffset - mFocalPointCurrentOffset;
         if (delta.length2() > 0)
         {
-            double coef = duration * (1.0 + 5.0 / delta.length()) * mFocalPointTransitionSpeedCoef
+            float coef = duration * (1.0 + 5.0 / delta.length()) * mFocalPointTransitionSpeedCoef
                 * (1.0f - mPreviousTransitionInfluence);
-            mFocalPointCurrentOffset += delta * std::min(coef, 1.0);
+            mFocalPointCurrentOffset += delta * std::min(coef, 1.0f);
         }
         else
         {
@@ -317,11 +419,19 @@ namespace MWRender
 
     void Camera::toggleViewMode(bool force)
     {
+//## VR_PATCH BEGIN
+        if (mMode == Mode::VR)
+            return;
+
         setMode(mFirstPersonView ? Mode::ThirdPerson : Mode::FirstPerson, force);
     }
 
     bool Camera::toggleVanityMode(bool enable)
     {
+        if (mMode == Mode::VR)
+            return false;
+
+//## VR_PATCH END
         if (!enable)
             setMode(mFirstPersonView ? Mode::FirstPerson : Mode::ThirdPerson, false);
         else if (mVanityAllowed)
@@ -331,14 +441,18 @@ namespace MWRender
 
     void Camera::setSneakOffset(float offset)
     {
-        if (NpcAnimation* const npcAnimation = dynamic_cast<NpcAnimation*>(mAnimation))
-            npcAnimation->setFirstPersonOffset(osg::Vec3f(0, 0, -offset));
+        mAnimation->setFirstPersonOffset(osg::Vec3f(0, 0, -offset));
+//## VR_PATCH BEGIN
+
+        if (VR::getVR())
+            VR::setSneakOffsetEnabled(offset != 0.f);
+//## VR_PATCH END
     }
 
     void Camera::setYaw(float angle, bool force)
     {
         if (!mLockYaw || force)
-            mYaw = static_cast<float>(Misc::normalizeAngle(angle));
+            mYaw = Misc::normalizeAngle(angle);
         if (force)
             mLockYaw = true;
     }
@@ -360,36 +474,36 @@ namespace MWRender
         mPosition = pos;
     }
 
-    void Camera::setAnimation(Animation* anim, bool useTrackingNodeTransform)
+    void Camera::setAnimation(NpcAnimation* anim)
     {
-        if (mAnimation == anim && mUseTrackingNodeTransform == useTrackingNodeTransform)
-            return;
-
         mAnimation = anim;
-        mUseTrackingNodeTransform = useTrackingNodeTransform;
         mProcessViewChange = true;
     }
 
     void Camera::processViewChange()
     {
-        if (mTrackingPtr.isEmpty())
-            return;
-
-        if (mAnimation == nullptr)
+        mFirstPersonUsesTrackingRoot = false;
+//## VR_PATCH BEGIN
+        if (mMode == Mode::VR)
         {
-            mTrackingNode = nullptr;
+            //SceneUtil::FindByNameVisitor visitor("VrCamera");
+            //if (mAnimation && mAnimation->getObjectRoot())
+            //{
+            //    mAnimation->getObjectRoot()->accept(visitor);
+            //    mTrackingNode = visitor.mFoundNode;
+            //}
+            //mHeightScale = 1.f;
             mProcessViewChange = false;
             return;
         }
 
-        mFirstPersonUsesTrackingRoot = false;
+//## VR_PATCH END
+        if (mTrackingPtr.isEmpty())
+            return;
         if (mMode == Mode::FirstPerson)
         {
-            if (NpcAnimation* const npcAnimation = dynamic_cast<NpcAnimation*>(mAnimation))
-                npcAnimation->setViewMode(NpcAnimation::VM_FirstPerson);
-            mTrackingNode = mAnimation->getNode("Camera1st");
-            if (!mTrackingNode)
-                mTrackingNode = mAnimation->getNode("Camera");
+            mAnimation->setViewMode(NpcAnimation::VM_FirstPerson);
+            mTrackingNode = mAnimation->getNode("Camera");
             if (!mTrackingNode)
                 mTrackingNode = mAnimation->getNode("Head");
             if (!mTrackingNode)
@@ -401,8 +515,7 @@ namespace MWRender
         }
         else
         {
-            if (NpcAnimation* const npcAnimation = dynamic_cast<NpcAnimation*>(mAnimation))
-                npcAnimation->setViewMode(NpcAnimation::VM_Normal);
+            mAnimation->setViewMode(NpcAnimation::VM_Normal);
             SceneUtil::PositionAttitudeTransform* transform = mTrackingPtr.getRefData().getBaseNode();
             mTrackingNode = transform;
             if (transform)
@@ -448,7 +561,9 @@ namespace MWRender
 
     void Camera::rotateCameraToTrackingPtr()
     {
-        if (mMode == Mode::Static || mTrackingPtr.isEmpty())
+//## VR_PATCH BEGIN
+        if (mMode == Mode::Static || mMode == Mode::VR || mTrackingPtr.isEmpty())
+//## VR_PATCH END
             return;
         setPitch(-mTrackingPtr.getRefData().getPosition().rot[0] - mDeferredRotation.x());
         setYaw(-mTrackingPtr.getRefData().getPosition().rot[2] - mDeferredRotation.z());
@@ -460,6 +575,10 @@ namespace MWRender
         mDeferredRotationDisabled = false;
         mDeferredRotation = osg::Vec3f();
         rotateCameraToTrackingPtr();
+//## VR_PATCH BEGIN
+        if(VR::getVR())
+            VR::Session::instance().instantTransition();
+//## VR_PATCH END
     }
 
     void Camera::calculateDeferredRotation()
@@ -472,15 +591,16 @@ namespace MWRender
         MWWorld::Ptr ptr = mTrackingPtr;
         if (mMode == Mode::Preview || mMode == Mode::Vanity || ptr.isEmpty())
             return;
-        if (mFirstPersonView)
+//## VR_PATCH BEGIN
+        if (mFirstPersonView || mMode == Mode::VR)
+//## VR_PATCH END
         {
             instantTransition();
             return;
         }
 
-        mDeferredRotation.x()
-            = static_cast<float>(Misc::normalizeAngle(-ptr.getRefData().getPosition().rot[0] - mPitch));
-        mDeferredRotation.z() = static_cast<float>(Misc::normalizeAngle(-ptr.getRefData().getPosition().rot[2] - mYaw));
+        mDeferredRotation.x() = Misc::normalizeAngle(-ptr.getRefData().getPosition().rot[0] - mPitch);
+        mDeferredRotation.z() = Misc::normalizeAngle(-ptr.getRefData().getPosition().rot[2] - mYaw);
         if (!mDeferredRotationAllowed)
             mDeferredRotationDisabled = true;
     }

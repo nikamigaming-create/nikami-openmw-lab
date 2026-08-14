@@ -14,7 +14,6 @@
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/creaturestats.hpp"
-#include "../mwmechanics/falloutactorstate.hpp"
 #include "../mwmechanics/magiceffects.hpp"
 #include "../mwmechanics/movement.hpp"
 
@@ -88,7 +87,8 @@ namespace MWClass
     float Actor::getCurrentSpeed(const MWWorld::Ptr& ptr) const
     {
         const MWMechanics::Movement& movementSettings = ptr.getClass().getMovementSettings(ptr);
-        float moveSpeed = this->getMaxSpeed(ptr) * movementSettings.mSpeedFactor;
+        float moveSpeed
+            = this->getMaxSpeed(ptr) * movementSettings.mSpeedFactor * movementSettings.mSpeedMultiplier;
         if (movementSettings.mIsStrafing)
             moveSpeed *= 0.75f;
         return moveSpeed;
@@ -115,23 +115,11 @@ namespace MWClass
         (void)sourceType;
         MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
         const bool wasDead = stats.isDead();
-        if (ptr != MWMechanics::getPlayer()
-            && MWMechanics::getFalloutActorFlag(ptr, MWMechanics::FalloutActorFlag::Ghost))
-            return;
 
         if (!attacker.isEmpty() && attacker.getClass().isActor() && !stats.getAiSequence().isInCombat(attacker))
         {
-            MWBase::MechanicsManager* const mechanics
-                = MWBase::Environment::get().getMechanicsManager();
-            const bool ignoreFriendlyHit
-                = MWMechanics::getFalloutActorFlag(
-                      ptr, MWMechanics::FalloutActorFlag::IgnoreFriendlyHits)
-                && !mechanics->isAggressive(ptr, attacker);
-            if (!ignoreFriendlyHit)
-            {
-                stats.setAttacked(true);
-                mechanics->actorAttacked(ptr, attacker);
-            }
+            stats.setAttacked(true);
+            MWBase::Environment::get().getMechanicsManager()->actorAttacked(ptr, attacker);
         }
 
         if (!object.empty())

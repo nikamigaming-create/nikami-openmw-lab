@@ -4,37 +4,21 @@
     <Widget type="Window" skin="MW_Window_Pinnable" layer="Windows" position="0 0 300 600" name="_Main">
         <Property key="MinSize" value="40 40"/>
 
-        <Widget type="ImageBox" skin="ImageBox" position="0 0 300 600" align="Stretch" name="PipBoyBackdrop">
-            <Property key="ImageTexture" value="textures\interface\shared\background\pipboy.dds"/>
-            <Property key="Colour" value="#174d26"/>
-            <Property key="NeedMouse" value="false"/>
-            <Property key="Visible" value="false"/>
-        </Widget>
-        <Widget type="TextBox" skin="NormalText" position="42 18 220 26" align="Top HStretch" name="PipBoyHeader">
-            <Property key="Caption" value="PIP-BOY 3000  //  DATA"/>
-            <Property key="TextColour" value="#74ff86"/>
-            <Property key="TextAlign" value="Left VCenter"/>
-            <Property key="NeedMouse" value="false"/>
-            <Property key="Visible" value="false"/>
-        </Widget>
-        <Widget type="TextBox" skin="NormalText" position="42 570 216 20" align="Bottom HStretch" name="PipBoyFooter">
-            <Property key="Caption" value="QUESTS / NOTES / RADIO"/>
-            <Property key="TextColour" value="#58d86d"/>
-            <Property key="TextAlign" value="Center VCenter"/>
-            <Property key="NeedMouse" value="false"/>
-            <Property key="Visible" value="false"/>
-        </Widget>
-
         <!-- Effect box-->
-        <Widget type="Widget" skin="MW_Box" position="24 64 252 23" align="Left Top HStretch">
+        <Widget type="Widget" skin="MW_Box" position="8 8 268 23" align="Left Top HStretch">
             <Widget type="Widget" skin="" position="2 1 264 20" align="Left Top Stretch" name="EffectsBox"/>
         </Widget>
 
         <!-- Spell list -->
-        <Widget type="SpellView" skin="MW_SpellView" position="24 94 252 440" align="Left Top Stretch" name="SpellView">
+        <Widget type="SpellView" skin="MW_SpellView" position="8 38 268 490" align="Left Top Stretch" name="SpellView">
         </Widget>
 
-        <Widget type="HBox" position="24 542 252 23" align="Right Bottom HStretch">
+        <!-- Fallout uses this native pane for quest/objective data rather than TES3 spells. -->
+        <Widget type="MWList" skin="MW_QuestList" position="8 8 268 550" align="Left Top Stretch" name="FalloutQuestList">
+            <Property key="Visible" value="false"/>
+        </Widget>
+
+        <Widget type="HBox" position="8 535 268 23" align="Right Bottom HStretch">
             <Widget type="Spacer"/>
             <!-- Spell deletion button -->
             <Widget type="AutoSizedButton" skin="MW_Button" align="Right Bottom" position="8 535 0 23" name="DeleteSpellButton">
@@ -44,7 +28,7 @@
         </Widget>
 
         <!-- Search box-->
-        <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="24 542 252 23" align="Left Bottom HStretch" name="FilterEdit">
+        <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="8 535 268 23" align="Left Bottom HStretch" name="FilterEdit">
             <UserString key="AcceptTab" value="true"/>
         </Widget>
 

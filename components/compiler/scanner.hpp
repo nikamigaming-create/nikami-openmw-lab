@@ -181,7 +181,7 @@ namespace Compiler
 
     class Scanner
     {
-        enum PutbackType
+        enum putback_type
         {
             Putback_None,
             Putback_Special,
@@ -196,7 +196,7 @@ namespace Compiler
         TokenLoc mPrevLoc;
         std::istream& mStream;
         const Extensions* mExtensions;
-        PutbackType mPutback;
+        putback_type mPutback;
         int mPutbackCode;
         int mPutbackInteger;
         float mPutbackFloat;

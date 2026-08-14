@@ -1,10 +1,33 @@
 #ifndef OPENMW_MWRENDER_PLAYERVISUALPOLICY_H
 #define OPENMW_MWRENDER_PLAYERVISUALPOLICY_H
 
+#include <algorithm>
+#include <cctype>
+#include <string>
 #include <string_view>
+#include <vector>
+
+#include <components/esm/formid.hpp>
+#include <osg/Math>
 
 namespace MWRender
 {
+    inline constexpr float getFalloutFlatPlayerVisualYawOffset()
+    {
+        // Imported Fallout rigs author forward on local +X while gameplay movement uses local +Y. OSG applies
+        // this row-vector basis conversion around -Z, so +90 degrees maps the rendered actor away from the
+        // trailing third-person camera instead of turning the actor back toward it.
+        return osg::PI_2f;
+    }
+
+    inline std::vector<ESM::FormId> canonicalizeFalloutWornVisualSignature(
+        std::vector<ESM::FormId> signature)
+    {
+        std::sort(signature.begin(), signature.end());
+        signature.erase(std::unique(signature.begin(), signature.end()), signature.end());
+        return signature;
+    }
+
     struct ESM4PlayerVisualEquipmentPolicy
     {
         std::string_view mOutfit;
@@ -40,6 +63,45 @@ namespace MWRender
 
         return { outfit, headgear, weapon };
     }
+
+    inline std::string normalizeFalloutFirstPersonBipedModel(std::string_view bipedModel)
+    {
+        if (bipedModel.empty())
+            return {};
+        std::string result(bipedModel);
+        std::replace(result.begin(), result.end(), '\\', '/');
+        std::string lowered(result);
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        if (!lowered.starts_with("meshes/"))
+        {
+            result.insert(0, "meshes/");
+            lowered.insert(0, "meshes/");
+        }
+        if (!lowered.ends_with(".nif"))
+            return {};
+        if (!lowered.ends_with("1st.nif"))
+            result.insert(result.size() - 4, "1st");
+        return result;
+    }
+
+    inline bool isFalloutPipBoyGloveFirstPersonModel(bool pipBoyWorn, std::string_view firstPersonModel)
+    {
+        std::string lowered(firstPersonModel);
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        return pipBoyWorn && lowered.find("pipboy") != std::string::npos
+            && lowered.find("glove") != std::string::npos;
+    }
+
+    inline std::string_view selectFalloutWeaponViewModel(
+        std::string_view worldModel, std::string_view firstPersonModel, bool firstPerson)
+    {
+        if (firstPerson && !firstPersonModel.empty())
+            return firstPersonModel;
+        return worldModel;
+    }
+
 }
 
 #endif

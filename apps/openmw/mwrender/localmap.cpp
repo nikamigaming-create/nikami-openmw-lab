@@ -15,8 +15,11 @@
 #include <components/esm/util.hpp>
 #include <components/esm3/fogstate.hpp>
 #include <components/esm3/loadcell.hpp>
+#include <components/resource/resourcesystem.hpp>
+#include <components/resource/scenemanager.hpp>
 #include <components/files/memorystream.hpp>
 #include <components/misc/constants.hpp>
+#include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/lightmanager.hpp>
 #include <components/sceneutil/nodecallback.hpp>
@@ -41,7 +44,7 @@ namespace
         return val * val;
     }
 
-    std::pair<int, int> divideIntoSegments(const osg::BoundingBox& bounds, int mapSize)
+    std::pair<int, int> divideIntoSegments(const osg::BoundingBox& bounds, float mapSize)
     {
         osg::Vec2f min(bounds.xMin(), bounds.yMin());
         osg::Vec2f max(bounds.xMax(), bounds.yMax());
@@ -77,8 +80,8 @@ namespace MWRender
 
     LocalMap::LocalMap(osg::Group* root)
         : mRoot(root)
-        , mMapResolution(static_cast<int>(
-              Settings::map().mLocalMapResolution * MWBase::Environment::get().getWindowManager()->getScalingFactor()))
+        , mMapResolution(
+              Settings::map().mLocalMapResolution * MWBase::Environment::get().getWindowManager()->getScalingFactor())
         , mMapWorldSize(Constants::CellSizeInUnits)
         , mCellDistance(Constants::CellGridRadius)
         , mAngle(0.f)
@@ -97,7 +100,7 @@ namespace MWRender
             mRoot->removeChild(rtt);
     }
 
-    const osg::Vec2f LocalMap::rotatePoint(const osg::Vec2f& point, const osg::Vec2f& center, const float angle) const
+    const osg::Vec2f LocalMap::rotatePoint(const osg::Vec2f& point, const osg::Vec2f& center, const float angle)
     {
         return osg::Vec2f(
             std::cos(angle) * (point.x() - center.x()) - std::sin(angle) * (point.y() - center.y()) + center.x(),
@@ -110,15 +113,12 @@ namespace MWRender
         mInteriorSegments.clear();
     }
 
-    void LocalMap::saveFogOfWar(MWWorld::CellStore* cell) const
+    void LocalMap::saveFogOfWar(MWWorld::CellStore* cell)
     {
         if (!mInterior)
         {
-            const auto it
-                = mExteriorSegments.find(std::make_pair(cell->getCell()->getGridX(), cell->getCell()->getGridY()));
-            if (it == mExteriorSegments.end())
-                return;
-            const MapSegment& segment = it->second;
+            const MapSegment& segment
+                = mExteriorSegments[std::make_pair(cell->getCell()->getGridX(), cell->getCell()->getGridY())];
 
             if (segment.mFogOfWarImage && segment.mHasFogState)
             {
@@ -150,10 +150,7 @@ namespace MWRender
             {
                 for (int y = 0; y < segments.second; ++y)
                 {
-                    const auto it = mInteriorSegments.find(std::make_pair(x, y));
-                    if (it == mInteriorSegments.end())
-                        continue;
-                    const MapSegment& segment = it->second;
+                    const MapSegment& segment = mInteriorSegments[std::make_pair(x, y)];
                     if (!segment.mHasFogState)
                         continue;
                     ESM::FogTexture& texture = fog->mFogTextures.emplace_back();
@@ -193,8 +190,7 @@ namespace MWRender
 
         MapSegment& segment = mExteriorSegments[std::make_pair(cellX, cellY)];
         const std::uint8_t neighbourFlags = getExteriorNeighbourFlags(cellX, cellY);
-        if (segment.mLastRenderNeighbourFlags != 0
-            && (segment.mLastRenderNeighbourFlags & neighbourFlags) == neighbourFlags)
+        if ((segment.mLastRenderNeighbourFlags & neighbourFlags) == neighbourFlags)
             return;
         requestExteriorMap(cell, segment);
         segment.mLastRenderNeighbourFlags = neighbourFlags;
@@ -216,7 +212,9 @@ namespace MWRender
     {
         saveFogOfWar(cell);
 
-        if (!cell->isExterior())
+        if (cell->isExterior())
+            mExteriorSegments.erase({ cell->getCell()->getGridX(), cell->getCell()->getGridY() });
+        else
             mInteriorSegments.clear();
     }
 
@@ -308,7 +306,6 @@ namespace MWRender
             return;
 
         mInterior = true;
-        mExteriorSegments.clear();
 
         mBounds = bounds;
 
@@ -362,7 +359,7 @@ namespace MWRender
                 else if (fog->mBounds.mMinX > mBounds.xMin())
                 {
                     float diff = fog->mBounds.mMinX - mBounds.xMin();
-                    xOffset = static_cast<int>(std::ceil(diff / mMapWorldSize));
+                    xOffset = std::ceil(diff / mMapWorldSize);
                     mBounds.xMin() = fog->mBounds.mMinX - xOffset * mMapWorldSize;
                 }
                 if (fog->mBounds.mMinY < mBounds.yMin())
@@ -372,7 +369,7 @@ namespace MWRender
                 else if (fog->mBounds.mMinY > mBounds.yMin())
                 {
                     float diff = fog->mBounds.mMinY - mBounds.yMin();
-                    yOffset = static_cast<int>(std::ceil(diff / mMapWorldSize));
+                    yOffset = std::ceil(diff / mMapWorldSize);
                     mBounds.yMin() = fog->mBounds.mMinY - yOffset * mMapWorldSize;
                 }
                 if (fog->mBounds.mMaxX > mBounds.xMax())
@@ -398,8 +395,7 @@ namespace MWRender
         {
             for (int y = 0; y < segments.second; ++y)
             {
-                osg::Vec2f start
-                    = min + osg::Vec2f(static_cast<float>(mMapWorldSize * x), static_cast<float>(mMapWorldSize * y));
+                osg::Vec2f start = min + osg::Vec2f(mMapWorldSize * x, mMapWorldSize * y);
                 osg::Vec2f newcenter = start + osg::Vec2f(mMapWorldSize / 2.f, mMapWorldSize / 2.f);
 
                 osg::Vec2f a = newcenter - mCenter;
@@ -433,7 +429,7 @@ namespace MWRender
         }
     }
 
-    void LocalMap::worldToInteriorMapPosition(osg::Vec2f pos, float& nX, float& nY, int& x, int& y) const
+    void LocalMap::worldToInteriorMapPosition(osg::Vec2f pos, float& nX, float& nY, int& x, int& y)
     {
         pos = rotatePoint(pos, mCenter, mAngle);
 
@@ -446,7 +442,7 @@ namespace MWRender
         nY = 1.0f - (pos.y() - min.y() - mMapWorldSize * y) / mMapWorldSize;
     }
 
-    osg::Vec2f LocalMap::interiorMapToWorldPosition(float nX, float nY, int x, int y) const
+    osg::Vec2f LocalMap::interiorMapToWorldPosition(float nX, float nY, int x, int y)
     {
         osg::Vec2f min(mBounds.xMin(), mBounds.yMin());
         osg::Vec2f pos(mMapWorldSize * (nX + x) + min.x(), mMapWorldSize * (1.0f - nY + y) + min.y());
@@ -546,8 +542,8 @@ namespace MWRender
                         float sqrDist = square((texU + mx * (sFogOfWarResolution - 1)) - u * (sFogOfWarResolution - 1))
                             + square((texV + my * (sFogOfWarResolution - 1)) - v * (sFogOfWarResolution - 1));
 
-                        const std::uint8_t alpha = std::min<std::uint8_t>(*data >> 24,
-                            static_cast<std::uint8_t>(std::clamp(sqrDist / sqrExploreRadius, 0.f, 1.f) * 255));
+                        const std::uint8_t alpha = std::min<std::uint8_t>(
+                            *data >> 24, std::clamp(sqrDist / sqrExploreRadius, 0.f, 1.f) * 255);
                         std::uint32_t val = static_cast<std::uint32_t>(alpha << 24);
                         if (*data != val)
                         {
@@ -582,11 +578,8 @@ namespace MWRender
         };
         std::uint8_t result = 0;
         for (const auto& [flag, dx, dy] : flags)
-        {
-            auto it = mExteriorSegments.find(std::pair(cellX + dx, cellY + dy));
-            if (it != mExteriorSegments.end() && it->second.mMapTexture)
+            if (mExteriorSegments.contains(std::pair(cellX + dx, cellY + dy)))
                 result |= flag;
-        }
         return result;
     }
 
@@ -748,9 +741,15 @@ namespace MWRender
         stateset->setAttributeAndModes(fog, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 
         // turn of sky blending
+        int skyTextureSlot = MWBase::Environment::get()
+                                 .getResourceSystem()
+                                 ->getSceneManager()
+                                 ->getShaderManager()
+                                 .reserveGlobalTextureUnits(Shader::ShaderManager::Slot::SkyTexture);
         stateset->addUniform(new osg::Uniform("far", 10000000.0f));
         stateset->addUniform(new osg::Uniform("skyBlendingStart", 8000000.0f));
         stateset->addUniform(new osg::Uniform("screenRes", osg::Vec2f{ 1, 1 }));
+        stateset->addUniform(new osg::Uniform("sky", skyTextureSlot));
 
         osg::ref_ptr<osg::LightModel> lightmodel = new osg::LightModel;
         lightmodel->setAmbientIntensity(osg::Vec4(0.3f, 0.3f, 0.3f, 1.f));

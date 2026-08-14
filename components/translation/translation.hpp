@@ -14,28 +14,25 @@ namespace Translation
         void loadTranslationData(const Files::Collections& dataFileCollections, std::string_view esmFileName);
 
         std::string_view translateCellName(std::string_view cellName) const;
+        std::string_view topicID(std::string_view phrase) const;
 
         // Standard form usually means nominative case
         std::string_view topicStandardForm(std::string_view phrase) const;
 
-        // The phrase that will act as the hyperlink for the given topic ID
-        std::string_view topicKeyword(std::string_view phrase) const;
-
-        // Manual population for testing
-        void addPhraseForm(std::string_view phrase, std::string_view topicId);
-
         void setEncoder(ToUTF8::Utf8Encoder* encoder);
+
+        bool hasTranslation() const;
 
     private:
         typedef std::map<std::string, std::string, std::less<>> ContainerType;
 
-        void loadData(ContainerType& container, std::string_view fileNameNoExtension, std::string_view extension,
+        void loadData(ContainerType& container, const std::string& fileNameNoExtension, const std::string& extension,
             const Files::Collections& dataFileCollections);
 
         void loadDataFromStream(ContainerType& container, std::istream& stream);
 
         ToUTF8::Utf8Encoder* mEncoder;
-        ContainerType mCellNamesTranslations, mKeywords, mPhraseForms;
+        ContainerType mCellNamesTranslations, mTopicIDs, mPhraseForms;
     };
 }
 

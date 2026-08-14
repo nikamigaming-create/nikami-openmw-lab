@@ -34,6 +34,7 @@ namespace MWClass
         ESM::FormId mId;
         std::string mEditorId;
         std::string mModel;
+        // ESM-relative mesh path; the renderer adds the VFS "meshes/" prefix exactly once.
         std::string mAnimatedObjectModel;
     };
 
@@ -55,6 +56,11 @@ namespace MWClass
         int mTimeOfDay = 0;
         osg::Vec3f mOrigin;
     };
+
+    /// Give every authored IDLE record a source-specific animation group. Fallout chore KFs commonly expose only
+    /// event groups such as "sound"; sharing one synthetic "specialidle" group would also let the last loaded KF
+    /// override the marker's selected source.
+    std::string getFalloutSandboxAnimationGroup(const FalloutSandboxIdle& idle);
 
     float getFalloutSandboxRadius(const ESM4::AIPackage& package);
 

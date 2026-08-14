@@ -11,25 +11,23 @@
 
 class QTableView;
 
-namespace CSMWorld
-{
-    class Data;
-}
-
 namespace CSVWorld
 {
     class TableEditIdAction : public QAction
     {
         const QTableView& mTable;
-        CSMWorld::Data& mData;
         CSMWorld::UniversalId mCurrentId;
 
-    public:
-        TableEditIdAction(const QTableView& table, CSMWorld::Data& data, QWidget* parent = nullptr);
+        typedef std::pair<CSMWorld::ColumnBase::Display, QString> CellData;
+        CellData getCellData(int row, int column) const;
 
-        bool setCell(int row, int column);
+    public:
+        TableEditIdAction(const QTableView& table, QWidget* parent = nullptr);
+
+        void setCell(int row, int column);
 
         CSMWorld::UniversalId getCurrentId() const;
+        bool isValidIdCell(int row, int column) const;
     };
 }
 

@@ -33,14 +33,6 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 
-namespace
-{
-    bool isWhitespace(MyGUI::UString::code_point c)
-    {
-        return c == ' ' || c == '\t';
-    }
-}
-
 namespace MWGui
 {
     class ConsoleInterpreterContext : public MWScript::InterpreterContext
@@ -283,6 +275,11 @@ namespace MWGui
     void Console::clear()
     {
         resetReference();
+    }
+
+    bool isWhitespace(char c)
+    {
+        return c == ' ' || c == '\t';
     }
 
     void Console::commandBoxKeyPress(MyGUI::Widget* /*sender*/, MyGUI::KeyCode key, MyGUI::Char /*value*/)
@@ -702,7 +699,7 @@ namespace MWGui
 
         /* Is there still something in the input string? If not just display all commands and return the unchanged
          * input. */
-        if (tmp.empty())
+        if (tmp.length() == 0)
         {
             matches = mNames;
             return input;
@@ -761,9 +758,10 @@ namespace MWGui
         }
 
         /* Check if all matching strings match further than input. If yes complete to this match. */
-        size_t i = tmp.length();
+        int i = tmp.length();
 
-        for (auto iter = matches.front().begin() + tmp.length(); iter < matches.front().end(); ++iter, ++i)
+        for (std::string::iterator iter = matches.front().begin() + tmp.length(); iter < matches.front().end();
+             ++iter, ++i)
         {
             for (std::string& match : matches)
             {

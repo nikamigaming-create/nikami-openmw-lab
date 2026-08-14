@@ -6,10 +6,10 @@
      - Context
      - Description
    * - :doc:`calendar </reference/lua-scripting/openmw_aux_calendar>`
-     - |bdg-ctx-non-load|
+     - |bdg-ctx-all|
      - Game time calendar
    * - :doc:`time </reference/lua-scripting/openmw_aux_time>`
-     - |bdg-ctx-non-load|
+     - |bdg-ctx-all|
      - Timers and game time utils
    * - :doc:`ui </reference/lua-scripting/openmw_aux_ui>`
      - |bdg-ctx-menu| |bdg-ctx-player|

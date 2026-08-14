@@ -265,43 +265,15 @@ namespace MWWorld
 
     void CellRef::setOwner(const ESM::RefId& owner)
     {
-        if (owner == getOwner())
-            return;
-
-        bool changed = false;
-        const ESM::FormId* const formId = owner.getIf<ESM::FormId>();
-        std::visit(ESM::VisitOverload{
-                       [&](ESM4::Reference& ref) {
-                           if (owner.empty())
-                           {
-                               ref.mOwner = {};
-                               changed = true;
-                           }
-                           else if (formId != nullptr)
-                           {
-                               ref.mOwner = *formId;
-                               changed = true;
-                           }
+        if (owner != getOwner())
+        {
+            std::visit(ESM::VisitOverload{
+                           [&](ESM4::Reference& /*ref*/) {},
+                           [&](ESM4::ActorCharacter&) {},
+                           [&](ESM::CellRef& ref) { ref.mOwner = owner; },
                        },
-                       [&](ESM4::ActorCharacter& ref) {
-                           if (owner.empty())
-                           {
-                               ref.mOwner = {};
-                               changed = true;
-                           }
-                           else if (formId != nullptr)
-                           {
-                               ref.mOwner = *formId;
-                               changed = true;
-                           }
-                       },
-                       [&](ESM::CellRef& ref) {
-                           ref.mOwner = owner;
-                           changed = true;
-                       },
-                   },
-            mCellRef.mVariant);
-        mChanged = mChanged || changed;
+                mCellRef.mVariant);
+        }
     }
 
     void CellRef::setSoul(const ESM::RefId& soul)
@@ -338,7 +310,7 @@ namespace MWWorld
         {
             mChanged = true;
             std::visit(ESM::VisitOverload{
-                           [&](ESM4::Reference& ref) { ref.mLockLevel = static_cast<int8_t>(lockLevel); },
+                           [&](ESM4::Reference& ref) { ref.mLockLevel = lockLevel; },
                            [&](ESM4::ActorCharacter&) {},
                            [&](ESM::CellRef& ref) { ref.mLockLevel = lockLevel; },
                        },

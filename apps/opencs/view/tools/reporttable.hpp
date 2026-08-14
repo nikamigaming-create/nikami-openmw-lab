@@ -86,9 +86,6 @@ namespace CSVTools
         /// \return rows in the original model
         std::vector<int> getReplaceIndices(bool selection) const;
 
-        /// \return underlying report model
-        CSMTools::ReportModel* getReportModel() const { return mModel; }
-
         /// \param index row in the original model
         void flagAsReplaced(int index);
 

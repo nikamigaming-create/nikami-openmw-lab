@@ -9,7 +9,6 @@
 #include <osg/Matrixf>
 
 #include <components/debug/debuglog.hpp>
-#include <components/esm4/loadwthr.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/rng.hpp>
 #include <components/settings/values.hpp>
@@ -25,7 +24,6 @@
 
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
-#include "../mwworld/weather.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
 
@@ -427,10 +425,7 @@ namespace MWSound
         sequence.mVoices.replace(filenames);
         sequence.mMetadata.clear();
         for (std::size_t i = 0; i < filenames.size(); ++i)
-        {
-            sequence.mMetadata.push_back(
-                i < metadata.size() ? metadata[i] : MWBase::FalloutDialogueVoiceMetadata{});
-        }
+            sequence.mMetadata.push_back(i < metadata.size() ? metadata[i] : MWBase::FalloutDialogueVoiceMetadata{});
         startNextSaySequence(ptr);
     }
 
@@ -449,20 +444,20 @@ namespace MWSound
                 found->second.mMetadata.pop_front();
             }
             if ((metadata.mFlags & 0x01) != 0)
-            {
                 MWDialogue::setEsm4DialogueExpression(
                     ptr.mRef, metadata.mEmotionType, metadata.mEmotionValue);
-            }
             if (!metadata.mSpeakerAnimation.empty())
-            {
                 MWBase::Environment::get().getMechanicsManager()->playFalloutDialogueAnimation(
                     ptr, metadata.mSpeakerAnimation);
-            }
             if (!metadata.mListenerAnimation.empty())
-            {
                 MWBase::Environment::get().getMechanicsManager()->playFalloutDialogueAnimation(
                     MWBase::Environment::get().getWorld()->getPlayerPtr(), metadata.mListenerAnimation);
-            }
+            Log(Debug::Info) << "FNV/ESM4 dialogue: applying authored voice segment emotionType="
+                             << metadata.mEmotionType << " emotionValue=" << metadata.mEmotionValue
+                             << " flags=0x" << std::hex << static_cast<unsigned int>(metadata.mFlags) << std::dec
+                             << " speakerAnimation=" << metadata.mSpeakerAnimation
+                             << " listenerAnimation=" << metadata.mListenerAnimation << " path=\"" << *voice
+                             << "\"";
             if (startSay(ptr, *voice, false))
                 return true;
             found->second.mVoices.finishCurrent();
@@ -649,15 +644,16 @@ namespace MWSound
     }
 
     Sound* SoundManager::playSound(
-        VFS::Path::NormalizedView fileName, float volume, float pitch, Type type, PlayMode mode, float offset)
+        std::string_view fileName, float volume, float pitch, Type type, PlayMode mode, float offset)
     {
         if (!mOutput->isInitialized())
             return nullptr;
 
-        if (!mVFS->exists(fileName))
+        std::string normalizedName = VFS::Path::normalizeFilename(fileName);
+        if (!mVFS->exists(normalizedName))
             return nullptr;
 
-        SoundBuffer* const sfx = mSoundBuffers.load(fileName);
+        SoundBuffer* sfx = mSoundBuffers.load(normalizedName);
         if (!sfx)
             return nullptr;
 
@@ -745,17 +741,18 @@ namespace MWSound
         return playSound3D(ptr, sfx, volume, pitch, type, mode, offset);
     }
 
-    Sound* SoundManager::playSound3D(const MWWorld::ConstPtr& ptr, VFS::Path::NormalizedView fileName, float volume,
-        float pitch, Type type, PlayMode mode, float offset)
+    Sound* SoundManager::playSound3D(const MWWorld::ConstPtr& ptr, std::string_view fileName, float volume, float pitch,
+        Type type, PlayMode mode, float offset)
     {
         if (remove3DSoundAtDistance(mode, ptr))
             return nullptr;
 
         // Look up the sound
-        if (!mVFS->exists(fileName))
+        std::string normalizedName = VFS::Path::normalizeFilename(fileName);
+        if (!mVFS->exists(normalizedName))
             return nullptr;
 
-        SoundBuffer* const sfx = mSoundBuffers.load(fileName);
+        SoundBuffer* sfx = mSoundBuffers.load(normalizedName);
         if (!sfx)
             return nullptr;
 
@@ -810,8 +807,7 @@ namespace MWSound
         {
             for (SoundBufferRefPair& snd : snditer->second.mList)
             {
-                if (snd.second == sfx
-                    || (!sfx->getSourceId().empty() && snd.second->getSourceId() == sfx->getSourceId()))
+                if (snd.second == sfx)
                     mOutput->finishSound(snd.first.get());
             }
         }
@@ -822,22 +818,20 @@ namespace MWSound
         if (!mOutput->isInitialized())
             return;
 
-        SoundMap::iterator snditer = mActiveSounds.find(ptr.mRef);
-        if (snditer == mActiveSounds.end())
+        SoundBuffer* sfx = mSoundBuffers.lookup(soundId);
+        if (!sfx)
             return;
-        for (SoundBufferRefPair& snd : snditer->second.mList)
-        {
-            if (mSoundBuffers.matches(soundId, *snd.second))
-                mOutput->finishSound(snd.first.get());
-        }
+
+        stopSound(sfx, ptr);
     }
 
-    void SoundManager::stopSound3D(const MWWorld::ConstPtr& ptr, VFS::Path::NormalizedView fileName)
+    void SoundManager::stopSound3D(const MWWorld::ConstPtr& ptr, std::string_view fileName)
     {
         if (!mOutput->isInitialized())
             return;
 
-        SoundBuffer* const sfx = mSoundBuffers.lookup(fileName);
+        std::string normalizedName = VFS::Path::normalizeFilename(fileName);
+        SoundBuffer* sfx = mSoundBuffers.lookup(normalizedName);
         if (!sfx)
             return;
 
@@ -899,20 +893,25 @@ namespace MWSound
         SoundMap::iterator snditer = mActiveSounds.find(ptr.mRef);
         if (snditer != mActiveSounds.end())
         {
+            SoundBuffer* sfx = mSoundBuffers.lookup(soundId);
+            if (sfx == nullptr)
+                return;
             for (SoundBufferRefPair& sndbuf : snditer->second.mList)
             {
-                if (mSoundBuffers.matches(soundId, *sndbuf.second))
+                if (sndbuf.second == sfx)
                     sndbuf.first->setFadeout(duration);
             }
         }
     }
 
-    bool SoundManager::getSoundPlaying(const MWWorld::ConstPtr& ptr, VFS::Path::NormalizedView fileName) const
+    bool SoundManager::getSoundPlaying(const MWWorld::ConstPtr& ptr, std::string_view fileName) const
     {
+        std::string normalizedName = VFS::Path::normalizeFilename(fileName);
+
         SoundMap::const_iterator snditer = mActiveSounds.find(ptr.mRef);
         if (snditer != mActiveSounds.end())
         {
-            SoundBuffer* const sfx = mSoundBuffers.lookup(fileName);
+            SoundBuffer* sfx = mSoundBuffers.lookup(normalizedName);
             if (!sfx)
                 return false;
 
@@ -930,10 +929,13 @@ namespace MWSound
         SoundMap::const_iterator snditer = mActiveSounds.find(ptr.mRef);
         if (snditer != mActiveSounds.end())
         {
+            SoundBuffer* sfx = mSoundBuffers.lookup(soundId);
+            if (!sfx)
+                return false;
+
             return std::find_if(snditer->second.mList.cbegin(), snditer->second.mList.cend(),
-                       [this, &soundId](const SoundBufferRefPair& snd) -> bool {
-                           return mSoundBuffers.matches(soundId, *snd.second)
-                               && mOutput->isSoundPlaying(snd.first.get());
+                       [this, sfx](const SoundBufferRefPair& snd) -> bool {
+                           return snd.second == sfx && mOutput->isSoundPlaying(snd.first.get());
                        })
                 != snditer->second.mList.cend();
         }
@@ -998,29 +1000,9 @@ namespace MWSound
         if (mCurrentRegionSound && mOutput->isSoundPlaying(mCurrentRegionSound))
             return;
 
-        ESM::RefId next;
-        const MWWorld::ESMStore* const store = MWBase::Environment::get().getESMStore();
-        if (cell->isEsm4() && store->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas)
-        {
-            std::uint32_t weatherClassification = 1;
-            const ESM::RefId& weatherId = world->getCurrentWeather().mId;
-            if (const ESM4::Weather* weather = store->get<ESM4::Weather>().search(weatherId))
-                weatherClassification = weather->mData.classification;
-            next = mRegionSoundSelector.getNextRandom(duration, cell->getEsm4().mRegions, weatherClassification);
-        }
-        else
-            next = mRegionSoundSelector.getNextRandom(duration, cell->getRegion());
+        ESM::RefId next = mRegionSoundSelector.getNextRandom(duration, cell->getRegion());
         if (!next.empty())
-        {
             mCurrentRegionSound = playSound(next, 1.0f, 1.0f);
-            if (cell->isEsm4() && store->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas)
-            {
-                if (mCurrentRegionSound != nullptr)
-                    Log(Debug::Info) << "FNV/ESM4 sound: region ambience playback started sound=" << next;
-                else
-                    Log(Debug::Warning) << "FNV/ESM4 sound: region ambience playback failed sound=" << next;
-            }
-        }
     }
 
     void SoundManager::updateWaterSound()
@@ -1076,8 +1058,7 @@ namespace MWSound
                         [this](const SoundBufferRefPairList::value_type& item) -> bool {
                             return mNearWaterSound == item.first.get();
                         });
-                    if (pairiter != snditer->second.mList.end()
-                        && !mSoundBuffers.matches(update.mId, *pairiter->second))
+                    if (pairiter != snditer->second.mList.end() && pairiter->second != sfx)
                         soundIdChanged = true;
                 }
             }

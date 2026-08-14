@@ -11,7 +11,6 @@
 #include <osgParticle/ParticleSystem>
 #include <osgParticle/ParticleSystemUpdater>
 
-#include <components/esm4/loadnpc.hpp>
 #include <components/fallback/fallback.hpp>
 #include <components/misc/rng.hpp>
 #include <components/nifosg/controller.hpp>
@@ -26,32 +25,11 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
-#include "../mwworld/esmstore.hpp"
 
 namespace
 {
-    bool hasFalloutNvContentLoaded()
-    {
-        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
-        if (store == nullptr)
-            return false;
-
-        for (const ESM4::Npc& npc : store->get<ESM4::Npc>())
-        {
-            if (npc.mIsFONV)
-                return true;
-        }
-        return false;
-    }
-
     void createWaterRippleStateSet(Resource::ResourceSystem* resourceSystem, osg::Node* node)
     {
-        // The Fallout archives have no Morrowind ripple-frame sequence. Do
-        // not substitute unrelated artwork or manufacture a missing asset
-        // request; the Fallout renderer simply has no legacy ripple overlay.
-        if (hasFalloutNvContentLoaded())
-            return;
-
         int rippleFrameCount = Fallback::Map::getInt("Water_RippleFrameCount");
         if (rippleFrameCount <= 0)
             return;
@@ -86,8 +64,8 @@ namespace
         stateset->setAttributeAndModes(depth, osg::StateAttribute::ON);
 
         osg::ref_ptr<osg::PolygonOffset> polygonOffset(new osg::PolygonOffset);
-        polygonOffset->setUnits(SceneUtil::AutoDepth::isReversed() ? 1.f : -1.f);
-        polygonOffset->setFactor(SceneUtil::AutoDepth::isReversed() ? 1.f : -1.f);
+        polygonOffset->setUnits(SceneUtil::AutoDepth::isReversed() ? 1 : -1);
+        polygonOffset->setFactor(SceneUtil::AutoDepth::isReversed() ? 1 : -1);
         stateset->setAttributeAndModes(polygonOffset, osg::StateAttribute::ON);
 
         stateset->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
@@ -106,13 +84,13 @@ namespace
     int findOldestParticleAlive(const osgParticle::ParticleSystem* partsys)
     {
         int oldest = -1;
-        double oldestAge = 0.f;
+        float oldestAge = 0.f;
         for (int i = 0; i < partsys->numParticles(); ++i)
         {
             const osgParticle::Particle* particle = partsys->getParticle(i);
             if (!particle->isAlive())
                 continue;
-            const double age = particle->getAge();
+            const float age = particle->getAge();
             if (oldest == -1 || age > oldestAge)
             {
                 oldest = i;
@@ -133,12 +111,12 @@ namespace MWRender
         mParticleSystem = new osgParticle::ParticleSystem;
 
         mParticleSystem->setParticleAlignment(osgParticle::ParticleSystem::FIXED);
-        // Horizontal placement. Inverted vertically so that the UV uses Y-down convention
-        mParticleSystem->setAlignVectors(osg::Vec3f(1, 0, 0), osg::Vec3f(0, -1, 0));
+        mParticleSystem->setAlignVectorX(osg::Vec3f(1, 0, 0));
+        mParticleSystem->setAlignVectorY(osg::Vec3f(0, 1, 0));
 
         osgParticle::Particle& particleTemplate = mParticleSystem->getDefaultParticleTemplate();
         particleTemplate.setSizeRange(osgParticle::rangef(15, 180));
-        particleTemplate.setColorRange(osgParticle::rangev4(osg::Vec4f(1, 1, 1, 0.7f), osg::Vec4f(1, 1, 1, 0.7f)));
+        particleTemplate.setColorRange(osgParticle::rangev4(osg::Vec4f(1, 1, 1, 0.7), osg::Vec4f(1, 1, 1, 0.7)));
         particleTemplate.setAlphaRange(osgParticle::rangef(1.f, 0.f));
         particleTemplate.setAngularVelocity(osg::Vec3f(0, 0, Fallback::Map::getFloat("Water_RippleRotSpeed")));
         particleTemplate.setLifeTime(Fallback::Map::getFloat("Water_RippleLifetime"));
@@ -191,7 +169,7 @@ namespace MWRender
             {
                 // Ripple simulation needs to continously apply impulses to keep simulation alive.
                 // Adding a timer delay will introduce many smaller ripples around actor instead of a smooth wake
-                currentPos.z() = static_cast<float>(mParticleNode->getPosition().z());
+                currentPos.z() = mParticleNode->getPosition().z();
                 emitRipple(currentPos);
             }
             else if (emitter.mTimer <= 0.f || (currentPos - emitter.mLastEmitPosition).length() > 10)
@@ -199,7 +177,7 @@ namespace MWRender
                 emitter.mLastEmitPosition = currentPos;
                 emitter.mTimer = 1.5f;
 
-                currentPos.z() = static_cast<float>(mParticleNode->getPosition().z());
+                currentPos.z() = mParticleNode->getPosition().z();
 
                 emitRipple(currentPos);
             }
@@ -280,7 +258,7 @@ namespace MWRender
                 }
                 osgParticle::Particle* p = mParticleSystem->createParticle(nullptr);
                 p->setPosition(osg::Vec3f(pos.x(), pos.y(), 0.f));
-                p->setAngle(osg::Vec3f(0, 0, Misc::Rng::rollProbability() * osg::PIf * 2 - osg::PIf));
+                p->setAngle(osg::Vec3f(0, 0, Misc::Rng::rollProbability() * osg::PI * 2 - osg::PI));
             }
         }
     }

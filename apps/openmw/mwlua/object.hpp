@@ -33,10 +33,6 @@ namespace MWLua
                 throw std::runtime_error("Object is not available: " + id().toString());
             return res;
         }
-
-        virtual bool isLObject() const { return false; }
-        virtual bool isGObject() const { return false; }
-        virtual bool isSelfObject() const { return false; }
     };
 
     // Used only in local scripts
@@ -47,8 +43,6 @@ namespace MWLua
     class LObject : public Object
     {
         using Object::Object;
-
-        bool isLObject() const override { return true; }
     };
 
     // Used only in global scripts
@@ -59,8 +53,6 @@ namespace MWLua
     class GObject : public Object
     {
         using Object::Object;
-
-        bool isGObject() const override { return true; }
     };
 
     using ObjectIdList = std::shared_ptr<std::vector<ObjectId>>;

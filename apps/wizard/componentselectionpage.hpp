@@ -17,7 +17,7 @@ namespace Wizard
         bool validatePage() override;
 
     private slots:
-        void updateButton();
+        void updateButton(QListWidgetItem* item);
 
     private:
         MainWizard* mWizard;

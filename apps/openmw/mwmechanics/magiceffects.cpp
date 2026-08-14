@@ -26,21 +26,22 @@ namespace
 namespace MWMechanics
 {
     EffectKey::EffectKey()
-        : mId(ESM::MagicEffect::WaterWalking)
+        : mId(0)
     {
     }
 
     EffectKey::EffectKey(const ESM::ENAMstruct& effect)
     {
         mId = effect.mEffectID;
-        mArg = effect.mSkill;
+        mArg = ESM::Skill::indexToRefId(effect.mSkill);
 
-        if (!effect.mAttribute.empty())
+        ESM::RefId attribute = ESM::Attribute::indexToRefId(effect.mAttribute);
+        if (!attribute.empty())
         {
             if (!mArg.empty())
                 throw std::runtime_error("magic effect can't have both a skill and an attribute argument");
 
-            mArg = effect.mAttribute;
+            mArg = attribute;
         }
     }
 
@@ -54,7 +55,13 @@ namespace MWMechanics
 
     bool operator<(const EffectKey& left, const EffectKey& right)
     {
-        return std::tie(left.mId, left.mArg) < std::tie(right.mId, right.mArg);
+        if (left.mId < right.mId)
+            return true;
+
+        if (left.mId > right.mId)
+            return false;
+
+        return left.mArg < right.mArg;
     }
 
     bool operator==(const EffectKey& left, const EffectKey& right)
@@ -138,11 +145,6 @@ namespace MWMechanics
         return get(key).value_or(EffectParam());
     }
 
-    EffectParam MagicEffects::getOrDefault(ESM::RefId effectId) const
-    {
-        return getOrDefault(EffectKey(effectId));
-    }
-
     std::optional<EffectParam> MagicEffects::get(const EffectKey& key) const
     {
         Collection::const_iterator iter = mCollection.find(key);
@@ -187,20 +189,36 @@ namespace MWMechanics
 
         if (targetsSkill || targetsAttribute)
         {
-            if (effect.mId == ESM::MagicEffect::AbsorbAttribute || effect.mId == ESM::MagicEffect::AbsorbSkill)
-                spellLine = windowManager->getGameSettingString("sAbsorb", {});
-            else if (effect.mId == ESM::MagicEffect::DamageAttribute || effect.mId == ESM::MagicEffect::DamageSkill)
-                spellLine = windowManager->getGameSettingString("sDamage", {});
-            else if (effect.mId == ESM::MagicEffect::DrainAttribute || effect.mId == ESM::MagicEffect::DrainSkill)
-                spellLine = windowManager->getGameSettingString("sDrain", {});
-            else if (effect.mId == ESM::MagicEffect::FortifyAttribute || effect.mId == ESM::MagicEffect::FortifySkill)
-                spellLine = windowManager->getGameSettingString("sFortify", {});
-            else if (effect.mId == ESM::MagicEffect::RestoreAttribute || effect.mId == ESM::MagicEffect::RestoreSkill)
-                spellLine = windowManager->getGameSettingString("sRestore", {});
+            switch (effect.mIndex)
+            {
+                case ESM::MagicEffect::AbsorbAttribute:
+                case ESM::MagicEffect::AbsorbSkill:
+                    spellLine = windowManager->getGameSettingString("sAbsorb", {});
+                    break;
+                case ESM::MagicEffect::DamageAttribute:
+                case ESM::MagicEffect::DamageSkill:
+                    spellLine = windowManager->getGameSettingString("sDamage", {});
+                    break;
+                case ESM::MagicEffect::DrainAttribute:
+                case ESM::MagicEffect::DrainSkill:
+                    spellLine = windowManager->getGameSettingString("sDrain", {});
+                    break;
+                case ESM::MagicEffect::FortifyAttribute:
+                case ESM::MagicEffect::FortifySkill:
+                    spellLine = windowManager->getGameSettingString("sFortify", {});
+                    break;
+                case ESM::MagicEffect::RestoreAttribute:
+                case ESM::MagicEffect::RestoreSkill:
+                    spellLine = windowManager->getGameSettingString("sRestore", {});
+                    break;
+            }
         }
 
         if (spellLine.empty())
-            spellLine = effect.mName;
+        {
+            auto& effectIDStr = ESM::MagicEffect::indexToGmstString(effect.mIndex);
+            spellLine = windowManager->getGameSettingString(effectIDStr, {});
+        }
 
         if (targetsSkill)
         {

@@ -7,6 +7,14 @@
 #include <components/settings/settings.hpp>
 #include <components/testing/util.hpp>
 
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+
+#ifndef OPENMW_PROJECT_SOURCE_DIR
+#define OPENMW_PROJECT_SOURCE_DIR "."
+#endif
+
 namespace
 {
     constexpr VFS::Path::NormalizedView techniquePropertiesPath("shaders/technique_properties.omwfx");
@@ -268,5 +276,27 @@ namespace
     {
         expectFailure("invalid_number_ulong", "number out of range");
         expectFailure("invalid_number_double", "number out of range");
+    }
+
+    TEST(FalloutImageSpaceTechniqueTest, parsesRetailBlurPipeline)
+    {
+        const std::filesystem::path sourcePath = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "files" / "data"
+            / "shaders" / "internal_fallout_imagespace.omwfx";
+        std::ifstream stream(sourcePath);
+        ASSERT_TRUE(stream) << sourcePath;
+        TestingOpenMW::VFSTestFile source{ std::string(std::istreambuf_iterator<char>{ stream }, {}) };
+        constexpr VFS::Path::NormalizedView path("shaders/internal_fallout_imagespace.omwfx");
+        std::unique_ptr<VFS::Manager> vfs = TestingOpenMW::createTestVFS({ { path, &source } });
+        Resource::ImageManager imageManager(vfs.get(), 0);
+        Technique technique(*vfs, imageManager, path, "internal_fallout_imagespace", 1920, 1080, true, true);
+
+        ASSERT_TRUE(technique.compile()) << technique.getLastError();
+        EXPECT_TRUE(technique.isValid());
+        EXPECT_EQ(technique.getPasses().size(), 7);
+        ASSERT_EQ(technique.getRenderTargetsMap().count("RT_FalloutImageSource"), 1);
+        const Fx::Types::RenderTarget& blurSource
+            = technique.getRenderTargetsMap().at("RT_FalloutImageSource");
+        EXPECT_EQ(blurSource.mSize.mWidth, 256);
+        EXPECT_EQ(blurSource.mSize.mHeight, 256);
     }
 }

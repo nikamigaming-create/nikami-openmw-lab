@@ -28,18 +28,12 @@ local combatOffset = util.vector2(0, 15)
 
 local noThirdPersonLastFrame = true
 
-local function settingOrDefault(key, default)
-    local value = settings:get(key)
-    if value == nil then return default end
-    return value
-end
-
 local function updateSettings()
-    viewOverShoulder = settingOrDefault('viewOverShoulder', false)
-    autoSwitchShoulder = settingOrDefault('autoSwitchShoulder', false)
-    shoulderOffset = util.vector2(settingOrDefault('shoulderOffsetX', 30),
-        settingOrDefault('shoulderOffsetY', -10))
-    zoomOutWhenMoveCoef = settingOrDefault('zoomOutWhenMoveCoef', 20)
+    viewOverShoulder = settings:get('viewOverShoulder')
+    autoSwitchShoulder = settings:get('autoSwitchShoulder')
+    shoulderOffset = util.vector2(settings:get('shoulderOffsetX'),
+        settings:get('shoulderOffsetY'))
+    zoomOutWhenMoveCoef = settings:get('zoomOutWhenMoveCoef')
 
     defaultShoulder = (shoulderOffset.x > 0 and STATE.RightShoulder) or STATE.LeftShoulder
     rightShoulderOffset = util.vector2(math.abs(shoulderOffset.x), shoulderOffset.y)

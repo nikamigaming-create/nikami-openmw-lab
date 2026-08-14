@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <variant>
 #include <vector>
 

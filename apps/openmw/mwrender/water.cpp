@@ -32,15 +32,12 @@
 #include <components/shader/shadermanager.hpp>
 
 #include <components/esm3/loadcell.hpp>
-#include <components/esm4/loadnpc.hpp>
 
 #include <components/fallback/fallback.hpp>
 
 #include <components/settings/values.hpp>
 
-#include "../mwbase/environment.hpp"
 #include "../mwworld/cellstore.hpp"
-#include "../mwworld/esmstore.hpp"
 
 #include "renderbin.hpp"
 #include "ripples.hpp"
@@ -50,23 +47,6 @@
 
 namespace MWRender
 {
-
-    namespace
-    {
-        bool hasFalloutNvContentLoaded()
-        {
-            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
-            if (store == nullptr)
-                return false;
-
-            for (const ESM4::Npc& npc : store->get<ESM4::Npc>())
-            {
-                if (npc.mIsFONV)
-                    return true;
-            }
-            return false;
-        }
-    }
 
     // --------------------------------------------------------------------------------------------------------------------------------
 
@@ -134,11 +114,10 @@ namespace MWRender
                 }
 
                 // move the plane back along its normal a little bit to prevent bleeding at the water shore
-                const float fov = Settings::camera().mFieldOfView;
-                constexpr double clipFudgeMin = 2.5; // minimum offset of clip plane
-                constexpr double clipFudgeScale = -15000.0;
-                double clipFudge
-                    = std::abs(std::abs((*mCullPlane)[3]) - eyePoint.z()) * fov / clipFudgeScale - clipFudgeMin;
+                float fov = Settings::camera().mFieldOfView;
+                const float clipFudgeMin = 2.5; // minimum offset of clip plane
+                const float clipFudgeScale = -15000.0;
+                float clipFudge = abs(abs((*mCullPlane)[3]) - eyePoint.z()) * fov / clipFudgeScale - clipFudgeMin;
                 modelViewMatrix->preMultTranslate(mCullPlane->getNormal() * clipFudge);
 
                 cv->pushModelViewMatrix(modelViewMatrix, osg::Transform::RELATIVE_RF);
@@ -209,7 +188,7 @@ namespace MWRender
     public:
         void operator()(osg::Node* node, osgUtil::CullVisitor* cv)
         {
-            const float fudge = 0.2f;
+            const float fudge = 0.2;
             if (std::abs(cv->getEyeLocal().z()) < fudge)
             {
                 float diff = fudge - cv->getEyeLocal().z();
@@ -232,15 +211,22 @@ namespace MWRender
     class RainSettingsUpdater : public SceneUtil::StateSetUpdater
     {
     public:
-        RainSettingsUpdater() = default;
+        RainSettingsUpdater()
+            : mRainIntensity(0.f)
+            , mEnableRipples(false)
+        {
+        }
 
         void setRainIntensity(float rainIntensity) { mRainIntensity = rainIntensity; }
+        void setRipplesEnabled(bool enableRipples) { mEnableRipples = enableRipples; }
 
     protected:
         void setDefaults(osg::StateSet* stateset) override
         {
             osg::ref_ptr<osg::Uniform> rainIntensityUniform = new osg::Uniform("rainIntensity", 0.0f);
             stateset->addUniform(rainIntensityUniform.get());
+            osg::ref_ptr<osg::Uniform> enableRainRipplesUniform = new osg::Uniform("enableRainRipples", false);
+            stateset->addUniform(enableRainRipplesUniform.get());
         }
 
         void apply(osg::StateSet* stateset, osg::NodeVisitor* /*nv*/) override
@@ -248,10 +234,14 @@ namespace MWRender
             osg::ref_ptr<osg::Uniform> rainIntensityUniform = stateset->getUniform("rainIntensity");
             if (rainIntensityUniform != nullptr)
                 rainIntensityUniform->set(mRainIntensity);
+            osg::ref_ptr<osg::Uniform> enableRainRipplesUniform = stateset->getUniform("enableRainRipples");
+            if (enableRainRipplesUniform != nullptr)
+                enableRainRipplesUniform->set(mEnableRipples);
         }
 
     private:
-        float mRainIntensity{ 0.f };
+        float mRainIntensity;
+        bool mEnableRipples;
     };
 
     class Refraction : public SceneUtil::RTTNode
@@ -432,7 +422,7 @@ namespace MWRender
         void drawImplementation(osg::RenderInfo& renderInfo, const osg::Drawable* drawable) const override
         {
             static bool supported = osg::isGLExtensionOrVersionSupported(
-                renderInfo.getState()->getContextID(), "GL_ARB_depth_clamp", 3.3f);
+                renderInfo.getState()->getContextID(), "GL_ARB_depth_clamp", 3.3);
             if (!supported)
             {
                 drawable->drawImplementation(renderInfo);
@@ -593,13 +583,6 @@ namespace MWRender
         node->setUpdateCallback(nullptr);
         mRainSettingsUpdater = nullptr;
 
-        // Fallout New Vegas does not ship the legacy Morrowind water-frame
-        // sequence. Keep the simple water geometry, but do not issue VFS
-        // requests for assets that are neither Fallout data nor part of this
-        // renderer path.
-        if (hasFalloutNvContentLoaded())
-            return;
-
         // Add animated textures
         std::vector<osg::ref_ptr<osg::Texture2D>> textures;
         const int frameCount = std::clamp(Fallback::Map::getInt("Water_SurfaceFrameCount"), 0, 320);
@@ -630,7 +613,10 @@ namespace MWRender
         // use a shader to render the simple water, ensuring that fog is applied per pixel as required.
         // this could be removed if a more detailed water mesh, using some sort of paging solution, is implemented.
         Resource::SceneManager* sceneManager = mResourceSystem->getSceneManager();
+        bool oldValue = sceneManager->getForceShaders();
+        sceneManager->setForceShaders(true);
         sceneManager->recreateShaders(node);
+        sceneManager->setForceShaders(oldValue);
     }
 
     class ShaderWaterStateSetUpdater : public SceneUtil::StateSetUpdater
@@ -818,6 +804,12 @@ namespace MWRender
     {
         if (mRainSettingsUpdater)
             mRainSettingsUpdater->setRainIntensity(rainIntensity);
+    }
+
+    void Water::setRainRipplesEnabled(bool enableRipples)
+    {
+        if (mRainSettingsUpdater)
+            mRainSettingsUpdater->setRipplesEnabled(enableRipples);
     }
 
     void Water::update(float dt, bool paused)

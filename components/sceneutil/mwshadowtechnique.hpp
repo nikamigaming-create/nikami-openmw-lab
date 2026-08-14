@@ -235,8 +235,6 @@ namespace SceneUtil {
             std::array<Uniforms, 2>     _uniforms;
 
             unsigned int _numValidShadows;
-            unsigned int _framesSinceLastShadowCull = 0;
-            double _lastShadowCullReferenceTime = 0.0;
         };
 
         virtual ViewDependentData* createViewDependentData(osgUtil::CullVisitor* cv);
@@ -273,10 +271,6 @@ namespace SceneUtil {
 
         void setWorldMask(unsigned int worldMask) { _worldMask = worldMask; }
 
-        void setShadowUpdateInterval(unsigned int interval) { _shadowUpdateInterval = interval; }
-
-        void setFrustumExpansion(double base, double perSkip) { _frustumExpansionBase = base; _frustumExpansionPerSkip = perSkip; }
-
         osg::ref_ptr<osg::StateSet> getOrCreateShadowsBinStateSet();
 
     protected:
@@ -306,19 +300,14 @@ namespace SceneUtil {
         double                                  _splitPointUniformLogRatio = 0.5;
         double                                  _splitPointDeltaBias = 0.0;
 
-        float                                   _polygonOffsetFactor = 1.1f;
-        float                                   _polygonOffsetUnits = 4.0f;
+        float                                   _polygonOffsetFactor = 1.1;
+        float                                   _polygonOffsetUnits = 4.0;
 
         bool                                    _useFrontFaceCulling = true;
 
-        float                                   _shadowFadeStart = 0.0f;
+        float                                   _shadowFadeStart = 0.0;
 
         unsigned int                            _worldMask = ~0u;
-
-        unsigned int                            _shadowUpdateInterval = 1;
-
-        double                                  _frustumExpansionBase = 0.0;
-        double                                  _frustumExpansionPerSkip = 0.0;
 
         class DebugHUD final : public osg::Referenced
         {

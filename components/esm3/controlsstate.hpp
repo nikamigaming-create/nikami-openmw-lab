@@ -20,11 +20,7 @@ namespace ESM
             LookingDisabled = 0x2000,
             VanityModeDisabled = 0x4000,
             WeaponDrawingDisabled = 0x8000,
-            SpellDrawingDisabled = 0x10000,
-            MovementDisabled = 0x20000,
-            InterfaceDisabled = 0x40000,
-            SneakingDisabled = 0x80000,
-            RolloverDisabled = 0x100000
+            SpellDrawingDisabled = 0x10000
         };
 
         bool mViewSwitchDisabled;
@@ -34,10 +30,6 @@ namespace ESM
         bool mVanityModeDisabled;
         bool mWeaponDrawingDisabled;
         bool mSpellDrawingDisabled;
-        bool mMovementDisabled;
-        bool mInterfaceDisabled;
-        bool mSneakingDisabled;
-        bool mRolloverDisabled;
 
         void load(ESMReader& esm);
         void save(ESMWriter& esm) const;

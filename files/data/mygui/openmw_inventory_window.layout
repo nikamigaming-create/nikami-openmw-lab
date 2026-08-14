@@ -4,30 +4,6 @@
     <Widget type="Window" skin="MW_Window_Pinnable" layer="Windows" position="0 0 900 420" name="_Main">
         <Property key="MinSize" value="40 40"/>
 
-        <!-- Retail Fallout geometry and texture are surfaced only by the
-             dedicated Pip-Boy mode; the OpenMW inventory analogue stays its
-             own normal window. -->
-        <Widget type="ImageBox" skin="ImageBox" position="0 0 900 420" align="Stretch" name="PipBoyBackdrop">
-            <Property key="ImageTexture" value="textures\interface\shared\background\pipboy.dds"/>
-            <Property key="Colour" value="#174d26"/>
-            <Property key="NeedMouse" value="false"/>
-            <Property key="Visible" value="false"/>
-        </Widget>
-        <Widget type="TextBox" skin="NormalText" position="42 18 520 26" align="Top HStretch" name="PipBoyHeader">
-            <Property key="Caption" value="PIP-BOY 3000  //  ITEMS"/>
-            <Property key="TextColour" value="#74ff86"/>
-            <Property key="TextAlign" value="Left VCenter"/>
-            <Property key="NeedMouse" value="false"/>
-            <Property key="Visible" value="false"/>
-        </Widget>
-        <Widget type="TextBox" skin="NormalText" position="42 386 816 22" align="Bottom HStretch" name="PipBoyFooter">
-            <Property key="Caption" value="ENTER: USE / EQUIP     X: DROP     I: OPENMW INVENTORY"/>
-            <Property key="TextColour" value="#58d86d"/>
-            <Property key="TextAlign" value="Center VCenter"/>
-            <Property key="NeedMouse" value="false"/>
-            <Property key="Visible" value="false"/>
-        </Widget>
-
         <Widget type="Widget" skin="" position="0 0 224 343" align="Left Top" name="LeftPane">
 
             <!-- Player encumbrance -->

@@ -6,6 +6,7 @@
 
 #include <MyGUI_ComboBox.h>
 #include <MyGUI_ControllerItem.h>
+#include <MyGUI_ListBox.h>
 
 #include <components/widgets/box.hpp>
 #include <components/widgets/numericeditbox.hpp>
@@ -14,6 +15,13 @@
 #include "windowbase.hpp"
 
 #include "../mwmechanics/alchemy.hpp"
+
+//## VR_PATCH BEGIN
+namespace MWVR
+{
+    class VrListBox;
+}
+//## VR_PATCH END
 
 namespace MWGui
 {
@@ -102,6 +110,18 @@ namespace MWGui
 
         bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;
         void filterListButtonHandler(const SDL_ControllerButtonEvent& arg);
+//## VR_PATCH BEGIN
+        // MERGETODO: Upstream changed things in this class. Test.
+        MyGUI::ComboBox* mFilterCombo;
+        MyGUI::EditBox* mFilterEdit;
+        MyGUI::Button* mFilterButton;
+        MWVR::VrListBox* mFilterListBox = nullptr;
+        std::set<std::string> mItemNames;
+        std::set<std::string> mItemEffects;
+
+        void onFilterButtonClicked(MyGUI::Widget* _sender);
+        const std::set<std::string>& items();
+//## VR_PATCH END
     };
 }
 

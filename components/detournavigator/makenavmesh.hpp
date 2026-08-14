@@ -7,7 +7,7 @@
 #include <components/esm/refid.hpp>
 
 #include <memory>
-#include <span>
+#include <vector>
 
 class dtNavMesh;
 struct rcConfig;
@@ -47,8 +47,8 @@ namespace DetourNavigator
         const TilePosition& tilePosition, const AgentBounds& agentBounds, const RecastSettings& settings);
 
     NavMeshData makeNavMeshTileData(const PreparedNavMeshData& data,
-        std::span<const OffMeshConnection> offMeshConnections, const AgentBounds& agentBounds, const TilePosition& tile,
-        const RecastSettings& settings);
+        const std::vector<OffMeshConnection>& offMeshConnections, const AgentBounds& agentBounds,
+        const TilePosition& tile, const RecastSettings& settings);
 
     void initEmptyNavMesh(const Settings& settings, dtNavMesh& navMesh);
 

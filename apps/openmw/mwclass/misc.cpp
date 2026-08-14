@@ -90,13 +90,13 @@ namespace MWClass
                 if (Settings::game().mRebalanceSoulGemValues)
                 {
                     // use the 'soul gem value rebalance' formula from the Morrowind Code Patch
-                    double soulValue = 0.0001 * std::pow(soul, 3) + 2 * soul;
+                    float soulValue = 0.0001 * pow(soul, 3) + 2 * soul;
 
                     // for Azura's star add the unfilled value
                     if (ptr.getCellRef().getRefId() == "Misc_SoulGem_Azura")
-                        value += static_cast<int>(soulValue);
+                        value += soulValue;
                     else
-                        value = static_cast<int>(soulValue);
+                        value = soulValue;
                 }
                 else
                     value *= soul;
@@ -195,10 +195,7 @@ namespace MWClass
     {
         MWWorld::Ptr newPtr;
         if (isGold(ptr))
-        {
             newPtr = createGold(cell, getValue(ptr) * count);
-            newPtr.getRefData() = ptr.getRefData();
-        }
         else
         {
             const MWWorld::LiveCellRef<ESM::Miscellaneous>* ref = ptr.get<ESM::Miscellaneous>();

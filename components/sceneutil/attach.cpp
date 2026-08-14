@@ -30,9 +30,17 @@ namespace SceneUtil
         {
         }
 
-        void apply(osg::MatrixTransform& node) override { traverse(node); }
+        void apply(osg::MatrixTransform& node) override
+        {
+            preserveFalloutAttachmentHelper(node);
+            traverse(node);
+        }
         void apply(osg::Node& node) override { traverse(node); }
-        void apply(osg::Group& node) override { traverse(node); }
+        void apply(osg::Group& node) override
+        {
+            preserveFalloutAttachmentHelper(node);
+            traverse(node);
+        }
 
         void apply(osg::Drawable& drawable) override
         {
@@ -122,12 +130,26 @@ namespace SceneUtil
                 }
                 parent->addChild(instance);
             }
+            for (const osg::ref_ptr<osg::MatrixTransform>& helper : mFalloutAttachmentHelpers)
+                mParent->addChild(helper);
             mToCopy.clear();
+            mFalloutAttachmentHelpers.clear();
         }
 
         bool hasRiggedNodes() const { return !mToCopy.empty(); }
 
     private:
+        void preserveFalloutAttachmentHelper(const osg::Group& node)
+        {
+            if (!Misc::StringUtils::ciEqual(node.getName(), "ProjectileNode")
+                && !Misc::StringUtils::ciEqual(node.getName(), "ShellCasingNode"))
+                return;
+            osg::ref_ptr<osg::MatrixTransform> helper = new osg::MatrixTransform;
+            helper->setName(node.getName());
+            helper->setMatrix(osg::computeLocalToWorld(getNodePath()));
+            mFalloutAttachmentHelpers.push_back(std::move(helper));
+        }
+
         static void mergeUserDataInto(const osg::UserDataContainer* source, osg::Object* target)
         {
             if (!source)
@@ -159,6 +181,7 @@ namespace SceneUtil
             std::vector<osg::ref_ptr<const osg::Node>> mStatePath;
         };
         std::vector<CopyItem> mToCopy;
+        std::vector<osg::ref_ptr<osg::MatrixTransform>> mFalloutAttachmentHelpers;
 
         osg::ref_ptr<osg::Group> mParent;
         std::string_view mFilter;

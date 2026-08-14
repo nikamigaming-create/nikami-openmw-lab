@@ -2,10 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <type_traits>
+#include <utility>
 
-#include <components/esm3/actoridconverter.hpp>
 #include <components/esm3/creaturestats.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
@@ -20,6 +19,96 @@
 
 namespace MWMechanics
 {
+    namespace
+    {
+        bool isValidFalloutActiveEffect(const ESM::FalloutActiveEffect& effect)
+        {
+            if (effect.mSpell.empty() || effect.mBaseEffect.empty() || !std::isfinite(effect.mMagnitude)
+                || !std::isfinite(effect.mDuration) || !std::isfinite(effect.mTimeLeft) || effect.mDuration <= 0.f
+                || effect.mTimeLeft <= 0.f || effect.mTimeLeft > effect.mDuration)
+                return false;
+            switch (effect.mKind)
+            {
+                case ESM::FalloutActiveEffectKind::HealthDamage:
+                    return effect.mMagnitude > 0.f && effect.mActorValue == 16;
+                case ESM::FalloutActiveEffectKind::ActorValueModifier:
+                    return effect.mMagnitude != 0.f && effect.mActorValue >= 0;
+                case ESM::FalloutActiveEffectKind::Paralysis:
+                    return effect.mMagnitude > 0.f;
+            }
+            return false;
+        }
+    }
+
+    bool addFalloutActiveEffect(
+        std::vector<ESM::FalloutActiveEffect>& effects, ESM::FalloutActiveEffect effect)
+    {
+        if (!isValidFalloutActiveEffect(effect))
+            return false;
+        effects.push_back(std::move(effect));
+        return true;
+    }
+
+    FalloutActiveEffectsAdvance advanceFalloutActiveEffects(
+        std::vector<ESM::FalloutActiveEffect>& effects, float duration)
+    {
+        FalloutActiveEffectsAdvance result;
+        if (!std::isfinite(duration) || duration < 0.f)
+        {
+            result.mRejected = effects.size();
+            return result;
+        }
+
+        for (auto effect = effects.begin(); effect != effects.end();)
+        {
+            if (!isValidFalloutActiveEffect(*effect))
+            {
+                effect = effects.erase(effect);
+                ++result.mRejected;
+                continue;
+            }
+
+            const float elapsed = std::min(duration, effect->mTimeLeft);
+            if (effect->mKind == ESM::FalloutActiveEffectKind::HealthDamage)
+                result.mHealthDamage += effect->mMagnitude * elapsed;
+            effect->mTimeLeft = std::max(0.f, effect->mTimeLeft - duration);
+            if (effect->mTimeLeft <= 0.f)
+            {
+                effect = effects.erase(effect);
+                ++result.mExpired;
+            }
+            else
+                ++effect;
+        }
+        if (!std::isfinite(result.mHealthDamage))
+        {
+            result.mHealthDamage = 0.f;
+            ++result.mRejected;
+        }
+        return result;
+    }
+
+    float getFalloutActorValueModifier(
+        const std::vector<ESM::FalloutActiveEffect>& effects, std::int32_t actorValue)
+    {
+        float result = 0.f;
+        for (const ESM::FalloutActiveEffect& effect : effects)
+            if (effect.mKind == ESM::FalloutActiveEffectKind::ActorValueModifier
+                && effect.mActorValue == actorValue && effect.mTimeLeft > 0.f && std::isfinite(effect.mMagnitude))
+                result += effect.mMagnitude;
+        return std::isfinite(result) ? result : 0.f;
+    }
+
+    bool hasFalloutParalysis(const std::vector<ESM::FalloutActiveEffect>& effects)
+    {
+        return std::any_of(effects.begin(), effects.end(), [](const auto& effect) {
+            return effect.mKind == ESM::FalloutActiveEffectKind::Paralysis && effect.mMagnitude > 0.f
+                && effect.mTimeLeft > 0.f;
+        });
+    }
+
+    int CreatureStats::sActorId = 0;
+
     CreatureStats::CreatureStats()
     {
         for (const ESM::Attribute& attribute : MWBase::Environment::get().getESMStore()->get<ESM::Attribute>())
@@ -126,116 +215,24 @@ namespace MWMechanics
         return true;
     }
 
-    std::optional<float> CreatureStats::getFalloutActorValueOverride(std::uint8_t actorValue) const
+    bool CreatureStats::addFalloutActiveEffect(ESM::FalloutActiveEffect effect)
     {
-        const auto found = mFalloutActorValueOverrides.find(actorValue);
-        return found != mFalloutActorValueOverrides.end() ? std::optional<float>(found->second) : std::nullopt;
+        return MWMechanics::addFalloutActiveEffect(mFalloutActiveEffects, std::move(effect));
     }
 
-    bool CreatureStats::setFalloutActorValueOverride(std::uint8_t actorValue, float value)
+    FalloutActiveEffectsAdvance CreatureStats::advanceFalloutActiveEffects(float duration)
     {
-        if (actorValue >= 96 || !std::isfinite(value))
-            return false;
-        mFalloutActorValueOverrides[actorValue] = value;
-        return true;
+        return MWMechanics::advanceFalloutActiveEffects(mFalloutActiveEffects, duration);
     }
 
-    bool CreatureStats::setFalloutFactionOverride(ESM::FormId faction, std::optional<int> rank)
+    float CreatureStats::getFalloutActorValueModifier(std::int32_t actorValue) const
     {
-        if (faction.isZeroOrUnset()
-            || (rank && (*rank < std::numeric_limits<std::int8_t>::min()
-                || *rank > std::numeric_limits<std::int8_t>::max())))
-            return false;
-        mFalloutFactionOverrides[faction]
-            = rank ? static_cast<std::int16_t>(*rank) : FalloutFactionRemoved;
-        return true;
+        return MWMechanics::getFalloutActorValueModifier(mFalloutActiveEffects, actorValue);
     }
 
-    bool CreatureStats::setFalloutRuntimeFlag(std::uint32_t flag, bool enabled)
+    bool CreatureStats::isFalloutParalyzed() const
     {
-        constexpr std::uint32_t KnownFalloutRuntimeFlags = 0x3f;
-        if (flag == 0 || (flag & ~KnownFalloutRuntimeFlags) != 0)
-            return false;
-        if (enabled)
-            mFalloutRuntimeFlags |= flag;
-        else
-            mFalloutRuntimeFlags &= ~flag;
-        return true;
-    }
-
-    bool CreatureStats::setFalloutLookTarget(std::optional<ESM::FormId> target, bool rotateBody)
-    {
-        if (target && target->isZeroOrUnset())
-            return false;
-        mFalloutLookTarget = target;
-        mFalloutLookRotateBody = target && rotateBody;
-        return true;
-    }
-
-    bool CreatureStats::setFalloutEquipmentOverride(std::vector<ESM::FormId> items)
-    {
-        constexpr std::size_t MaximumEquippedItems = 64;
-        if (items.size() > MaximumEquippedItems
-            || std::ranges::any_of(items, [](ESM::FormId item) { return item.isZeroOrUnset(); }))
-            return false;
-        std::sort(items.begin(), items.end());
-        if (std::adjacent_find(items.begin(), items.end()) != items.end())
-            return false;
-        mHasFalloutEquipmentOverride = true;
-        mFalloutEquippedItems = std::move(items);
-        return true;
-    }
-
-    void CreatureStats::clearFalloutEquipmentOverride()
-    {
-        mHasFalloutEquipmentOverride = false;
-        mFalloutEquippedItems.clear();
-    }
-
-    bool CreatureStats::setFalloutBaseActorEffects(std::vector<ESM::FormId> effects)
-    {
-        constexpr std::size_t MaximumActorEffects = 1024;
-        if (effects.size() > MaximumActorEffects
-            || std::ranges::any_of(effects, [](ESM::FormId effect) { return effect.isZeroOrUnset(); }))
-            return false;
-        std::sort(effects.begin(), effects.end());
-        if (std::adjacent_find(effects.begin(), effects.end()) != effects.end())
-            return false;
-        mHasFalloutActorEffectOverride = false;
-        mFalloutActorEffects = std::move(effects);
-        return true;
-    }
-
-    bool CreatureStats::setFalloutActorEffect(ESM::FormId effect, bool enabled)
-    {
-        constexpr std::size_t MaximumActorEffects = 1024;
-        if (effect.isZeroOrUnset())
-            return false;
-        const auto found = std::find(mFalloutActorEffects.begin(), mFalloutActorEffects.end(), effect);
-        if (enabled)
-        {
-            if (found == mFalloutActorEffects.end())
-            {
-                if (mFalloutActorEffects.size() >= MaximumActorEffects)
-                    return false;
-                mFalloutActorEffects.push_back(effect);
-                std::sort(mFalloutActorEffects.begin(), mFalloutActorEffects.end());
-            }
-        }
-        else if (found != mFalloutActorEffects.end())
-            mFalloutActorEffects.erase(found);
-        mHasFalloutActorEffectOverride = true;
-        return true;
-    }
-
-    bool CreatureStats::setFalloutFullName(std::string name)
-    {
-        constexpr std::size_t MaximumFullNameLength = 4096;
-        if (name.empty() || name.size() > MaximumFullNameLength
-            || name.find('\0') != std::string::npos)
-            return false;
-        mFalloutFullName = std::move(name);
-        return true;
+        return hasFalloutParalysis(mFalloutActiveEffects);
     }
 
     Spells& CreatureStats::getSpells()
@@ -343,7 +340,8 @@ namespace MWMechanics
         if (world->getGodModeState() && this == &player.getClass().getCreatureStats(player))
             return false;
 
-        return mMagicEffects.getOrDefault(ESM::MagicEffect::Paralyze).getMagnitude() > 0;
+        return isFalloutParalyzed()
+            || mMagicEffects.getOrDefault(ESM::MagicEffect::Paralyze).getMagnitude() > 0;
     }
 
     bool CreatureStats::isDead() const
@@ -496,14 +494,14 @@ namespace MWMechanics
         return mLastHitAttemptObject;
     }
 
-    void CreatureStats::setHitAttemptActor(ESM::RefNum actor)
+    void CreatureStats::setHitAttemptActorId(int actorId)
     {
-        mHitAttemptActor = actor;
+        mHitAttemptActorId = actorId;
     }
 
-    ESM::RefNum CreatureStats::getHitAttemptActor() const
+    int CreatureStats::getHitAttemptActorId() const
     {
-        return mHitAttemptActor;
+        return mHitAttemptActorId;
     }
 
     void CreatureStats::addToFallHeight(float height)
@@ -538,8 +536,8 @@ namespace MWMechanics
         else
             base = world->getStore().get<ESM::GameSetting>().find("fNPCbaseMagickaMult")->mValue.getFloat();
 
-        float magickaFactor = base
-            + mMagicEffects.getOrDefault(EffectKey(ESM::MagicEffect::FortifyMaximumMagicka)).getMagnitude() * 0.1f;
+        double magickaFactor = base
+            + mMagicEffects.getOrDefault(EffectKey(ESM::MagicEffect::FortifyMaximumMagicka)).getMagnitude() * 0.1;
 
         DynamicStat<float> magicka = getMagicka();
         float currentToBaseRatio = magicka.getBase() > 0 ? magicka.getCurrent() / magicka.getBase() : 0;
@@ -638,7 +636,7 @@ namespace MWMechanics
     void CreatureStats::writeState(ESM::CreatureStats& state) const
     {
         for (size_t i = 0; i < state.mAttributes.size(); ++i)
-            getAttribute(ESM::Attribute::indexToRefId(static_cast<int>(i))).writeState(state.mAttributes[i]);
+            getAttribute(ESM::Attribute::indexToRefId(i)).writeState(state.mAttributes[i]);
 
         for (size_t i = 0; i < state.mDynamic.size(); ++i)
             mDynamic[i].writeState(state.mDynamic[i]);
@@ -670,6 +668,7 @@ namespace MWMechanics
         state.mRecalcDynamicStats = false;
         state.mDrawState = static_cast<int>(mDrawState);
         state.mLevel = mLevel;
+        state.mActorId = mActorId;
         state.mDeathAnimation = mDeathAnimation;
         state.mTimeOfDeath = mTimeOfDeath.toEsm();
         // state.mHitAttemptActorId = mHitAttemptActorId;
@@ -680,6 +679,7 @@ namespace MWMechanics
         mMagicEffects.writeState(state.mMagicEffects);
 
         state.mSummonedCreatures = mSummonedCreatures;
+        state.mSummonGraveyard = mSummonGraveyard;
 
         state.mHasAiSettings = true;
         for (size_t i = 0; i < state.mAiSettings.size(); ++i)
@@ -687,17 +687,7 @@ namespace MWMechanics
 
         state.mMissingACDT = false;
         state.mFalloutLimbDamage = mFalloutLimbDamage;
-        state.mFalloutActorValueOverrides = mFalloutActorValueOverrides;
-        state.mFalloutFactionOverrides = mFalloutFactionOverrides;
-        state.mFalloutRuntimeFlags = mFalloutRuntimeFlags;
-        state.mFalloutLookTarget = mFalloutLookTarget;
-        state.mFalloutLookRotateBody = mFalloutLookRotateBody;
-        state.mHasFalloutEquipmentOverride = mHasFalloutEquipmentOverride;
-        state.mFalloutEquippedItems = mFalloutEquippedItems;
-        state.mHasFalloutActorEffectOverride = mHasFalloutActorEffectOverride;
-        state.mFalloutActorEffects
-            = mHasFalloutActorEffectOverride ? mFalloutActorEffects : std::vector<ESM::FormId>{};
-        state.mFalloutFullName = mFalloutFullName;
+        state.mFalloutActiveEffects = mFalloutActiveEffects;
     }
 
     void CreatureStats::readState(const ESM::CreatureStats& state)
@@ -705,7 +695,7 @@ namespace MWMechanics
         if (!state.mMissingACDT)
         {
             for (size_t i = 0; i < state.mAttributes.size(); ++i)
-                mAttributes[ESM::Attribute::indexToRefId(static_cast<int>(i))].readState(state.mAttributes[i]);
+                mAttributes[ESM::Attribute::indexToRefId(i)].readState(state.mAttributes[i]);
 
             for (size_t i = 0; i < state.mDynamic.size(); ++i)
                 mDynamic[i].readState(state.mDynamic[i]);
@@ -734,9 +724,10 @@ namespace MWMechanics
         mLastHitAttemptObject = state.mLastHitAttemptObject;
         mDrawState = DrawState(state.mDrawState);
         mLevel = state.mLevel;
+        mActorId = state.mActorId;
         mDeathAnimation = state.mDeathAnimation;
         mTimeOfDeath = MWWorld::TimeStamp(state.mTimeOfDeath);
-        // mHitAttemptActor = state.mHitAttemptActor;
+        // mHitAttemptActorId = state.mHitAttemptActorId;
 
         mSpells.readState(state.mSpells, this);
         mActiveSpells.readState(state.mActiveSpells);
@@ -744,33 +735,15 @@ namespace MWMechanics
         mMagicEffects.readState(state.mMagicEffects);
 
         mSummonedCreatures = state.mSummonedCreatures;
+        mSummonGraveyard = state.mSummonGraveyard;
 
         if (state.mHasAiSettings)
             for (size_t i = 0; i < state.mAiSettings.size(); ++i)
                 mAiSettings[i].readState(state.mAiSettings[i]);
         if (state.mRecalcDynamicStats)
             recalculateMagicka();
-        if (state.mAiSequence.mActorIdConverter)
-        {
-            for (auto& [_, refNum] : mSummonedCreatures)
-                state.mAiSequence.mActorIdConverter->convert(refNum, refNum.mIndex);
-            auto& graveyard = state.mAiSequence.mActorIdConverter->mGraveyard;
-            graveyard.insert(graveyard.end(), state.mSummonGraveyard.begin(), state.mSummonGraveyard.end());
-        }
         mFalloutLimbDamage = state.mFalloutLimbDamage;
-        mFalloutActorValueOverrides = state.mFalloutActorValueOverrides;
-        mFalloutFactionOverrides = state.mFalloutFactionOverrides;
-        mFalloutRuntimeFlags = state.mFalloutRuntimeFlags;
-        mFalloutLookTarget = state.mFalloutLookTarget;
-        mFalloutLookRotateBody = state.mFalloutLookRotateBody;
-        mHasFalloutEquipmentOverride = state.mHasFalloutEquipmentOverride;
-        mFalloutEquippedItems = state.mFalloutEquippedItems;
-        // makeNpcCustomData/makeCreatureCustomData seed the winning authored template list before loading a save.
-        // An older save without FAEC therefore retains that list, while an explicit zero-count FAEC replaces it.
-        if (state.mHasFalloutActorEffectOverride)
-            mFalloutActorEffects = state.mFalloutActorEffects;
-        mHasFalloutActorEffectOverride = state.mHasFalloutActorEffectOverride;
-        mFalloutFullName = state.mFalloutFullName;
+        mFalloutActiveEffects = state.mFalloutActiveEffects;
     }
 
     void CreatureStats::setLastRestockTime(MWWorld::TimeStamp tradeTime)
@@ -792,6 +765,36 @@ namespace MWMechanics
         return mGoldPool;
     }
 
+    int CreatureStats::getActorId()
+    {
+        if (mActorId == -1)
+            mActorId = sActorId++;
+
+        return mActorId;
+    }
+
+    bool CreatureStats::matchesActorId(int id) const
+    {
+        return mActorId != -1 && id == mActorId;
+    }
+
+    void CreatureStats::cleanup()
+    {
+        sActorId = 0;
+    }
+
+    void CreatureStats::writeActorIdCounter(ESM::ESMWriter& esm)
+    {
+        esm.startRecord(ESM::REC_ACTC);
+        esm.writeHNT("COUN", sActorId);
+        esm.endRecord(ESM::REC_ACTC);
+    }
+
+    void CreatureStats::readActorIdCounter(ESM::ESMReader& esm)
+    {
+        esm.getHNT(sActorId, "COUN");
+    }
+
     signed char CreatureStats::getDeathAnimation() const
     {
         return mDeathAnimation;
@@ -807,9 +810,14 @@ namespace MWMechanics
         return mTimeOfDeath;
     }
 
-    std::multimap<ESM::RefId, ESM::RefNum>& CreatureStats::getSummonedCreatureMap()
+    std::multimap<int, int>& CreatureStats::getSummonedCreatureMap()
     {
         return mSummonedCreatures;
+    }
+
+    std::vector<int>& CreatureStats::getSummonedCreatureGraveyard()
+    {
+        return mSummonGraveyard;
     }
 
     void CreatureStats::updateAwareness(float duration)

@@ -5,6 +5,7 @@
 
 #include <MyGUI_DataFileStream.h>
 
+#include <components/files/conversion.hpp>
 #include <components/vfs/manager.hpp>
 
 namespace
@@ -26,17 +27,12 @@ namespace
 namespace MyGUIPlatform
 {
 
-    void DataManager::setResourcePath(VFS::Path::NormalizedView path)
+    void DataManager::setResourcePath(const std::filesystem::path& path)
     {
         mResourcePath = path;
     }
 
-    VFS::Path::NormalizedView DataManager::getResourcePath() const
-    {
-        return mResourcePath;
-    }
-
-    DataManager::DataManager(VFS::Path::NormalizedView resourcePath, const VFS::Manager* vfs)
+    DataManager::DataManager(const std::string& resourcePath, const VFS::Manager* vfs)
         : mResourcePath(resourcePath)
         , mVfs(vfs)
     {
@@ -44,9 +40,7 @@ namespace MyGUIPlatform
 
     MyGUI::IDataStream* DataManager::getData(const std::string& name) const
     {
-        VFS::Path::Normalized path(mResourcePath);
-        path /= name;
-        return new DataStream(mVfs->get(path));
+        return new DataStream(mVfs->get(Files::pathToUnicodeString(mResourcePath / name)));
     }
 
     void DataManager::freeData(MyGUI::IDataStream* data)
@@ -56,9 +50,7 @@ namespace MyGUIPlatform
 
     bool DataManager::isDataExist(const std::string& name) const
     {
-        VFS::Path::Normalized path(mResourcePath);
-        path /= name;
-        return mVfs->exists(path);
+        return mVfs->exists(Files::pathToUnicodeString(mResourcePath / name));
     }
 
     const MyGUI::VectorString& DataManager::getDataListNames(const std::string& /*pattern*/) const
@@ -68,12 +60,15 @@ namespace MyGUIPlatform
 
     std::string DataManager::getDataPath(const std::string& name) const
     {
-        VFS::Path::Normalized path(mResourcePath);
-        path /= name;
-        if (!mVfs->exists(path))
+        if (name.empty())
+        {
+            return Files::pathToUnicodeString(mResourcePath);
+        }
+
+        if (!isDataExist(name))
             return {};
 
-        return path;
+        return Files::pathToUnicodeString(mResourcePath / name);
     }
 
 }

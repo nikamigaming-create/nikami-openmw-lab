@@ -1,6 +1,8 @@
 #include "containerextensions.hpp"
 
 #include <stdexcept>
+#include <string>
+#include <string_view>
 
 #include <MyGUI_LanguageManager.h>
 
@@ -11,6 +13,7 @@
 #include <components/interpreter/interpreter.hpp>
 #include <components/interpreter/opcodes.hpp>
 
+#include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/format.hpp>
 
 #include <components/esm3/loadcrea.hpp>
@@ -36,6 +39,16 @@
 
 namespace
 {
+    ESM::RefId parseConsoleRecordId(std::string_view text)
+    {
+        if (!Misc::StringUtils::ciStartsWith(text, "FormId:"))
+            return ESM::RefId::stringRefId(text);
+
+        // Console script literals are case-folded by the legacy compiler. Restore the canonical serialized prefix
+        // before RefId deserialization so native ESM4 records remain addressable.
+        return ESM::RefId::deserializeText("FormId:" + std::string(text.substr(7)));
+    }
+
     void addToStore(const MWWorld::Ptr& itemPtr, int count, MWWorld::ContainerStore& store, bool resolve = true)
     {
         if (itemPtr.getClass().getScript(itemPtr).empty())
@@ -89,7 +102,7 @@ namespace MWScript
             {
                 MWWorld::Ptr ptr = R()(runtime);
 
-                ESM::RefId item = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                ESM::RefId item = parseConsoleRecordId(runtime.getStringLiteral(runtime[0].mInteger));
                 runtime.pop();
 
                 Interpreter::Type_Integer count = runtime[0].mInteger;
@@ -191,7 +204,7 @@ namespace MWScript
             {
                 MWWorld::Ptr ptr = R()(runtime, false);
 
-                ESM::RefId item = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                ESM::RefId item = parseConsoleRecordId(runtime.getStringLiteral(runtime[0].mInteger));
                 runtime.pop();
 
                 if (ptr.isEmpty() || (ptr.getType() != ESM::Container::sRecordId && !ptr.getClass().isActor()))
@@ -312,7 +325,7 @@ namespace MWScript
             {
                 MWWorld::Ptr ptr = R()(runtime);
 
-                ESM::RefId item = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                ESM::RefId item = parseConsoleRecordId(runtime.getStringLiteral(runtime[0].mInteger));
                 runtime.pop();
 
                 MWWorld::InventoryStore& invStore = ptr.getClass().getInventoryStore(ptr);

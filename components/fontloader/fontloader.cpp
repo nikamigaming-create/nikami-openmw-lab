@@ -1,7 +1,6 @@
 #include "fontloader.hpp"
 
 #include <array>
-#include <format>
 #include <stdexcept>
 #include <string_view>
 
@@ -214,7 +213,7 @@ namespace
         }
     }
 
-    [[noreturn]] void fail(std::istream& stream, VFS::Path::NormalizedView fileName, std::string_view message)
+    [[noreturn]] void fail(std::istream& stream, std::string_view fileName, std::string_view message)
     {
         std::stringstream error;
         error << "Font loading error: " << message;
@@ -222,6 +221,7 @@ namespace
         error << "\n  Offset: 0x" << std::hex << stream.tellg();
         throw std::runtime_error(error.str());
     }
+
 }
 
 namespace Gui
@@ -246,63 +246,41 @@ namespace Gui
 
     void FontLoader::loadFonts()
     {
-        constexpr FontId defaultFontId{ "DefaultFont" };
-        constexpr FontId scrollFontId{ "ScrollFont" };
-        constexpr FontId monoFontId{ "MonoFont" };
-
-        const std::string_view defaultFont = Fallback::Map::getString("Fonts_Font_0");
-        const std::string_view scrollFont = Fallback::Map::getString("Fonts_Font_2");
-
-        loadFont(defaultFontId, defaultFont);
-        loadFont(scrollFontId, scrollFont);
-        // We need to use a TrueType monospace font to display debug texts properly.
-        loadFont(monoFontId, "DejaVuLGCSansMono");
+        std::string defaultFont{ Fallback::Map::getString("Fonts_Font_0") };
+        std::string scrollFont{ Fallback::Map::getString("Fonts_Font_2") };
+        loadFont(defaultFont, "DefaultFont");
+        loadFont(scrollFont, "ScrollFont");
+        loadFont("DejaVuLGCSansMono",
+            "MonoFont"); // We need to use a TrueType monospace font to display debug texts properly.
 
         // Use our TrueType fonts as a fallback.
-        if (!MyGUI::ResourceManager::getInstance().isExist(defaultFontId.mValue)
+        if (!MyGUI::ResourceManager::getInstance().isExist("DefaultFont")
             && !Misc::StringUtils::ciEqual(defaultFont, "MysticCards"))
-            loadFont(defaultFontId, "MysticCards");
-
-        if (!MyGUI::ResourceManager::getInstance().isExist(scrollFontId.mValue)
+            loadFont("MysticCards", "DefaultFont");
+        if (!MyGUI::ResourceManager::getInstance().isExist("ScrollFont")
             && !Misc::StringUtils::ciEqual(scrollFont, "DemonicLetters"))
-            loadFont(scrollFontId, "DemonicLetters");
+            loadFont("DemonicLetters", "ScrollFont");
     }
 
-    void FontLoader::loadFont(FontId fontId, std::string_view fileName)
+    void FontLoader::loadFont(const std::string& fileName, const std::string& fontId)
     {
-        constexpr VFS::Path::NormalizedView fonts("fonts");
-
-        constexpr VFS::Path::ExtensionView fnt("fnt");
-        const VFS::Path::Normalized fntPath = VFS::Path::join(fonts, fileName, fnt);
-
-        if (const Files::IStreamPtr stream = mVFS->find(fntPath))
-        {
-            loadBitmapFont(fontId, fntPath, *stream);
-            return;
-        }
-
-        constexpr VFS::Path::ExtensionView omwfont("omwfont");
-        const VFS::Path::Normalized omwfontPath = VFS::Path::join(fonts, fileName, omwfont);
-
-        if (const Files::IStreamPtr stream = mVFS->find(omwfontPath))
-        {
-            loadTrueTypeFont(fontId, omwfontPath, *stream);
-            return;
-        }
-
-        Log(Debug::Error) << "Font '" << fileName << "' is not found.";
+        if (mVFS->exists("fonts/" + fileName + ".fnt"))
+            loadBitmapFont(fileName + ".fnt", fontId);
+        else if (mVFS->exists("fonts/" + fileName + ".omwfont"))
+            loadTrueTypeFont(fileName + ".omwfont", fontId);
+        else
+            Log(Debug::Error) << "Font '" << fileName << "' is not found.";
     }
 
-    void FontLoader::loadTrueTypeFont(FontId fontId, const VFS::Path::Normalized& path, std::istream& stream)
+    void FontLoader::loadTrueTypeFont(const std::string& fileName, const std::string& fontId)
     {
-        Log(Debug::Info) << "Loading TrueType font file " << path;
+        Log(Debug::Info) << "Loading font file " << fileName;
 
-        MyGUIPlatform::DataManager* const dataManager
+        MyGUIPlatform::DataManager* dataManager
             = dynamic_cast<MyGUIPlatform::DataManager*>(&MyGUIPlatform::DataManager::getInstance());
-        if (dataManager == nullptr)
+        if (!dataManager)
         {
-            Log(Debug::Error) << "Can not load TrueType font " << fontId.mValue
-                              << ": osgMyGUI::DataManager is not available.";
+            Log(Debug::Error) << "Can not load TrueType font " << fontId << ": osgMyGUI::DataManager is not available.";
             return;
         }
 
@@ -310,25 +288,10 @@ namespace Gui
         std::unique_ptr<MyGUI::IDataStream> layersStream(dataManager->getData("openmw_layers.xml"));
         MyGUI::IntSize bookSize = getBookSize(layersStream.get());
         float bookScale = MyGUIPlatform::ScalingLayer::getScaleFactor(bookSize);
-        const VFS::Path::Normalized oldDataPath(dataManager->getResourcePath());
 
-        struct SetOldResourcePath
-        {
-            VFS::Path::NormalizedView mOldDataPath;
-
-            void operator()(MyGUIPlatform::DataManager* dataManager) const
-            {
-                dataManager->setResourcePath(mOldDataPath);
-            }
-        };
-
-        std::unique_ptr<MyGUIPlatform::DataManager, SetOldResourcePath> dataManagerPtr(
-            dataManager, SetOldResourcePath{ oldDataPath });
-
-        constexpr VFS::Path::NormalizedView fonts("fonts");
-        dataManager->setResourcePath(fonts);
-
-        std::unique_ptr<MyGUI::IDataStream> dataStream = std::make_unique<MyGUI::DataStream>(&stream);
+        const auto oldDataPath = dataManager->getDataPath({});
+        dataManager->setResourcePath("fonts");
+        std::unique_ptr<MyGUI::IDataStream> dataStream(dataManager->getData(fileName));
 
         MyGUI::xml::Document xmlDocument;
         xmlDocument.open(dataStream.get());
@@ -343,7 +306,8 @@ namespace Gui
 
         if (valid == false)
         {
-            Log(Debug::Error) << "Can not load TrueType font " << fontId.mValue << ": " << path << " is invalid.";
+            dataManager->setResourcePath(oldDataPath);
+            Log(Debug::Error) << "Can not load TrueType font " << fontId << ": " << fileName << " is invalid.";
             return;
         }
 
@@ -366,7 +330,7 @@ namespace Gui
         MyGUI::ResourceTrueTypeFont* font = static_cast<MyGUI::ResourceTrueTypeFont*>(
             MyGUI::FactoryManager::getInstance().createObject("Resource", "ResourceTrueTypeFont"));
         font->deserialization(resourceNode.current(), MyGUI::Version(3, 2, 0));
-        font->setResourceName(fontId.mValue);
+        font->setResourceName(fontId);
         MyGUI::ResourceManager::getInstance().addResource(font);
 
         resolutionNode->setAttribute(
@@ -375,13 +339,13 @@ namespace Gui
         MyGUI::ResourceTrueTypeFont* bookFont = static_cast<MyGUI::ResourceTrueTypeFont*>(
             MyGUI::FactoryManager::getInstance().createObject("Resource", "ResourceTrueTypeFont"));
         bookFont->deserialization(resourceNode.current(), MyGUI::Version(3, 2, 0));
-        bookFont->setResourceName(std::format("Journalbook {}", fontId.mValue));
+        bookFont->setResourceName("Journalbook " + fontId);
         MyGUI::ResourceManager::getInstance().addResource(bookFont);
 
-        dataManagerPtr.reset();
+        dataManager->setResourcePath(oldDataPath);
 
         if (resourceNode.next("Resource"))
-            Log(Debug::Warning) << "Font file " << path
+            Log(Debug::Warning) << "Font file " << fileName
                                 << " contains multiple Resource entries, only first one will be used.";
     }
 
@@ -405,66 +369,65 @@ namespace Gui
         float ascent;
     } GlyphInfo;
 
-    void FontLoader::loadBitmapFont(FontId fontId, const VFS::Path::Normalized& path, std::istream& stream)
+    void FontLoader::loadBitmapFont(const std::string& fileName, const std::string& fontId)
     {
-        Log(Debug::Info) << "Loading bitmap font file " << path;
+        Log(Debug::Info) << "Loading font file " << fileName;
+
+        Files::IStreamPtr file = mVFS->get("fonts/" + fileName);
 
         float fontSize;
-        stream.read(reinterpret_cast<char*>(&fontSize), sizeof(fontSize));
-        if (!stream.good())
-            fail(stream, path, "File too small to be a valid font");
+        file->read((char*)&fontSize, sizeof(fontSize));
+        if (!file->good())
+            fail(*file, fileName, "File too small to be a valid font");
 
         int one;
-        stream.read(reinterpret_cast<char*>(&one), sizeof(one));
-        if (!stream.good())
-            fail(stream, path, "File too small to be a valid font");
+        file->read((char*)&one, sizeof(one));
+        if (!file->good())
+            fail(*file, fileName, "File too small to be a valid font");
 
         if (one != 1)
-            fail(stream, path, "Unexpected value");
+            fail(*file, fileName, "Unexpected value");
 
-        stream.read(reinterpret_cast<char*>(&one), sizeof(one));
-        if (!stream.good())
-            fail(stream, path, "File too small to be a valid font");
+        file->read((char*)&one, sizeof(one));
+        if (!file->good())
+            fail(*file, fileName, "File too small to be a valid font");
 
         if (one != 1)
-            fail(stream, path, "Unexpected value");
+            fail(*file, fileName, "Unexpected value");
 
         char nameBuffer[284];
-        stream.read(nameBuffer, sizeof(nameBuffer));
-        if (!stream.good())
-            fail(stream, path, "File too small to be a valid font");
+        file->read(nameBuffer, sizeof(nameBuffer));
+        if (!file->good())
+            fail(*file, fileName, "File too small to be a valid font");
 
         GlyphInfo data[256];
-        stream.read((char*)data, sizeof(data));
-        if (!stream.good())
-            fail(stream, path, "File too small to be a valid font");
+        file->read((char*)data, sizeof(data));
+        if (!file->good())
+            fail(*file, fileName, "File too small to be a valid font");
+
+        file.reset();
 
         // Create the font texture
         const std::string name(nameBuffer);
+        const std::string bitmapFilename = "fonts/" + name + ".tex";
 
-        constexpr VFS::Path::NormalizedView fonts("fonts");
-        constexpr VFS::Path::ExtensionView tex("tex");
-        const VFS::Path::Normalized bitmapPath = VFS::Path::join(fonts, name, tex);
+        Files::IStreamPtr bitmapFile = mVFS->get(bitmapFilename);
 
-        Files::IStreamPtr bitmapFile = mVFS->get(bitmapPath);
-
-        int width;
-        bitmapFile->read(reinterpret_cast<char*>(&width), sizeof(int));
-
-        int height;
-        bitmapFile->read(reinterpret_cast<char*>(&height), sizeof(int));
+        int width, height;
+        bitmapFile->read((char*)&width, sizeof(int));
+        bitmapFile->read((char*)&height, sizeof(int));
 
         if (!bitmapFile->good())
-            fail(*bitmapFile, bitmapPath, "File too small to be a valid bitmap");
+            fail(*bitmapFile, bitmapFilename, "File too small to be a valid bitmap");
 
         if (width <= 0 || height <= 0)
-            fail(*bitmapFile, bitmapPath, "Width and height must be positive");
+            fail(*bitmapFile, bitmapFilename, "Width and height must be positive");
 
         std::vector<char> textureData;
         textureData.resize(width * height * 4);
         bitmapFile->read(textureData.data(), width * height * 4);
         if (!bitmapFile->good())
-            Log(Debug::Warning) << "Font bitmap " << bitmapPath << " ended prematurely, using partial data ("
+            Log(Debug::Warning) << "Font bitmap " << bitmapFilename << " ended prematurely, using partial data ("
                                 << bitmapFile->gcount() << "/" << (width * height * 4) << " bytes)";
         bitmapFile.reset();
 
@@ -481,24 +444,24 @@ namespace Gui
             osgDB::writeImageFile(*image, name + ".png");
         }
 
-        MyGUI::ITexture* texture = MyGUI::RenderManager::getInstance().createTexture(bitmapPath);
-        texture->createManual(width, height, MyGUI::TextureUsage::Write, MyGUI::PixelFormat::R8G8B8A8);
-        unsigned char* texData = reinterpret_cast<unsigned char*>(texture->lock(MyGUI::TextureUsage::Write));
+        MyGUI::ITexture* tex = MyGUI::RenderManager::getInstance().createTexture(bitmapFilename);
+        tex->createManual(width, height, MyGUI::TextureUsage::Write, MyGUI::PixelFormat::R8G8B8A8);
+        unsigned char* texData = reinterpret_cast<unsigned char*>(tex->lock(MyGUI::TextureUsage::Write));
         memcpy(texData, textureData.data(), textureData.size());
-        texture->unlock();
+        tex->unlock();
 
         // We need to emulate loading from XML because the data members are private as of mygui 3.2.0
         MyGUI::xml::Document xmlDocument;
         MyGUI::xml::ElementPtr root = xmlDocument.createRoot("ResourceManualFont");
 
-        root->addAttribute("name", fontId.mValue);
+        root->addAttribute("name", fontId);
 
         MyGUI::xml::ElementPtr defaultHeight = root->createChild("Property");
         defaultHeight->addAttribute("key", "DefaultHeight");
         defaultHeight->addAttribute("value", fontSize);
         MyGUI::xml::ElementPtr source = root->createChild("Property");
         source->addAttribute("key", "Source");
-        source->addAttribute("value", bitmapPath);
+        source->addAttribute("value", bitmapFilename);
         MyGUI::xml::ElementPtr codes = root->createChild("Codes");
 
         // Fall back from unavailable Win-1252 encoding symbols to similar characters available in CP-437 game fonts
@@ -628,7 +591,7 @@ namespace Gui
         // Underscore, use for NotDefined marker (used for glyphs not existing in the font)
         additional.emplace(95, MyGUI::FontCodeType::NotDefined);
 
-        for (unsigned i = 0; i < 256; i++)
+        for (int i = 0; i < 256; i++)
         {
             float x1 = data[i].top_left.x * width;
             float y1 = data[i].top_left.y * height;
@@ -636,7 +599,7 @@ namespace Gui
             float h = data[i].bottom_left.y * height - y1;
 
             ToUTF8::Utf8Encoder encoder(mEncoding);
-            unsigned long unicodeVal = getUnicode(static_cast<unsigned char>(i), encoder, mEncoding);
+            unsigned long unicodeVal = getUnicode(i, encoder, mEncoding);
             const std::string coord = MyGUI::utility::toString(x1) + " " + MyGUI::utility::toString(y1) + " "
                 + MyGUI::utility::toString(w) + " " + MyGUI::utility::toString(h);
             float advance = data[i].width + data[i].kerningRight;
@@ -693,7 +656,7 @@ namespace Gui
         MyGUI::ResourceManualFont* bookFont = static_cast<MyGUI::ResourceManualFont*>(
             MyGUI::FactoryManager::getInstance().createObject("Resource", "ResourceManualFont"));
         bookFont->deserialization(root, MyGUI::Version(3, 2, 0));
-        bookFont->setResourceName(std::format("Journalbook {}", fontId.mValue));
+        bookFont->setResourceName("Journalbook " + fontId);
 
         MyGUI::ResourceManager::getInstance().addResource(font);
         MyGUI::ResourceManager::getInstance().addResource(bookFont);

@@ -38,11 +38,6 @@
 #include "refiddata.hpp"
 #include "universalid.hpp"
 
-namespace ESM
-{
-    struct MagicEffect;
-}
-
 namespace CSMWorld
 {
     class RefIdColumn;
@@ -432,20 +427,12 @@ namespace CSMWorld
         ///< If the data type does not match an exception is thrown.
     };
 
-    template <typename ESXRecordT>
-    class IdCollection;
-
     class IngredEffectRefIdAdapter : public NestedRefIdAdapterBase
     {
         UniversalId::Type mType;
-        const IdCollection<ESM::MagicEffect>& mMagicEffects;
 
     public:
-        IngredEffectRefIdAdapter(const IdCollection<ESM::MagicEffect>& magicEffects)
-            : mType(UniversalId::Type_Ingredient)
-            , mMagicEffects(magicEffects)
-        {
-        }
+        IngredEffectRefIdAdapter();
         IngredEffectRefIdAdapter(const IngredEffectRefIdAdapter&) = delete;
         IngredEffectRefIdAdapter& operator=(const IngredEffectRefIdAdapter&) = delete;
         ~IngredEffectRefIdAdapter() override = default;
@@ -1118,9 +1105,8 @@ namespace CSMWorld
         EffectsRefIdAdapter& operator=(const EffectsRefIdAdapter&);
 
     public:
-        EffectsRefIdAdapter(UniversalId::Type type, const IdCollection<ESM::MagicEffect>& magicEffects)
-            : EffectsListAdapter<ESXRecordT>(magicEffects)
-            , mType(type)
+        EffectsRefIdAdapter(UniversalId::Type type)
+            : mType(type)
         {
         }
 

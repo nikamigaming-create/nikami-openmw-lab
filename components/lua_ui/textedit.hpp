@@ -1,8 +1,6 @@
 #ifndef OPENMW_LUAUI_TEXTEDIT
 #define OPENMW_LUAUI_TEXTEDIT
 
-#include <vector>
-
 #include <MyGUI_EditBox.h>
 
 #include "widget.hpp"
@@ -23,8 +21,6 @@ namespace LuaUi
         void updateCoord() override;
         void updateChildren() override;
         MyGUI::IntSize calculateSize() const override;
-
-        const std::vector<std::string_view>& allUsedProperties() const override;
 
     private:
         void textChange(MyGUI::EditBox*);

@@ -163,6 +163,30 @@
         </Widget>
     </Resource>
 
+    <Resource type="ResourceLayout" name="MW_FalloutItemRow" version="3.2.0">
+        <Widget type="Widget" skin="" position="0 0 500 36" name="Root">
+            <Widget type="ImageBox" skin="ImageBox" position="0 0 36 36" align="Left VStretch" name="Frame">
+                <Widget type="TextBox" skin="CountText" position="4 17 28 16" align="Right Bottom" name="Text">
+                    <Property key="TextAlign" value="Right"/>
+                    <Property key="TextShadow" value="true"/>
+                </Widget>
+                <Widget type="ImageBox" skin="ImageBox" position="2 2 32 32" align="Center" name="Item"/>
+                <Widget type="ImageBox" skin="ImageBox" position="5 5 32 32" align="Center" name="ItemShadow">
+                    <Property key="Colour" value="0 0 0"/>
+                    <Property key="Alpha" value="0.5"/>
+                </Widget>
+            </Widget>
+            <Widget type="TextBox" skin="SandText" position="44 0 450 36" align="Stretch" name="Name">
+                <Property key="TextAlign" value="Left VCenter"/>
+                <Property key="TextShadow" value="true"/>
+            </Widget>
+            <Widget type="ImageBox" skin="ImageBox" position="0 0 500 36" align="Stretch" name="ControllerBorder">
+                <Property key="ImageTexture" value="textures\omw_menu_icon_active.dds"/>
+                <Property key="Visible" value="false"/>
+            </Widget>
+        </Widget>
+    </Resource>
+
     <Resource type="ResourceLayout" name="MW_ItemIconSmall" version="3.2.0">
         <Widget type="Widget" skin="" position="0 0 32 32" name="Root">
             <Widget type="ImageBox" skin="ImageBox" position="0 0 32 32" align="Stretch" name="Frame">

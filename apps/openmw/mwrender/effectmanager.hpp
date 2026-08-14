@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include <osg/Quat>
 #include <osg/ref_ptr>
 
 #include <components/vfs/pathutil.hpp>
@@ -12,12 +13,18 @@ namespace osg
 {
     class Group;
     class Vec3f;
+    class Vec4f;
     class PositionAttitudeTransform;
 }
 
 namespace Resource
 {
     class ResourceSystem;
+}
+
+namespace ESM4
+{
+    struct Light;
 }
 
 namespace MWRender
@@ -36,9 +43,13 @@ namespace MWRender
         /// Add an effect. When it's finished playing, it will be removed automatically.
         void addEffect(VFS::Path::NormalizedView model, std::string_view textureOverride,
             const osg::Vec3f& worldPosition, float scale, bool isMagicVFX = true, bool useAmbientLight = true,
-            std::string_view effectId = {}, bool loop = false);
+            const ESM4::Light* light = nullptr, bool isExterior = false,
+            const osg::Quat& orientation = osg::Quat(), float authoredDuration = 0.f);
 
-        void removeEffect(std::string_view effectId);
+        /// Add a Fallout impact decal using the authored TXST diffuse texture and DODT dimensions.
+        void addDecal(VFS::Path::NormalizedView texture, const osg::Vec3f& worldPosition,
+            const osg::Vec3f& surfaceNormal, float width, float height, float depth,
+            const osg::Vec4f& color, bool alphaBlend, bool alphaTest, float lifetime);
 
         void update(float dt);
 
@@ -48,14 +59,20 @@ namespace MWRender
     private:
         struct Effect
         {
-            std::string mEffectId;
             float mMaxControllerLength;
-            bool mLoop;
+            float mPlaybackRate = 1.f;
             std::shared_ptr<EffectAnimationTime> mAnimTime;
             osg::ref_ptr<osg::PositionAttitudeTransform> mTransform;
         };
 
+        struct Decal
+        {
+            float mRemainingLifetime;
+            osg::ref_ptr<osg::PositionAttitudeTransform> mTransform;
+        };
+
         std::vector<Effect> mEffects;
+        std::vector<Decal> mDecals;
 
         osg::ref_ptr<osg::Group> mParentNode;
         Resource::ResourceSystem* mResourceSystem;

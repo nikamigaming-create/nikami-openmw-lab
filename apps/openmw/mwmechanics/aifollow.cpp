@@ -30,8 +30,7 @@ namespace MWMechanics
 {
     int AiFollow::mFollowIndexCounter = 0;
 
-    AiFollow::AiFollow(
-        ESM::RefNum actor, std::string_view cellId, float duration, float x, float y, float z, bool repeat)
+    AiFollow::AiFollow(const ESM::RefId& actorId, float duration, float x, float y, float z, bool repeat)
         : TypedAiPackage<AiFollow>(repeat)
         , mAlwaysFollow(false)
         , mDuration(duration)
@@ -39,11 +38,10 @@ namespace MWMechanics
         , mX(x)
         , mY(y)
         , mZ(z)
-        , mCellId(cellId)
         , mActive(false)
         , mFollowIndex(mFollowIndexCounter++)
     {
-        mTargetActor = actor;
+        mTargetActorRefId = actorId;
     }
 
     AiFollow::AiFollow(
@@ -74,7 +72,7 @@ namespace MWMechanics
         , mFollowIndex(mFollowIndexCounter++)
     {
         mTargetActorRefId = actor.getCellRef().getRefId();
-        mTargetActor = actor.getCellRef().getRefNum();
+        mTargetActorId = actor.getClass().getCreatureStats(actor).getActorId();
     }
 
     AiFollow::AiFollow(const ESM::AiSequence::AiFollow* follow)
@@ -91,7 +89,7 @@ namespace MWMechanics
         , mFollowIndex(mFollowIndexCounter++)
     {
         mTargetActorRefId = follow->mTargetId;
-        mTargetActor = follow->mTargetActor;
+        mTargetActorId = follow->mTargetActorId;
     }
 
     bool AiFollow::execute(
@@ -246,9 +244,9 @@ namespace MWMechanics
         follow->mData.mX = mX;
         follow->mData.mY = mY;
         follow->mData.mZ = mZ;
-        follow->mData.mDuration = static_cast<int16_t>(mDuration);
+        follow->mData.mDuration = mDuration;
         follow->mTargetId = mTargetActorRefId;
-        follow->mTargetActor = mTargetActor;
+        follow->mTargetActorId = mTargetActorId;
         follow->mRemainingDuration = mRemainingDuration;
         follow->mCellId = mCellId;
         follow->mAlwaysFollow = mAlwaysFollow;

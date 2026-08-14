@@ -197,25 +197,37 @@ namespace MWRender
             }
         }
 
-        bool applyFalloutInventoryPlayerRuntimeEquipment(
-            const MWWorld::Ptr& visualPtr, const MWWorld::Ptr& player)
+        void applyFalloutInventoryPlayerEquippedItems(
+            const MWWorld::Ptr& visualPtr, const MWWorld::Ptr& sourcePlayer)
         {
-            if (player.isEmpty() || !player.getClass().isActor())
-                return false;
-            const MWMechanics::CreatureStats& playerStats
-                = player.getClass().getCreatureStats(player);
-            if (!playerStats.hasFalloutEquipmentOverride())
-                return false;
-            if (!MWClass::ESM4Npc::applyFalloutEquipmentOverride(
-                    visualPtr, playerStats.getFalloutEquippedItems(), false))
-                return false;
-            MWMechanics::CreatureStats& visualStats
-                = visualPtr.getClass().getCreatureStats(visualPtr);
-            if (MWClass::ESM4Npc::getEquippedWeapon(visualPtr) != nullptr)
-                visualStats.setDrawState(playerStats.getDrawState());
-            else
-                visualStats.setDrawState(MWMechanics::DrawState::Nothing);
-            return true;
+            if (sourcePlayer.isEmpty() || !sourcePlayer.getClass().hasInventoryStore(sourcePlayer))
+                return;
+
+            MWWorld::InventoryStore& inventory = sourcePlayer.getClass().getInventoryStore(sourcePlayer);
+            for (int slot = 0; slot < MWWorld::InventoryStore::Slots; ++slot)
+            {
+                MWWorld::ContainerStoreIterator item = inventory.getSlot(slot);
+                if (item == inventory.end())
+                    continue;
+
+                if (item->getType() == ESM4::Armor::sRecordId)
+                {
+                    const ESM4::Armor* armor = item->get<ESM4::Armor>()->mBase;
+                    const bool added = MWClass::ESM4Npc::addEquippedArmorReplacingSlots(visualPtr, armor);
+                    Log(Debug::Info) << "FNV inventory paper doll: slot=" << slot << " type=ARMO form="
+                                     << item->getCellRef().getRefId() << " editor=" << armor->mEditorId
+                                     << " added=" << added;
+                }
+                else if (item->getType() == ESM4::Weapon::sRecordId)
+                {
+                    const ESM4::Weapon* weapon = item->get<ESM4::Weapon>()->mBase;
+                    const bool changed = MWClass::ESM4Npc::setEquippedWeapon(visualPtr, weapon);
+                    visualPtr.getClass().getCreatureStats(visualPtr).setDrawState(MWMechanics::DrawState::Weapon);
+                    Log(Debug::Info) << "FNV inventory paper doll: slot=" << slot << " type=WEAP form="
+                                     << item->getCellRef().getRefId() << " editor=" << weapon->mEditorId
+                                     << " changed=" << changed;
+                }
+            }
         }
 
         std::string trimFalloutPreviewText(const char* value)
@@ -822,6 +834,7 @@ namespace MWRender
         lightManager->setStartLight(1);
         osg::ref_ptr<osg::StateSet> stateset = lightManager->getOrCreateStateSet();
         stateset->setDefine("FORCE_OPAQUE", "1", osg::StateAttribute::ON);
+        stateset->setMode(GL_LIGHTING, osg::StateAttribute::ON);
         stateset->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
         stateset->setMode(GL_CULL_FACE, osg::StateAttribute::ON);
         osg::ref_ptr<osg::Material> defaultMat(new osg::Material);
@@ -843,12 +856,21 @@ namespace MWRender
 
         // TODO: Clean up this mess of loose uniforms that shaders depend on.
         // turn off sky blending
+        int skyTextureSlot = mResourceSystem->getSceneManager()->getShaderManager().reserveGlobalTextureUnits(
+            Shader::ShaderManager::Slot::SkyTexture);
         stateset->addUniform(new osg::Uniform("far", 10000000.0f));
         stateset->addUniform(new osg::Uniform("skyBlendingStart", 8000000.0f));
         stateset->addUniform(new osg::Uniform("screenRes", osg::Vec2f{ 1, 1 }));
-
+        stateset->addUniform(new osg::Uniform("sky", skyTextureSlot));
         stateset->addUniform(new osg::Uniform("emissiveMult", 1.f));
 
+        // Opaque stuff must have 1 as its fragment alpha as the FBO is translucent, so having blending off isn't enough
+        osg::ref_ptr<osg::TexEnvCombine> noBlendAlphaEnv = new osg::TexEnvCombine();
+        noBlendAlphaEnv->setCombine_Alpha(osg::TexEnvCombine::REPLACE);
+        noBlendAlphaEnv->setSource0_Alpha(osg::TexEnvCombine::CONSTANT);
+        noBlendAlphaEnv->setConstantColor(osg::Vec4(0.0, 0.0, 0.0, 1.0));
+        noBlendAlphaEnv->setCombine_RGB(osg::TexEnvCombine::REPLACE);
+        noBlendAlphaEnv->setSource0_RGB(osg::TexEnvCombine::PREVIOUS);
         osg::ref_ptr<osg::Texture2D> dummyTexture = new osg::Texture2D();
         dummyTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
         dummyTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
@@ -858,6 +880,7 @@ namespace MWRender
         dummyTexture->setShadowComparison(true);
         dummyTexture->setShadowCompareFunc(osg::Texture::ShadowCompareFunc::ALWAYS);
         stateset->setTextureAttributeAndModes(7, dummyTexture, osg::StateAttribute::ON);
+        stateset->setTextureAttribute(7, noBlendAlphaEnv, osg::StateAttribute::ON);
 
         osg::ref_ptr<osg::LightModel> lightmodel = new osg::LightModel;
         lightmodel->setAmbientIntensity(osg::Vec4(0.0, 0.0, 0.0, 1.0));
@@ -885,10 +908,15 @@ namespace MWRender
             ambientRGBA = osg::Vec4(
                 std::max(ambientR, 0.45f), std::max(ambientG, 0.45f), std::max(ambientB, 0.45f), 1);
         }
-        // The 0.51 renderer always uses the shader path; retain the matching
-        // preview-lighting branch without the removed force-shaders setting.
-        lightmodel->setAmbientIntensity(ambientRGBA);
-        light->setAmbient(osg::Vec4(0, 0, 0, 1));
+        if (mResourceSystem->getSceneManager()->getForceShaders())
+        {
+            // When using shaders, we now skip the ambient sun calculation as this is the only place it's used.
+            // Using the scene ambient will give identical results.
+            lightmodel->setAmbientIntensity(ambientRGBA);
+            light->setAmbient(osg::Vec4(0, 0, 0, 1));
+        }
+        else
+            light->setAmbient(ambientRGBA);
         light->setSpecular(osg::Vec4(0, 0, 0, 0));
         light->setLightNum(0);
         light->setConstantAttenuation(1.f);
@@ -1010,7 +1038,7 @@ namespace MWRender
                 MWWorld::Ptr visualPtr(mFalloutPreviewRef.get(), nullptr);
                 visualPtr.getRefData().setCustomData(std::unique_ptr<MWWorld::CustomData>());
                 applyFalloutInventoryPlayerProxyConfiguredEquipment(visualPtr);
-                applyFalloutInventoryPlayerRuntimeEquipment(visualPtr, mCharacter);
+                applyFalloutInventoryPlayerEquippedItems(visualPtr, mCharacter);
 
                 Log(Debug::Info) << "FNV/ESM4 proof: using Fallout inventory player visual proxy "
                                  << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)
@@ -1039,8 +1067,7 @@ namespace MWRender
 
         // NB Camera::setViewport has threading issues
         osg::ref_ptr<osg::StateSet> stateset = new osg::StateSet;
-        // This expects Y-down convention; historically the origin was (0, mSizeY - sizeY)
-        mViewport = new osg::Viewport(0, 0, std::min(mSizeX, sizeX), std::min(mSizeY, sizeY));
+        mViewport = new osg::Viewport(0, mSizeY - sizeY, std::min(mSizeX, sizeX), std::min(mSizeY, sizeY));
         stateset->setAttributeAndModes(mViewport);
         mRTTNode->setCameraStateset(stateset);
 
@@ -1178,13 +1205,7 @@ namespace MWRender
 
     void InventoryPreview::updatePtr(const MWWorld::Ptr& ptr)
     {
-        // The Fallout equipment slots live on the runtime NPC reference.  Keep
-        // that reference for the paper doll so an equip/unequip updates its
-        // live appearance instead of rebuilding from a blank base record.
-        if (ptr.getType() == ESM4::Npc::sRecordId)
-            mCharacter = ptr;
-        else
-            mCharacter = MWWorld::Ptr(ptr.getBase(), nullptr);
+        mCharacter = MWWorld::Ptr(ptr.getBase(), nullptr);
     }
 
     void InventoryPreview::onSetup()

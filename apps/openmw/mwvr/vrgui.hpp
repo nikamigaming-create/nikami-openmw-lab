@@ -87,7 +87,7 @@ namespace MWVR
         //void onTrackingUpdated(VR::TrackingManager& manager) override;
 
         osg::Texture2D* colorTexture() const;
-        std::shared_ptr<VR::QuadLayer> vrLayer() { return mVrLayer; }
+        std::shared_ptr<VR::QuadLayer> vrLayer() { return mVrLayer; } 
 
         bool updateLayer();
         void updateVisibility();
@@ -202,7 +202,6 @@ namespace MWVR
         void insertWidget(MWGui::Layout* widget);
         void removeWidget(MWGui::Layout* widget);
         void setFocusLayer(osg::ref_ptr<VRGUILayer> layer);
-        void setFocusWidget(MyGUI::Widget* widget);
         VRGUILayer* getLayer(const std::string& layer);
 
         osg::ref_ptr<osgViewer::Viewer> mOsgViewer;
@@ -215,7 +214,6 @@ namespace MWVR
 
         osg::Vec2i mGuiCursor;
         osg::ref_ptr<VRGUILayer> mFocusLayer = nullptr;
-        MyGUI::Widget* mFocusWidget = nullptr;
         std::map<std::string, LayerConfig> mDefaultLayerConfigs;
 
         std::shared_ptr<VR::Session::Listener> mSessionListener;

@@ -1,11 +1,7 @@
 #ifndef OPENMW_MWWORLD_PROJECTILEMANAGER_H
 #define OPENMW_MWWORLD_PROJECTILEMANAGER_H
 
-#include <cstdint>
-#include <memory>
-#include <set>
 #include <string>
-#include <vector>
 
 #include <osg/PositionAttitudeTransform>
 #include <osg/ref_ptr>
@@ -70,7 +66,8 @@ namespace MWWorld
             const osg::Vec3f& pos, const osg::Vec3f& direction,
             const MWMechanics::FalloutProjectileImpactContract& impact);
         bool launchFalloutHitscanTracer(
-            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination);
+            ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination,
+            const osg::Vec3f& impactNormal);
 
         /// Count queued V.A.T.S. projectiles that must resolve before the cinematic transaction can finish.
         /// Persistent mines/remote explosives are excluded because their authored lifetime is open-ended.
@@ -91,8 +88,7 @@ namespace MWWorld
 
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) const;
         bool readRecord(ESM::ESMReader& reader, uint32_t type);
-        size_t countSavedGameRecords() const;
-        void saveLoaded(const ESM::ESMReader& reader);
+        int countSavedGameRecords() const;
 
     private:
         osg::ref_ptr<osg::Group> mParent;
@@ -106,7 +102,11 @@ namespace MWWorld
             osg::ref_ptr<osg::PositionAttitudeTransform> mNode;
             std::shared_ptr<MWRender::EffectAnimationTime> mEffectAnimationTime;
 
-            ESM::RefNum mCaster;
+            int mActorId;
+            int mProjectileId;
+
+            // TODO: this will break when the game is saved and reloaded, since there is currently
+            // no way to write identifiers for non-actors to a savegame.
             MWWorld::Ptr mCasterHandle;
 
             MWWorld::Ptr getCaster();
@@ -117,7 +117,6 @@ namespace MWWorld
             // MW-id of an arrow projectile
             ESM::RefId mIdArrow;
 
-            int mProjectileId;
             bool mToDelete;
         };
 
@@ -138,9 +137,20 @@ namespace MWWorld
             std::set<ESM::RefId> mSoundIds;
         };
 
-        struct FalloutProjectileData
+        struct ProjectileState : public State
+        {
+            // RefID of the bow or crossbow the actor was using when this projectile was fired (may be empty)
+            ESM::RefId mBowId;
+
+            osg::Vec3f mVelocity;
+            float mAttackStrength;
+            bool mThrown;
+        };
+
+        struct FalloutProjectileState : public State
         {
             ESM::FormId mProjectile;
+            osg::Vec3f mVelocity;
             osg::Vec3f mRotationVelocity;
             osg::Vec3f mPreviousPosition;
             float mGravity = 0.f;
@@ -155,19 +165,9 @@ namespace MWWorld
             MWMechanics::FalloutProjectileImpactContract mImpact;
         };
 
-        struct ProjectileState : public State
-        {
-            // RefID of the bow or crossbow the actor was using when this projectile was fired (may be empty)
-            ESM::RefId mBowId;
-
-            osg::Vec3f mVelocity;
-            float mAttackStrength = 0.f;
-            // Absent for native ESM3 arrows; present only for Fallout record semantics.
-            std::unique_ptr<FalloutProjectileData> mFallout;
-        };
-
         struct FalloutHitscanTracerState : public State
         {
+            osg::ref_ptr<osg::PositionAttitudeTransform> mImpactNode;
             osg::Vec3f mOrigin;
             osg::Vec3f mDestination;
             float mElapsedTime = 0.f;
@@ -176,9 +176,11 @@ namespace MWWorld
 
         std::vector<MagicBoltState> mMagicBolts;
         std::vector<ProjectileState> mProjectiles;
+        std::vector<FalloutProjectileState> mFalloutProjectiles;
         std::vector<FalloutHitscanTracerState> mFalloutHitscanTracers;
 
         void cleanupProjectile(ProjectileState& state);
+        void cleanupFalloutProjectile(FalloutProjectileState& state);
         void cleanupFalloutHitscanTracer(FalloutHitscanTracerState& state);
         void cleanupMagicBolt(MagicBoltState& state);
         void periodicCleanup(float dt);
@@ -186,8 +188,8 @@ namespace MWWorld
         void moveProjectiles(float dt);
         void moveFalloutProjectiles(float dt);
         void moveFalloutHitscanTracers(float dt);
-        bool bounceFalloutProjectile(ProjectileState& state, FalloutProjectileData& fallout,
-            const ESM4::Projectile& projectile, const osg::Vec3f& hitPosition, const osg::Vec3f& hitNormal);
+        bool bounceFalloutProjectile(FalloutProjectileState& state, const ESM4::Projectile& projectile,
+            const osg::Vec3f& hitPosition, const osg::Vec3f& hitNormal);
         void moveMagicBolts(float dt);
 
         void createModel(State& state, VFS::Path::NormalizedView model, const osg::Vec3f& pos, const osg::Quat& orient,

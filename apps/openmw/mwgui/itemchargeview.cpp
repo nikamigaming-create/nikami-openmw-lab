@@ -161,7 +161,7 @@ namespace MWGui
         mScrollView->setVisibleVScroll(true);
 
         if (Settings::gui().mControllerMenus)
-            updateControllerFocus(mLines.size(), mControllerFocus);
+            updateControllerFocus(-1, mControllerFocus);
     }
 
     void ItemChargeView::resetScrollbars()
@@ -242,37 +242,37 @@ namespace MWGui
         if (mLines.empty())
             return;
 
-        size_t prevFocus = mControllerFocus;
+        int prevFocus = mControllerFocus;
 
         if (button == SDL_CONTROLLER_BUTTON_A)
         {
             // Select the focused item, if any.
-            if (mControllerFocus < mLines.size())
+            if (mControllerFocus >= 0 && mControllerFocus < static_cast<int>(mLines.size()))
                 onIconClicked(mLines[mControllerFocus].mIcon);
         }
         else if (button == SDL_CONTROLLER_BUTTON_DPAD_UP)
-            mControllerFocus = wrap(mControllerFocus, mLines.size(), -1);
+            mControllerFocus = wrap(mControllerFocus - 1, mLines.size());
         else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
-            mControllerFocus = wrap(mControllerFocus, mLines.size(), 1);
+            mControllerFocus = wrap(mControllerFocus + 1, mLines.size());
 
         if (prevFocus != mControllerFocus)
             updateControllerFocus(prevFocus, mControllerFocus);
     }
 
-    void ItemChargeView::updateControllerFocus(size_t prevFocus, size_t newFocus)
+    void ItemChargeView::updateControllerFocus(int prevFocus, int newFocus)
     {
         if (mLines.empty())
             return;
 
         const TextColours& textColours{ MWBase::Environment::get().getWindowManager()->getTextColours() };
 
-        if (prevFocus < mLines.size())
+        if (prevFocus >= 0 && prevFocus < static_cast<int>(mLines.size()))
         {
             mLines[prevFocus].mText->setTextColour(textColours.normal);
             mLines[prevFocus].mIcon->setControllerFocus(false);
         }
 
-        if (newFocus < mLines.size())
+        if (newFocus >= 0 && newFocus < static_cast<int>(mLines.size()))
         {
             mLines[newFocus].mText->setTextColour(textColours.link);
             mLines[newFocus].mIcon->setControllerFocus(true);
@@ -281,7 +281,7 @@ namespace MWGui
             if (newFocus <= 3)
                 mScrollView->setViewOffset(MyGUI::IntPoint(0, 0));
             else
-                mScrollView->setViewOffset(MyGUI::IntPoint(0, -55 * static_cast<int>(newFocus - 3)));
+                mScrollView->setViewOffset(MyGUI::IntPoint(0, -55 * (newFocus - 3)));
         }
     }
 }

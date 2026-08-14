@@ -17,9 +17,11 @@ namespace Terrain
         setCullingActive(false);
 
         mFBO = new osg::FrameBufferObject;
+
+        getOrCreateStateSet()->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
     }
 
-    CompositeMapRenderer::~CompositeMapRenderer() = default;
+    CompositeMapRenderer::~CompositeMapRenderer() {}
 
     void CompositeMapRenderer::drawImplementation(osg::RenderInfo& renderInfo) const
     {
@@ -102,7 +104,7 @@ namespace Terrain
         // should OSG be doing this on its own?
         state.haveAppliedTextureAttribute(state.getActiveTextureUnit(), osg::StateAttribute::TEXTURE);
 
-        for (size_t i = compositeMap.mCompiled; i < compositeMap.mDrawables.size(); ++i)
+        for (unsigned int i = compositeMap.mCompiled; i < compositeMap.mDrawables.size(); ++i)
         {
             osg::Drawable* drw = compositeMap.mDrawables[i];
             osg::StateSet* stateset = drw->getStateSet();
@@ -163,7 +165,7 @@ namespace Terrain
         }
     }
 
-    size_t CompositeMapRenderer::getCompileSetSize() const
+    unsigned int CompositeMapRenderer::getCompileSetSize() const
     {
         std::lock_guard<std::mutex> lock(mMutex);
         return mCompileSet.size();

@@ -53,9 +53,6 @@ namespace MWGui
         MyGUI::ComboBox* mLightingMethodButton;
         MyGUI::Button* mLightsResetButton;
 
-        MyGUI::ComboBox* mShadowResolution;
-        MyGUI::ComboBox* mShadowUpdateInterval;
-
         MyGUI::ComboBox* mPrimaryLanguage;
         MyGUI::ComboBox* mSecondaryLanguage;
         MyGUI::Button* mGmstOverridesL10n;
@@ -75,7 +72,7 @@ namespace MWGui
         MyGUI::Widget* mScriptDisabled;
         MyGUI::ScrollView* mScriptView;
         LuaUi::LuaAdapter* mScriptAdapter;
-        size_t mCurrentPage;
+        int mCurrentPage;
 
         void onTabChanged(MyGUI::TabControl* sender, size_t index);
         void onOkButtonClicked(MyGUI::Widget* sender);
@@ -91,13 +88,17 @@ namespace MWGui
         void onWaterTextureSizeChanged(MyGUI::ComboBox* sender, size_t pos);
         void onWaterReflectionDetailChanged(MyGUI::ComboBox* sender, size_t pos);
         void onWaterRainRippleDetailChanged(MyGUI::ComboBox* sender, size_t pos);
+//## VR_PATCH BEGIN
+        // MERGETODO: Upstream added the 4 onRefaction, onWater handlers above. Test
+        MyGUI::ComboBox* mVRMirrorTextureEye;
+
+        void onVRMirrorTextureEyeChanged(MyGUI::ComboBox* _sender, size_t pos);
+//## VR_PATCH END
+
 
         void onLightingMethodButtonChanged(MyGUI::ComboBox* sender, size_t pos);
         void onLightsResetButtonClicked(MyGUI::Widget* sender);
         void onMaxLightsChanged(MyGUI::ComboBox* sender, size_t pos);
-
-        void onShadowResolutionChanged(MyGUI::ComboBox* sender, size_t pos);
-        void onShadowUpdateIntervalChanged(MyGUI::ComboBox* sender, size_t pos);
 
         void onPrimaryLanguageChanged(MyGUI::ComboBox* sender, size_t pos) { onLanguageChanged(0, sender, pos); }
         void onSecondaryLanguageChanged(MyGUI::ComboBox* sender, size_t pos) { onLanguageChanged(1, sender, pos); }
@@ -114,7 +115,9 @@ namespace MWGui
         void onKeyboardSwitchClicked(MyGUI::Widget* sender);
         void onControllerSwitchClicked(MyGUI::Widget* sender);
 
-        void onWindowResize(MyGUI::Window* sender);
+//## VR_PATCH BEGIN
+        void onWindowResize(MyGUI::Window* sender) override;
+//## VR_PATCH END
 
         void onScriptFilterChange(MyGUI::EditBox*);
         void onScriptListSelection(MyGUI::ListBox*, size_t index);
@@ -122,7 +125,7 @@ namespace MWGui
         void apply();
 
         void configureWidgets(MyGUI::Widget* widget, bool init);
-        MyGUI::TextBox* getSliderLabel(MyGUI::ScrollBar* scroller) const;
+        void updateSliderLabel(MyGUI::ScrollBar* scroller, const std::string& value);
 
         void layoutControlsBox();
         void renderScriptSettings();

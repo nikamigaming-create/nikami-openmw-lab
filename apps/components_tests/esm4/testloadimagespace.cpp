@@ -2,6 +2,7 @@
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadimgs.hpp>
+#include <components/esm4/loadipct.hpp>
 #include <components/esm4/loadipds.hpp>
 #include <components/esm4/loadwrld.hpp>
 #include <components/esm4/reader.hpp>
@@ -53,8 +54,8 @@ namespace
         appendSubRecord(output, type, std::string_view(data));
     }
 
-    std::unique_ptr<ESM4::Reader> makeReader(std::string_view recordType, std::uint32_t formId, std::string payload,
-        std::uint32_t modIndex = 0, std::uint16_t formVersion = 0)
+    std::unique_ptr<ESM4::Reader> makeReader(
+        std::string_view recordType, std::uint32_t formId, std::string payload, std::uint32_t modIndex = 0)
     {
         std::string hedr;
         appendPod(hedr, 1.34f);
@@ -64,20 +65,20 @@ namespace
         appendSubRecord(headerPayload, "HEDR", hedr);
 
         const auto appendRecord = [](std::string& output, std::string_view type, std::uint32_t id,
-                                      std::string_view body, std::uint16_t version = 0) {
+                                      std::string_view body) {
             output.append(type);
             appendPod(output, static_cast<std::uint32_t>(body.size()));
             appendPod(output, std::uint32_t{ 0 });
             appendPod(output, id);
             appendPod(output, std::uint32_t{ 0 });
-            appendPod(output, version);
+            appendPod(output, std::uint16_t{ 0 });
             appendPod(output, std::uint16_t{ 0 });
             output.append(body);
         };
 
         std::string plugin;
         appendRecord(plugin, "TES4", 0, headerPayload);
-        appendRecord(plugin, recordType, formId, payload, formVersion);
+        appendRecord(plugin, recordType, formId, payload);
         auto stream = std::make_unique<std::istringstream>(plugin, std::ios::in | std::ios::binary);
         auto reader = std::make_unique<ESM4::Reader>(std::move(stream), "imagespace.esm", nullptr, nullptr, true);
         reader->setModIndex(modIndex);
@@ -115,29 +116,72 @@ namespace
         }
     }
 
+    TEST(Esm4ImpactDataTest, shouldParseRetailEffectAndDecalContracts)
+    {
+        std::string payload;
+        std::string data;
+        appendPod(data, 0.75f);
+        appendPod(data, std::uint32_t{ 1 });
+        appendPod(data, 55.f);
+        appendPod(data, 12.f);
+        appendPod(data, std::uint32_t{ 2 });
+        appendPod(data, std::uint32_t{ 0 });
+        appendSubRecord(payload, "DATA", data);
+
+        std::string decal;
+        for (float value : { 1.f, 3.f, 2.f, 4.f, 0.125f, 6.f, 0.25f })
+            appendPod(decal, value);
+        appendPod(decal, std::uint8_t{ 4 });
+        appendPod(decal,
+            std::uint8_t{ ESM4::DecalData::Parallax | ESM4::DecalData::AlphaBlending });
+        appendPod(decal, std::uint16_t{ 0 });
+        for (std::uint8_t value : { 10, 20, 30, 40 })
+            appendPod(decal, value);
+        appendSubRecord(payload, "DODT", decal);
+        appendSubRecord(payload, "DNAM", std::uint32_t{ 0x00112233 });
+
+        auto reader = makeReader("IPCT", 0x1234, payload);
+        ESM4::ImpactData impact;
+        impact.load(*reader);
+
+        ASSERT_TRUE(impact.mData.mPresent);
+        EXPECT_FLOAT_EQ(impact.mData.mEffectDuration, 0.75f);
+        EXPECT_EQ(impact.mData.mOrientation, 1u);
+        EXPECT_FLOAT_EQ(impact.mData.mPlacementRadius, 12.f);
+        ASSERT_TRUE(impact.mDecal.mPresent);
+        EXPECT_FLOAT_EQ(impact.mDecal.mMinWidth, 1.f);
+        EXPECT_FLOAT_EQ(impact.mDecal.mMaxHeight, 4.f);
+        EXPECT_FLOAT_EQ(impact.mDecal.mDepth, 0.125f);
+        EXPECT_EQ(impact.mDecal.mParallaxPasses, 4);
+        EXPECT_EQ(impact.mDecal.mFlags,
+            ESM4::DecalData::Parallax | ESM4::DecalData::AlphaBlending);
+        EXPECT_EQ(impact.mDecal.mColor, (std::array<std::uint8_t, 3>{ 10, 20, 30 }));
+        EXPECT_EQ(impact.mTextureSet, ESM::FormId::fromUint32(0x00112233));
+    }
+
     TEST(Esm4ImageSpaceTest, shouldParseRetailFNVBaseTraits)
     {
         std::string payload;
         appendSubRecord(payload, "EDID", std::string_view("NVDefaultExterior\0", 18));
-        std::array<float, 38> data{};
-        data[ESM4::ImageSpace::Trait_TargetLuminance] = 1.4f;
-        data[ESM4::ImageSpace::Trait_SunlightDimmer] = 1.1f;
-        data[ESM4::ImageSpace::Trait_SkinDimmer] = 0.55f;
-        data[ESM4::ImageSpace::Trait_BloomBlurRadius] = 0.03f;
-        data[ESM4::ImageSpace::Trait_BloomAlphaInterior] = 0.8f;
-        data[ESM4::ImageSpace::Trait_BloomAlphaExterior] = 0.2f;
-        data[ESM4::ImageSpace::Trait_CinematicSaturation] = 1.1f;
-        data[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance] = 0.2f;
-        data[ESM4::ImageSpace::Trait_CinematicContrast] = 1.1f;
-        data[ESM4::ImageSpace::Trait_CinematicBrightness] = 1.f;
-        data[ESM4::ImageSpace::Trait_CinematicTintRed] = 0.984313726f;
-        data[ESM4::ImageSpace::Trait_CinematicTintGreen] = 0.568627477f;
-        data[ESM4::ImageSpace::Trait_CinematicTintStrength] = 0.330000013f;
-        const std::uint32_t flags = 0xf;
-        std::memcpy(&data[37], &flags, sizeof(flags));
+        std::array<std::uint8_t, 152> data{};
+        const auto setTrait = [&](ESM4::ImageSpace::Trait trait, float value) {
+            std::memcpy(data.data() + static_cast<std::size_t>(trait) * sizeof(float), &value, sizeof(value));
+        };
+        setTrait(ESM4::ImageSpace::Trait_TargetLuminance, 1.4f);
+        setTrait(ESM4::ImageSpace::Trait_SunlightDimmer, 1.1f);
+        setTrait(ESM4::ImageSpace::Trait_SkinDimmer, 0.55f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicSaturation, 1.1f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance, 0.2f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicContrast, 1.1f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicBrightness, 1.f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicTintRed, 0.984313726f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicTintGreen, 0.568627477f);
+        setTrait(ESM4::ImageSpace::Trait_CinematicTintStrength, 0.330000013f);
+        data[148] = ESM4::ImageSpace::Cinematic_Saturation | ESM4::ImageSpace::Cinematic_Contrast
+            | ESM4::ImageSpace::Cinematic_Tint | ESM4::ImageSpace::Cinematic_Brightness;
         appendSubRecord(payload, "DNAM", data);
 
-        auto reader = makeReader("IMGS", 0x8809d, payload, 2, 15);
+        auto reader = makeReader("IMGS", 0x8809d, payload, 2);
         ESM4::ImageSpace imageSpace;
         imageSpace.load(*reader);
 
@@ -145,40 +189,7 @@ namespace
         EXPECT_EQ(imageSpace.mEditorId, "NVDefaultExterior");
         EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_TargetLuminance], 1.4f);
         EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_SkinDimmer], 0.55f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_BloomBlurRadius], 0.03f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_BloomAlphaInterior], 0.8f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_BloomAlphaExterior], 0.2f);
         EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintStrength], 0.330000013f);
-    }
-
-    TEST(Esm4ImageSpaceTest, shouldMigrateRetailFNVLegacyTraitsWithoutSkinDimmer)
-    {
-        std::string payload;
-        appendSubRecord(payload, "EDID", std::string_view("ShackInteriorWaste01\0", 21));
-        std::array<float, 37> data{ 0.9f, 8.f, 2.f, 1.3f, 0.75f, 1.f, 1.2f, 0.5f, 1.4f, 0.f, 0.f, 1.4f, 1.5f, 1.f, 3.f,
-            0.8f, 0.2f, 0.5f, 0.5f, 0.02f, 0.20784314f, 0.498039216f, 0.7764706f, 2.5f, 0.82f, 0.07f, 1.05f, 1.1f, 1.f,
-            0.709803939f, 0.274509817f, 0.4f };
-        const std::uint32_t flags = 0x7;
-        std::memcpy(&data[32], &flags, sizeof(flags));
-        appendSubRecord(payload, "DNAM", data);
-
-        auto reader = makeReader("IMGS", 0x64ece, payload, 0, 11);
-        ESM4::ImageSpace imageSpace;
-        imageSpace.load(*reader);
-
-        EXPECT_EQ(imageSpace.mEditorId, "ShackInteriorWaste01");
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_SkinDimmer], 1.f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_BloomBlurRadius], 3.f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_BloomAlphaInterior], 0.8f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_BloomAlphaExterior], 0.2f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation], 0.82f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance], 0.07f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicContrast], 1.05f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness], 1.1f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintRed], 1.f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintGreen], 0.709803939f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintBlue], 0.274509817f);
-        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintStrength], 0.4f);
     }
 
     TEST(Esm4ImageSpaceTest, shouldKeepDisabledRetailFNVPostControlsAtShaderIdentity)
@@ -330,6 +341,7 @@ namespace
         EXPECT_NEAR(result.mTint[2], 0.0276841652f, 1e-6f);
         EXPECT_NEAR(result.mTint[3], 0.392156869f, 1e-6f);
     }
+
     TEST(Esm4ImageSpaceTest, shouldComposeRetailFragExplosionModifierOverAuthoredDuration)
     {
         ESM4::ImageSpace base;

@@ -181,16 +181,13 @@ namespace Bgsm
         if (mVersion >= 1)
         {
             stream.read(mSkewSpecularAlpha);
-            if (mVersion >= 3)
+            stream.read(mTerrain);
+            if (mTerrain)
             {
-                stream.read(mTerrain);
-                if (mTerrain)
-                {
-                    if (mVersion == 3)
-                        stream.skip(4); // Unknown
+                if (mVersion == 3)
+                    stream.skip(4); // Unknown
 
-                    stream.read(mTerrainParams);
-                }
+                stream.read(mTerrainParams);
             }
         }
     }

@@ -44,6 +44,22 @@ namespace SceneUtil
 
         bool hasGroupStart(std::string_view groupName) const { return mGroups.count(groupName) > 0; }
 
+        bool eraseGroup(std::string_view groupName)
+        {
+            const auto group = mGroups.find(groupName);
+            const bool erased = group != mGroups.end();
+            if (erased)
+                mGroups.erase(group);
+            for (auto it = mTextKeyByTime.begin(); it != mTextKeyByTime.end();)
+            {
+                if (IsGroupStart{ groupName }(*it))
+                    it = mTextKeyByTime.erase(it);
+                else
+                    ++it;
+            }
+            return erased;
+        }
+
         const std::set<std::string, std::less<>>& getGroups() const { return mGroups; }
 
     private:

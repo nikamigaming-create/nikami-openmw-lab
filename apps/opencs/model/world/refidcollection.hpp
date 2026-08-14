@@ -22,7 +22,6 @@ namespace ESM
 {
     class ESMReader;
     class ESMWriter;
-    struct MagicEffect;
 }
 
 namespace CSMWorld
@@ -31,9 +30,6 @@ namespace CSMWorld
     struct RecordBase;
     struct NestedTableWrapperBase;
     class NestedRefIdAdapterBase;
-
-    template <typename ESXRecordT>
-    class IdCollection;
 
     class RefIdColumn : public NestableColumn
     {
@@ -65,7 +61,7 @@ namespace CSMWorld
         const NestedRefIdAdapterBase& getNestedAdapter(const ColumnBase& column, UniversalId::Type type) const;
 
     public:
-        RefIdCollection(const IdCollection<ESM::MagicEffect>& magicEffects);
+        RefIdCollection();
 
         ~RefIdCollection() override;
 

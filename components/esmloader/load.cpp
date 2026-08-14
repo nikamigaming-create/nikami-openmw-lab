@@ -18,7 +18,6 @@
 #include <components/files/conversion.hpp>
 #include <components/files/multidircollection.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
-#include <components/misc/pathhelpers.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/lower.hpp>
 
@@ -212,20 +211,21 @@ namespace EsmLoader
         {
             ShallowContent result;
 
-            const std::set<std::string_view, Misc::StringUtils::CiComp> supportedFormats{
-                "esm",
-                "esp",
-                "omwgame",
-                "omwaddon",
-                "project",
+            const std::set<std::string> supportedFormats{
+                ".esm",
+                ".esp",
+                ".omwgame",
+                ".omwaddon",
+                ".project",
             };
 
             for (std::size_t i = 0; i < contentFiles.size(); ++i)
             {
                 const std::string& file = contentFiles[i];
-                const std::string_view extension = Misc::getFileExtension(file);
+                const std::string extension
+                    = Misc::StringUtils::lowerCase(Files::pathToUnicodeString(std::filesystem::path(file).extension()));
 
-                if (!supportedFormats.contains(extension))
+                if (supportedFormats.find(extension) == supportedFormats.end())
                 {
                     Log(Debug::Warning) << "Skipping unsupported content file: " << file;
                     continue;

@@ -24,7 +24,6 @@ namespace Settings
         SettingValue<int> mStompMode{ mIndex, "Groundcover", "stomp mode", makeEnumSanitizerInt({ 0, 1, 2 }) };
         SettingValue<int> mStompIntensity{ mIndex, "Groundcover", "stomp intensity",
             makeEnumSanitizerInt({ 0, 1, 2 }) };
-        SettingValue<bool> mPointLighting{ mIndex, "Groundcover", "point lighting" };
     };
 }
 

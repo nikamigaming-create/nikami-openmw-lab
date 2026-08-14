@@ -499,6 +499,22 @@ local function registerPage(options)
     ui.registerSettingsPage(pageOptions[page.key])
 end
 
+local function updateRender(pageKey)
+    if pageKey then
+        if pages[pageKey] then
+            groupElements[pageKey] = {}
+            renderPage(pages[pageKey], pageOptions[pageKey])
+        else
+            print('Warning: Tried to update nonexistent page: '..pageKey)
+        end
+    else
+        for key, page in pairs(pages) do
+            groupElements[key] = {}
+            renderPage(page, pageOptions[key])
+        end
+    end
+end
+
 updatePlayerGroups()
 if menu.getState() == menu.STATE.Running then -- handle reloadlua correctly
     updateGlobalGroups()
@@ -521,6 +537,7 @@ return {
             menuGroups[options.key] = true
         end,
         updateRendererArgument = common.updateRendererArgument,
+        updateRender = updateRender
     },
     engineHandlers = {
         onStateChanged = function()

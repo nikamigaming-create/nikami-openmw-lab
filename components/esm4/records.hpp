@@ -53,8 +53,8 @@
 #include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadlvln.hpp>
 #include <components/esm4/loadmgef.hpp>
-#include <components/esm4/loadmato.hpp>
 #include <components/esm4/loadmesg.hpp>
+#include <components/esm4/loadmato.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadmset.hpp>
 #include <components/esm4/loadmstt.hpp>

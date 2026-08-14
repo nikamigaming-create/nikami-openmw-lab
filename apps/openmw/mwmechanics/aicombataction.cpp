@@ -1,11 +1,21 @@
 #include "aicombataction.hpp"
 
+#include <cmath>
+
+#include <components/debug/debuglog.hpp>
+
 #include <components/esm3/loadench.hpp>
+#include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/world.hpp"
+
+#include "../mwclass/esm4npc.hpp"
 
 #include "../mwworld/actionequip.hpp"
 #include "../mwworld/cellstore.hpp"
@@ -15,6 +25,7 @@
 
 #include "actorutil.hpp"
 #include "combat.hpp"
+#include "falloutcombat.hpp"
 #include "npcstats.hpp"
 #include "spellpriority.hpp"
 #include "spellutil.hpp"
@@ -51,8 +62,11 @@ namespace MWMechanics
     {
         actor.getClass().getCreatureStats(actor).getSpells().setSelectedSpell(mSpellId);
         actor.getClass().getCreatureStats(actor).setDrawState(DrawState::Spell);
-        MWWorld::ContainerStore& inv = actor.getClass().getContainerStore(actor);
-        inv.setSelectedEnchantItem(inv.end());
+        if (actor.getClass().hasInventoryStore(actor))
+        {
+            MWWorld::InventoryStore& inv = actor.getClass().getInventoryStore(actor);
+            inv.setSelectedEnchantItem(inv.end());
+        }
 
         const ESM::Spell* spell = MWBase::Environment::get().getESMStore()->get<ESM::Spell>().find(mSpellId);
         MWBase::Environment::get().getWorld()->preloadEffects(&spell->mEffects);
@@ -70,7 +84,7 @@ namespace MWMechanics
     void ActionEnchantedItem::prepare(const MWWorld::Ptr& actor)
     {
         actor.getClass().getCreatureStats(actor).getSpells().setSelectedSpell(ESM::RefId());
-        actor.getClass().getContainerStore(actor).setSelectedEnchantItem(mItem);
+        actor.getClass().getInventoryStore(actor).setSelectedEnchantItem(mItem);
         actor.getClass().getCreatureStats(actor).setDrawState(DrawState::Spell);
     }
 
@@ -159,8 +173,127 @@ namespace MWMechanics
         return mWeapon.get<ESM::Weapon>()->mBase;
     }
 
+    namespace
+    {
+        class ActionFalloutWeapon final : public Action
+        {
+            FalloutAiCombatRange mRange;
+
+        public:
+            explicit ActionFalloutWeapon(FalloutAiCombatRange range)
+                : mRange(range)
+            {
+            }
+
+            void prepare(const MWWorld::Ptr& actor) override
+            {
+                // ESM4 equipment is owned by ESM4NpcCustomData and selected from the winning base/template
+                // inventory. Never route it through Morrowind's CarriedRight slot or silently unequip it.
+                actor.getClass().getCreatureStats(actor).setDrawState(DrawState::Weapon);
+            }
+
+            float getCombatRange(bool& isRanged) const override
+            {
+                isRanged = mRange.mRanged;
+                return mRange.mDistance;
+            }
+        };
+
+        std::optional<float> getFalloutGameSetting(std::string_view id)
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr)
+                return std::nullopt;
+            const ESM::GameSetting* setting = store->get<ESM::GameSetting>().search(id);
+            if (setting == nullptr || setting->mValue.getType() != ESM::VT_Float)
+                return std::nullopt;
+            const float value = setting->mValue.getFloat();
+            return std::isfinite(value) ? std::optional<float>(value) : std::nullopt;
+        }
+    }
+
+    bool isFalloutNewVegasActor(const MWWorld::Ptr& actor)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || store->getESM4Game() != MWWorld::ESM4Game::FalloutNewVegas)
+            return false;
+
+        // The gameplay Player is a synthetic proxy and does not reliably retain either the source NPC
+        // record's mIsFONV marker or its ESM4 live-record type at every mechanics call site. Recognize the
+        // authoritative player pointer explicitly. Otherwise FNV creatures evaluating the player's combat
+        // range route the player's WEAP4 through ActionWeapon and repeatedly throw a bad WEAP-from-WEAP4 cast.
+        return actor == MWMechanics::getPlayer() || actor.getType() == ESM4::Npc::sRecordId
+            || actor.getType() == ESM4::Creature::sRecordId;
+    }
+
+    std::optional<float> getFalloutCombatRange(const MWWorld::Ptr& actor, bool& isRanged)
+    {
+        if (!isFalloutNewVegasActor(actor))
+            return std::nullopt;
+
+        const std::optional<float> combatDistance = getFalloutGameSetting("fCombatDistance");
+        const std::optional<float> unarmedReach = getFalloutGameSetting("fHandToHandReach");
+        if (!combatDistance || !unarmedReach)
+            return std::nullopt;
+
+        const ESM4::Weapon* weapon = actor.getType() == ESM4::Npc::sRecordId
+            ? MWClass::ESM4Npc::getEquippedWeapon(actor)
+            : nullptr;
+        FalloutAiCombatRangeFailure failure = FalloutAiCombatRangeFailure::None;
+        const std::optional<FalloutAiCombatRange> range
+            = buildFalloutAiCombatRange(weapon, *combatDistance, *unarmedReach, failure);
+        if (!range)
+        {
+            Log(Debug::Error) << "FNV AI combat range rejected: actor=" << actor.toString()
+                              << " weapon="
+                              << (weapon != nullptr ? ESM::RefId::formIdRefId(weapon->mId).toDebugString()
+                                                    : std::string("unarmed"))
+                              << " reason=" << getFalloutAiCombatRangeFailureName(failure);
+            return std::nullopt;
+        }
+        isRanged = range->mRanged;
+        return range->mDistance;
+    }
+
     std::unique_ptr<Action> prepareNextAction(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy)
     {
+        if (isFalloutNewVegasActor(actor))
+        {
+            bool isRanged = false;
+            const std::optional<float> distance = getFalloutCombatRange(actor, isRanged);
+            const int mappedFlee
+                = actor.getClass().getCreatureStats(actor).getAiSetting(AiSetting::Flee).getBase();
+            const bool flee = makeFleeDecision(actor, enemy, 0.f);
+            std::unique_ptr<Action> action;
+            if (distance)
+                action = std::make_unique<ActionFalloutWeapon>(FalloutAiCombatRange{ *distance, isRanged });
+            else
+                action = std::make_unique<ActionFlee>();
+
+            if (flee)
+                action = std::make_unique<ActionFlee>();
+            const osg::Vec3f actorPosition = actor.getRefData().getPosition().asVec3();
+            const osg::Vec3f targetPosition = enemy.getRefData().getPosition().asVec3();
+            Log(Debug::Info) << "FNV AI action: actor=" << actor.toString() << " target=" << enemy.toString()
+                             << " weapon="
+                             << (actor.getType() == ESM4::Npc::sRecordId
+                                     && MWClass::ESM4Npc::getEquippedWeapon(actor) != nullptr
+                                     ? ESM::RefId::formIdRefId(
+                                           MWClass::ESM4Npc::getEquippedWeapon(actor)->mId)
+                                           .toDebugString()
+                                     : std::string("unarmed"))
+                             << " range=" << distance.value_or(0.f) << " ranged=" << isRanged
+                             << " mappedFlee=" << mappedFlee << " flee=" << flee
+                             << " action=" << (action->isFleeing() ? "flee" : "attack")
+                             << " distance=" << (targetPosition - actorPosition).length()
+                             << " los=" << MWBase::Environment::get().getWorld()->getLOS(actor, enemy)
+                             << " actorPos=(" << actorPosition.x() << "," << actorPosition.y() << ","
+                             << actorPosition.z() << ") targetPos=(" << targetPosition.x() << ","
+                             << targetPosition.y() << "," << targetPosition.z() << ")";
+            action->prepare(actor);
+            return action;
+        }
+
         Spells& spells = actor.getClass().getCreatureStats(actor).getSpells();
 
         float bestActionRating = 0.f;
@@ -187,7 +320,8 @@ namespace MWMechanics
                     antiFleeRating = std::numeric_limits<float>::max();
                 }
             }
-            else if (!it->getClass().getEnchantment(*it).empty())
+            // TODO remove inventory store check, creatures should be able to use enchanted items they cannot equip
+            else if (hasInventoryStore && !it->getClass().getEnchantment(*it).empty())
             {
                 float rating = rateMagicItem(*it, actor, enemy);
                 if (rating > bestActionRating)
@@ -314,6 +448,13 @@ namespace MWMechanics
 
     float getMaxAttackDistance(const MWWorld::Ptr& actor)
     {
+        if (isFalloutNewVegasActor(actor))
+        {
+            bool falloutRanged = false;
+            const std::optional<float> falloutRange = getFalloutCombatRange(actor, falloutRanged);
+            return falloutRange.value_or(0.f);
+        }
+
         const CreatureStats& stats = actor.getClass().getCreatureStats(actor);
         const MWWorld::Store<ESM::GameSetting>& gmst
             = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
@@ -333,11 +474,9 @@ namespace MWMechanics
             item = invStore.getSlot(MWWorld::InventoryStore::Slot_Ammunition);
             if (item != invStore.end() && item.getType() == MWWorld::ContainerStore::Type_Weapon)
                 activeAmmo = *item;
-        }
-        {
-            MWWorld::ContainerStore& store = actor.getClass().getContainerStore(actor);
-            if (store.getSelectedEnchantItem() != store.end())
-                selectedEnchItem = *store.getSelectedEnchantItem();
+
+            if (invStore.getSelectedEnchantItem() != invStore.end())
+                selectedEnchItem = *invStore.getSelectedEnchantItem();
         }
 
         float dist = 1.0f;
@@ -512,7 +651,7 @@ namespace MWMechanics
 
         const int flee = stats.getAiSetting(AiSetting::Flee).getModified();
         if (flee >= 100)
-            return static_cast<float>(flee);
+            return flee;
 
         static const float fAIFleeHealthMult = gmst.find("fAIFleeHealthMult")->mValue.getFloat();
         static const float fAIFleeFleeMult = gmst.find("fAIFleeFleeMult")->mValue.getFloat();
@@ -527,7 +666,7 @@ namespace MWMechanics
             if (enemy.getClass().getNpcStats(enemy).isWerewolf() && stats.getLevel() < iWereWolfLevelToAttack)
             {
                 static const int iWereWolfFleeMod = gmst.find("iWereWolfFleeMod")->mValue.getInteger();
-                rating = static_cast<float>(iWereWolfFleeMod);
+                rating = iWereWolfFleeMod;
             }
         }
 
@@ -539,6 +678,17 @@ namespace MWMechanics
 
     bool makeFleeDecision(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy, float antiFleeRating)
     {
+        if (isFalloutNewVegasActor(actor))
+        {
+            // ESM4 actor initialization maps Fallout confidence C to the legacy storage slot as Flee = 100 - C.
+            // Decode the authored category and do not let Morrowind's distance bias turn confidence 1..4 into flee.
+            const int mappedFlee
+                = actor.getClass().getCreatureStats(actor).getAiSetting(AiSetting::Flee).getBase();
+            if (mappedFlee < 96 || mappedFlee > 100)
+                return false;
+            return shouldFalloutActorFlee(static_cast<std::uint8_t>(100 - mappedFlee));
+        }
+
         float fleeRating = vanillaRateFlee(actor, enemy);
         if (fleeRating < 100.0f)
             fleeRating = 0.0f;

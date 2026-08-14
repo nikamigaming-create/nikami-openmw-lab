@@ -753,12 +753,16 @@ namespace MWVR
     void FNVXRLiveFrameSurface::init(osg::Group* geometryRoot)
     {
         mGeometryRoot = geometryRoot;
-        ensureSceneObjects();
         mVisible = false;
         mFocused = false;
+        mGripMenuOverride = false;
         clearPointer();
         if (mTransform)
             mTransform->setNodeMask(0);
+        if (!enabled())
+            return;
+
+        ensureSceneObjects();
         if (mGeometryRoot && mTransform && !mGeometryRoot->containsNode(mTransform))
             mGeometryRoot->addChild(mTransform);
     }
@@ -2125,6 +2129,13 @@ namespace MWVR
 
     void FNVXRLiveFrameSurface::updateAimPointer()
     {
+        if (!enabled())
+        {
+            mFocused = false;
+            clearPointer();
+            return;
+        }
+
         if (!mVisible || !mTransform || !mWidth || !mHeight)
             return;
 
@@ -2225,6 +2236,13 @@ namespace MWVR
 
     bool FNVXRLiveFrameSurface::updateFocus(osg::Node* focusNode, osg::Vec3f hitPoint)
     {
+        if (!enabled())
+        {
+            mFocused = false;
+            clearPointer();
+            return false;
+        }
+
         const bool hit = focusNode
             && (focusNode->getName() == "FNVXRLiveFrameSurface"
                 || focusNode->getName() == "FNVXRLiveFrameSurfaceDebugFrame")
@@ -2324,6 +2342,9 @@ namespace MWVR
 
     bool FNVXRLiveFrameSurface::injectMouseClick()
     {
+        if (!enabled())
+            return false;
+
 #ifdef _WIN32
         updateAimPointer();
         if ((!mVisible || !mPointerActive) || !ensureDInputMapping())
@@ -2391,6 +2412,14 @@ namespace MWVR
 
     void FNVXRLiveFrameSurface::setGripMenuOverride(bool active)
     {
+        if (!enabled())
+        {
+            mGripMenuOverride = false;
+            mFocused = false;
+            clearPointer();
+            return;
+        }
+
         if (active == mGripMenuOverride)
             return;
 

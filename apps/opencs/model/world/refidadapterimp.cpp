@@ -13,7 +13,6 @@
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadskil.hpp>
 
-#include "idcollection.hpp"
 #include "nestedtablewrapper.hpp"
 
 CSMWorld::PotionColumns::PotionColumns(const InventoryColumns& columns)
@@ -92,6 +91,11 @@ void CSMWorld::IngredientRefIdAdapter::setData(
     return;
 }
 
+CSMWorld::IngredEffectRefIdAdapter::IngredEffectRefIdAdapter()
+    : mType(UniversalId::Type_Ingredient)
+{
+}
+
 void CSMWorld::IngredEffectRefIdAdapter::addNestedRow(
     const RefIdColumn* column, RefIdData& data, int index, int position) const
 {
@@ -140,36 +144,37 @@ QVariant CSMWorld::IngredEffectRefIdAdapter::getNestedData(
     if (subRowIndex < 0 || subRowIndex >= 4)
         throw std::runtime_error("index out of range");
 
-    ESM::RefId effectId = record.get().mData.mEffectID[subRowIndex];
-    bool targetSkill = false, targetAttribute = false;
-    if (!effectId.empty())
-    {
-        int recordIndex = mMagicEffects.searchId(effectId);
-        if (recordIndex != -1)
-        {
-            const ESM::MagicEffect& mgef = mMagicEffects.getRecord(recordIndex).get();
-            targetSkill = mgef.mData.mFlags & ESM::MagicEffect::TargetSkill;
-            targetAttribute = mgef.mData.mFlags & ESM::MagicEffect::TargetAttribute;
-        }
-    }
-
     switch (subColIndex)
     {
         case 0:
-            return ESM::MagicEffect::refIdToIndex(effectId);
+            return record.get().mData.mEffectID[subRowIndex];
         case 1:
         {
-            if (targetSkill)
-                return ESM::Skill::refIdToIndex(record.get().mData.mSkills[subRowIndex]);
-            else
-                return QVariant();
+            switch (record.get().mData.mEffectID[subRowIndex])
+            {
+                case ESM::MagicEffect::DrainSkill:
+                case ESM::MagicEffect::DamageSkill:
+                case ESM::MagicEffect::RestoreSkill:
+                case ESM::MagicEffect::FortifySkill:
+                case ESM::MagicEffect::AbsorbSkill:
+                    return record.get().mData.mSkills[subRowIndex];
+                default:
+                    return QVariant();
+            }
         }
         case 2:
         {
-            if (targetAttribute)
-                return ESM::Attribute::refIdToIndex(record.get().mData.mAttributes[subRowIndex]);
-            else
-                return QVariant();
+            switch (record.get().mData.mEffectID[subRowIndex])
+            {
+                case ESM::MagicEffect::DrainAttribute:
+                case ESM::MagicEffect::DamageAttribute:
+                case ESM::MagicEffect::RestoreAttribute:
+                case ESM::MagicEffect::FortifyAttribute:
+                case ESM::MagicEffect::AbsorbAttribute:
+                    return record.get().mData.mAttributes[subRowIndex];
+                default:
+                    return QVariant();
+            }
         }
         default:
             throw std::runtime_error("Trying to access non-existing column in the nested table!");
@@ -186,34 +191,36 @@ void CSMWorld::IngredEffectRefIdAdapter::setNestedData(
     if (subRowIndex < 0 || subRowIndex >= 4)
         throw std::runtime_error("index out of range");
 
-    ESM::RefId effectId = ESM::MagicEffect::indexToRefId(value.toInt());
-    bool targetSkill = false, targetAttribute = false;
-
     switch (subColIndex)
     {
         case 0:
-            ingredient.mData.mEffectID[subRowIndex] = effectId;
-            if (!effectId.empty())
+            ingredient.mData.mEffectID[subRowIndex] = value.toInt();
+            switch (ingredient.mData.mEffectID[subRowIndex])
             {
-                int recordIndex = mMagicEffects.searchId(effectId);
-                if (recordIndex != -1)
-                {
-                    const ESM::MagicEffect& mgef = mMagicEffects.getRecord(recordIndex).get();
-                    targetSkill = mgef.mData.mFlags & ESM::MagicEffect::TargetSkill;
-                    targetAttribute = mgef.mData.mFlags & ESM::MagicEffect::TargetAttribute;
-                }
+                case ESM::MagicEffect::DrainSkill:
+                case ESM::MagicEffect::DamageSkill:
+                case ESM::MagicEffect::RestoreSkill:
+                case ESM::MagicEffect::FortifySkill:
+                case ESM::MagicEffect::AbsorbSkill:
+                    ingredient.mData.mAttributes[subRowIndex] = -1;
+                    break;
+                case ESM::MagicEffect::DrainAttribute:
+                case ESM::MagicEffect::DamageAttribute:
+                case ESM::MagicEffect::RestoreAttribute:
+                case ESM::MagicEffect::FortifyAttribute:
+                case ESM::MagicEffect::AbsorbAttribute:
+                    ingredient.mData.mSkills[subRowIndex] = -1;
+                    break;
+                default:
+                    ingredient.mData.mSkills[subRowIndex] = -1;
+                    ingredient.mData.mAttributes[subRowIndex] = -1;
             }
-
-            if (!targetSkill)
-                ingredient.mData.mSkills[subRowIndex] = ESM::RefId();
-            if (!targetAttribute)
-                ingredient.mData.mAttributes[subRowIndex] = ESM::RefId();
             break;
         case 1:
-            ingredient.mData.mSkills[subRowIndex] = ESM::Skill::indexToRefId(value.toInt());
+            ingredient.mData.mSkills[subRowIndex] = value.toInt();
             break;
         case 2:
-            ingredient.mData.mAttributes[subRowIndex] = ESM::Attribute::indexToRefId(value.toInt());
+            ingredient.mData.mAttributes[subRowIndex] = value.toInt();
             break;
         default:
             throw std::runtime_error("Trying to access non-existing column in the nested table!");

@@ -75,7 +75,7 @@
 --  NOTE: currently `ignore` is not supported if `radius>0`.
 
 ---
--- Cast a ray from one point to another and return the first collision.
+-- Cast ray from one point to another and return the first collision.
 -- @function [parent=#nearby] castRay
 -- @param openmw.util#Vector3 from Start point of the ray.
 -- @param openmw.util#Vector3 to End point of the ray.
@@ -95,13 +95,10 @@
 -- @field #any ignore A @{openmw.core#GameObject} or @{openmw.core#ObjectList} to ignore while doing the ray cast
 
 ---
--- Cast a ray from one point to another and find the first visual intersection with anything in the scene.
--- Unlike `castRay`, `castRenderingRay` can find an intersection with an object without collisions.
--- To avoid threading issues, `castRenderingRay` can only be used in:
--- - The `onFrame` engine handler.
--- - Engine handlers for user input.
--- - Callbacks provided to @{openmw.input#registerActionHandler}
--- In other cases, use `asyncCastRenderingRay` instead.
+-- Cast ray from one point to another and find the first visual intersection with anything in the scene.
+-- As opposite to `castRay` can find an intersection with an object without collisions.
+-- In order to avoid threading issues can be used only in player scripts only in `onFrame` or
+-- in engine handlers for user input. In other cases use `asyncCastRenderingRay` instead.
 -- @function [parent=#nearby] castRenderingRay
 -- @param openmw.util#Vector3 from Start point of the ray.
 -- @param openmw.util#Vector3 to End point of the ray.
@@ -109,12 +106,12 @@
 -- @return #RayCastingResult
 
 ---
--- Asynchronously cast a ray from one point to another and find the first visual intersection with anything in the scene.
+-- Asynchronously cast ray from one point to another and find the first visual intersection with anything in the scene.
 -- @function [parent=#nearby] asyncCastRenderingRay
 -- @param openmw.async#Callback callback The callback to pass the result to (should accept a single argument @{openmw.nearby#RayCastingResult}).
 -- @param openmw.util#Vector3 from Start point of the ray.
 -- @param openmw.util#Vector3 to End point of the ray.
--- @param #CastRenderingRayOptions options An optional table with additional optional arguments
+-- @param #CastRenderingRayOptions
 
 ---
 -- @type NAVIGATOR_FLAGS
@@ -205,7 +202,7 @@
 -- type to cover the whole active grid).
 
 ---
--- Find a path over the navigation mesh from the source to the destination with the given options. Result is unstable since navigation
+-- Find path over navigation mesh from source to destination with given options. Result is unstable since navigation
 -- mesh generation is asynchronous.
 -- @function [parent=#nearby] findPath
 -- @param openmw.util#Vector3 source Initial path position.
@@ -225,7 +222,7 @@
 -- })
 
 ---
--- Returns a random location on the navigation mesh within the reach of the specified location.
+-- Returns random location on navigation mesh within the reach of specified location.
 -- The location is not exactly constrained by the circle, but it limits the area.
 -- @function [parent=#nearby] findRandomPointAroundCircle
 -- @param openmw.util#Vector3 position Center of the search circle.

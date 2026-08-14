@@ -19,7 +19,7 @@ namespace Files
         pos_type seekoff(off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) override
         {
             if (dir == std::ios_base::cur)
-                setg(bufferStart, gptr() + off, bufferEnd);
+                gbump(off);
             else
                 setg(bufferStart, (dir == std::ios_base::beg ? bufferStart : bufferEnd) + off, bufferEnd);
 

@@ -180,22 +180,16 @@ namespace Debug
             }
         };
 
-#if defined _WIN32 && defined _DEBUG
+#if 0//defined _WIN32 && defined _DEBUG
         class DebugOutput : public DebugOutputBase
         {
         public:
             std::streamsize writeImpl(const char* str, std::streamsize size, Level debugLevel)
             {
-                if (size > std::numeric_limits<int>::max())
-                    OutputDebugStringW(L"Next line truncated...");
-                auto wideSize = MultiByteToWideChar(CP_UTF8, 0, str,
-                    static_cast<int>(std::min<std::streamsize>(size, std::numeric_limits<int>::max())), nullptr, 0);
-                std::wstring wide(wideSize, L'\0');
-                MultiByteToWideChar(CP_UTF8, 0, str,
-                    static_cast<int>(std::min<std::streamsize>(size, std::numeric_limits<int>::max())), wide.data(),
-                    wideSize);
+                // Make a copy for null termination
+                std::string tmp(str, static_cast<unsigned int>(size));
                 // Write string to Visual Studio Debug output
-                OutputDebugStringW(wide.c_str());
+                OutputDebugString(tmp.c_str());
                 return size;
             }
 
@@ -356,7 +350,7 @@ namespace Debug
         static std::unique_ptr<std::mutex> rawStderrMutex = nullptr;
         static std::ofstream logfile;
 
-#if defined(_WIN32) && defined(_DEBUG)
+#if 0//defined(_WIN32) && defined(_DEBUG)
         static boost::iostreams::stream_buffer<DebugOutput> sb;
 #else
         static boost::iostreams::stream_buffer<Tee<Identity, Coloured>> standardOut;
@@ -402,7 +396,7 @@ namespace Debug
         Log::sMinDebugLevel = getDebugLevel();
         Log::sWriteLevel = true;
 
-#if !(defined(_WIN32) && defined(_DEBUG))
+//#if !(defined(_WIN32) && defined(_DEBUG))
         const std::string logName = Misc::StringUtils::lowerCase(appName) + ".log";
         logfile.open(logDir / logName, std::ios::out);
 
@@ -418,7 +412,7 @@ namespace Debug
 
         std::cout.rdbuf(&standardOut);
         std::cerr.rdbuf(&standardErr);
-#endif
+//#endif
 
 #ifdef _WIN32
         if (Crash::CrashCatcher::instance())
@@ -433,13 +427,12 @@ namespace Debug
     {
 #if defined _WIN32
         (void)attachParentConsole();
-        SetConsoleOutputCP(CP_UTF8);
 #endif
         rawStdout = std::make_unique<std::ostream>(std::cout.rdbuf());
         rawStderr = std::make_unique<std::ostream>(std::cerr.rdbuf());
         rawStderrMutex = std::make_unique<std::mutex>();
 
-#if defined(_WIN32) && defined(_DEBUG)
+#if 0//defined(_WIN32) && defined(_DEBUG)
         // Redirect cout and cerr to VS debug output when running in debug mode
         sb.open(DebugOutput());
         std::cout.rdbuf(&sb);

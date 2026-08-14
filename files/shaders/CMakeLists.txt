@@ -28,6 +28,8 @@ set(SHADER_FILES
     lib/sky/passes.glsl
     lib/material/parallax.glsl
     lib/material/alpha.glsl
+    compatibility/3dgui_vertex.glsl
+    compatibility/3dgui_fragment.glsl
     compatibility/fnvxrliveframe_fragment.glsl
     compatibility/ripples_blobber.frag
     compatibility/ripples_simulate.frag
@@ -40,8 +42,6 @@ set(SHADER_FILES
     compatibility/objects.frag
     compatibility/terrain.vert
     compatibility/terrain.frag
-    compatibility/terrain_composite.vert
-    compatibility/terrain_composite.frag
     compatibility/shadows_vertex.glsl
     compatibility/shadows_fragment.glsl
     compatibility/shadowcasting.vert
@@ -50,8 +50,6 @@ set(SHADER_FILES
     compatibility/normals.glsl
     compatibility/multiview_resolve.vert
     compatibility/multiview_resolve.frag
-    compatibility/outline.frag
-    compatibility/outline.vert
     compatibility/depthclipped.vert
     compatibility/depthclipped.frag
     compatibility/gui.vert
@@ -66,8 +64,6 @@ set(SHADER_FILES
     compatibility/bs/default.frag
     compatibility/bs/skin.vert
     compatibility/bs/skin.frag
-    compatibility/bs/dao_face.vert
-    compatibility/bs/dao_face.frag
     compatibility/bs/nolighting.vert
     compatibility/bs/nolighting.frag
     compatibility/luminance/resolve.frag

@@ -125,6 +125,7 @@ namespace ESM
         REC_ACTC = esm3Recname("ACTC"),
         REC_MPRJ = esm3Recname("MPRJ"),
         REC_PROJ = esm3Recname("PROJ"),
+        REC_FPRJ = esm3Recname("FPRJ"), // Native Fallout projectile runtime state
         REC_DCOU = esm3Recname("DCOU"),
         REC_MARK = esm3Recname("MARK"),
         REC_ENAB = esm3Recname("ENAB"),
@@ -288,7 +289,6 @@ namespace ESM
         REC_IMOD4 = esm4Recname(ESM4::REC_IMOD), // Item Mod
         REC_PWAT4 = esm4Recname(ESM4::REC_PWAT), // Placeable Water
         REC_SCOL4 = esm4Recname(ESM4::REC_SCOL), // Static Collection
-        REC_CHIP4 = esm4Recname(ESM4::REC_CHIP), // Casino Chip (Fallout: New Vegas)
         REC_CCRD4 = esm4Recname(ESM4::REC_CCRD), // Caravan Card
         REC_CMNY4 = esm4Recname(ESM4::REC_CMNY), // Caravan Money
         REC_ALOC4 = esm4Recname(ESM4::REC_ALOC), // Audio Location Controller

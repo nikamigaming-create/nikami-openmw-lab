@@ -42,7 +42,6 @@
 #include "mask.hpp"
 #include "terrainshapemode.hpp"
 #include "terraintexturemode.hpp"
-#include "terrainvertexpaintmode.hpp"
 
 class QWidget;
 
@@ -171,8 +170,9 @@ void CSVRender::PagedWorldspaceWidget::addEditModeSelectorButtons(CSVWidget::Sce
     /// \todo replace EditMode with suitable subclasses
     tool->addButton(new TerrainShapeMode(this, mRootNode, tool), "terrain-shape");
     tool->addButton(new TerrainTextureMode(this, mRootNode, tool), "terrain-texture");
-    tool->addButton(new TerrainVertexPaintMode(this, mRootNode, tool), "terrain-vertex");
+    const QIcon vertexIcon = Misc::ScalableIcon::load(":scenetoolbar/editing-terrain-vertex-paint");
     const QIcon movementIcon = Misc::ScalableIcon::load(":scenetoolbar/editing-terrain-movement");
+    tool->addButton(new EditMode(this, vertexIcon, Mask_Reference, "Terrain vertex paint editing"), "terrain-vertex");
     tool->addButton(new EditMode(this, movementIcon, Mask_Reference, "Terrain movement"), "terrain-move");
 }
 
@@ -719,10 +719,10 @@ bool CSVRender::PagedWorldspaceWidget::handleDrop(
     return true;
 }
 
-CSVRender::WorldspaceWidget::DropRequirements CSVRender::PagedWorldspaceWidget::getDropRequirements(
+CSVRender::WorldspaceWidget::dropRequirments CSVRender::PagedWorldspaceWidget::getDropRequirements(
     CSVRender::WorldspaceWidget::DropType type) const
 {
-    DropRequirements requirements = WorldspaceWidget::getDropRequirements(type);
+    dropRequirments requirements = WorldspaceWidget::getDropRequirements(type);
 
     if (requirements != ignored)
         return requirements;

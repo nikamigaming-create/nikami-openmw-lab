@@ -97,7 +97,6 @@ namespace CSVRender
         auto markerData = file.readAll();
 
         mResourceSystem->getSceneManager()->loadSelectionMarker(mBaseNode, markerData.data(), markerData.size());
-        mResourceSystem->getSceneManager()->recreateShaders(mBaseNode);
 
         osg::ref_ptr<osg::StateSet> baseNodeState = mBaseNode->getOrCreateStateSet();
         baseNodeState->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
@@ -204,11 +203,11 @@ namespace CSVRender
 
     void ObjectMarker::detachMarker()
     {
-        for (unsigned index = mRootNode->getNumParents(); index > 0;)
+        for (std::size_t index = mRootNode->getNumParents(); index > 0;)
             mRootNode->getParent(--index)->removeChild(mRootNode);
 
         osg::ref_ptr<osg::Group> widgetRoot = mMarkerNodes["unitArrows"]->asGroup();
-        for (unsigned index = widgetRoot->getNumChildren(); index > 0;)
+        for (std::size_t index = widgetRoot->getNumChildren(); index > 0;)
             widgetRoot->getChild(--index)->setNodeMask(Mask_Hidden);
     }
 

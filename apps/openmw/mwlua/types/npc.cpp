@@ -19,7 +19,6 @@
 
 #include "../classbindings.hpp"
 #include "../localscripts.hpp"
-#include "../luamanagerimp.hpp"
 #include "../racebindings.hpp"
 #include "../stats.hpp"
 
@@ -121,7 +120,7 @@ namespace
         }
 
         if (rec["baseDisposition"] != sol::nil)
-            npc.mNpdt.mDisposition = rec["baseDisposition"].get<unsigned char>();
+            npc.mNpdt.mDisposition = rec["baseDisposition"].get<int>();
 
         if (rec["baseGold"] != sol::nil)
             npc.mNpdt.mGold = rec["baseGold"].get<int>();
@@ -137,7 +136,7 @@ namespace
                     = MWBase::Environment::get().getESMStore()->get<ESM::Faction>().find(npc.mFaction);
 
                 int luaValue = rec["primaryFactionRank"];
-                int64_t rank = LuaUtil::fromLuaIndex(luaValue);
+                int rank = LuaUtil::fromLuaIndex(luaValue);
 
                 int maxRank = static_cast<int>(getValidRanksCount(faction));
 
@@ -145,7 +144,7 @@ namespace
                     throw std::runtime_error("primaryFactionRank: Requested rank " + std::to_string(rank)
                         + " is out of bounds for faction " + npc.mFaction.toDebugString());
 
-                npc.mNpdt.mRank = static_cast<unsigned char>(rank);
+                npc.mNpdt.mRank = rank;
             }
         }
 
@@ -209,16 +208,17 @@ namespace MWLua
             = sol::readonly_property([](const ESM::NPC& rec) -> std::string { return rec.mRace.serializeText(); });
         record["class"]
             = sol::readonly_property([](const ESM::NPC& rec) -> std::string { return rec.mClass.serializeText(); });
-        record["mwscript"] = sol::readonly_property([](const ESM::NPC& rec) -> ESM::RefId { return rec.mScript; });
+        record["mwscript"] = sol::readonly_property(
+            [](const ESM::NPC& rec) -> sol::optional<std::string> { return LuaUtil::serializeRefId(rec.mScript); });
         record["hair"]
             = sol::readonly_property([](const ESM::NPC& rec) -> std::string { return rec.mHair.serializeText(); });
         record["baseDisposition"]
             = sol::readonly_property([](const ESM::NPC& rec) -> int { return (int)rec.mNpdt.mDisposition; });
         record["head"]
             = sol::readonly_property([](const ESM::NPC& rec) -> std::string { return rec.mHead.serializeText(); });
-        record["primaryFaction"]
-            = sol::readonly_property([](const ESM::NPC& rec) -> ESM::RefId { return rec.mFaction; });
-        record["primaryFactionRank"] = sol::readonly_property([](const ESM::NPC& rec, sol::this_state s) -> int64_t {
+        record["primaryFaction"] = sol::readonly_property(
+            [](const ESM::NPC& rec) -> sol::optional<std::string> { return LuaUtil::serializeRefId(rec.mFaction); });
+        record["primaryFactionRank"] = sol::readonly_property([](const ESM::NPC& rec, sol::this_state s) -> int {
             if (rec.mFaction.empty())
                 return 0;
             return LuaUtil::toLuaIndex(rec.mNpdt.mRank);
@@ -247,20 +247,6 @@ namespace MWLua
                 throw std::runtime_error("NPC or Player expected");
         };
 
-        npc["setWerewolf"] = [context](const Object& obj, bool werewolf) -> void {
-            if (obj.isLObject() && !obj.isSelfObject())
-                throw std::runtime_error("Local scripts can modify only self");
-
-            const MWWorld::Ptr& ptr = obj.ptr();
-            if (!ptr.getClass().isNpc())
-                throw std::runtime_error("NPC or Player expected");
-            context.mLuaManager->addAction(
-                [obj = Object(ptr), werewolf] {
-                    MWBase::Environment::get().getMechanicsManager()->setWerewolf(obj.ptr(), werewolf);
-                },
-                "setWerewolfAction");
-        };
-
         npc["getDisposition"] = [](const Object& o, const Object& player) -> int {
             const MWWorld::Class& cls = o.ptr().getClass();
             verifyPlayer(player);
@@ -276,7 +262,7 @@ namespace MWLua
         };
 
         npc["setBaseDisposition"] = [](Object& o, const Object& player, int value) {
-            if (o.isLObject() && !o.isSelfObject())
+            if (dynamic_cast<LObject*>(&o) && !dynamic_cast<SelfObject*>(&o))
                 throw std::runtime_error("Local scripts can modify only self");
 
             const MWWorld::Class& cls = o.ptr().getClass();
@@ -286,7 +272,7 @@ namespace MWLua
         };
 
         npc["modifyBaseDisposition"] = [](Object& o, const Object& player, int value) {
-            if (o.isLObject() && !o.isSelfObject())
+            if (dynamic_cast<LObject*>(&o) && !dynamic_cast<SelfObject*>(&o))
                 throw std::runtime_error("Local scripts can modify only self");
 
             const MWWorld::Class& cls = o.ptr().getClass();
@@ -320,7 +306,7 @@ namespace MWLua
         };
 
         npc["setFactionRank"] = [](Object& actor, std::string_view faction, int value) {
-            if (actor.isLObject() && !actor.isSelfObject())
+            if (dynamic_cast<LObject*>(&actor) && !dynamic_cast<SelfObject*>(&actor))
                 throw std::runtime_error("Local scripts can modify only self");
 
             const MWWorld::Ptr ptr = actor.ptr();
@@ -346,11 +332,11 @@ namespace MWLua
             if (!npcStats.isInFaction(factionId))
                 throw std::runtime_error("Target actor is not a member of faction " + factionId.toDebugString());
 
-            npcStats.setFactionRank(factionId, static_cast<int>(targetRank));
+            npcStats.setFactionRank(factionId, targetRank);
         };
 
         npc["modifyFactionRank"] = [](Object& actor, std::string_view faction, int value) {
-            if (actor.isLObject() && !actor.isSelfObject())
+            if (dynamic_cast<LObject*>(&actor) && !dynamic_cast<SelfObject*>(&actor))
                 throw std::runtime_error("Local scripts can modify only self");
 
             if (value == 0)
@@ -396,7 +382,7 @@ namespace MWLua
         };
 
         npc["joinFaction"] = [](Object& actor, std::string_view faction) {
-            if (actor.isLObject() && !actor.isSelfObject())
+            if (dynamic_cast<LObject*>(&actor) && !dynamic_cast<SelfObject*>(&actor))
                 throw std::runtime_error("Local scripts can modify only self");
 
             const MWWorld::Ptr ptr = actor.ptr();
@@ -415,7 +401,7 @@ namespace MWLua
         };
 
         npc["leaveFaction"] = [](Object& actor, std::string_view faction) {
-            if (actor.isLObject() && !actor.isSelfObject())
+            if (dynamic_cast<LObject*>(&actor) && !dynamic_cast<SelfObject*>(&actor))
                 throw std::runtime_error("Local scripts can modify only self");
 
             const MWWorld::Ptr ptr = actor.ptr();
@@ -438,7 +424,7 @@ namespace MWLua
         };
 
         npc["setFactionReputation"] = [](Object& actor, std::string_view faction, int value) {
-            if (actor.isLObject() && !actor.isSelfObject())
+            if (dynamic_cast<LObject*>(&actor) && !dynamic_cast<SelfObject*>(&actor))
                 throw std::runtime_error("Local scripts can modify only self");
 
             const MWWorld::Ptr ptr = actor.ptr();
@@ -448,7 +434,7 @@ namespace MWLua
         };
 
         npc["modifyFactionReputation"] = [](Object& actor, std::string_view faction, int value) {
-            if (actor.isLObject() && !actor.isSelfObject())
+            if (dynamic_cast<LObject*>(&actor) && !dynamic_cast<SelfObject*>(&actor))
                 throw std::runtime_error("Local scripts can modify only self");
 
             const MWWorld::Ptr ptr = actor.ptr();
@@ -460,7 +446,7 @@ namespace MWLua
         };
 
         npc["expel"] = [](Object& actor, std::string_view faction) {
-            if (actor.isLObject() && !actor.isSelfObject())
+            if (dynamic_cast<LObject*>(&actor) && !dynamic_cast<SelfObject*>(&actor))
                 throw std::runtime_error("Local scripts can modify only self");
 
             const MWWorld::Ptr ptr = actor.ptr();
@@ -468,7 +454,7 @@ namespace MWLua
             ptr.getClass().getNpcStats(ptr).expell(factionId, false);
         };
         npc["clearExpelled"] = [](Object& actor, std::string_view faction) {
-            if (actor.isLObject() && !actor.isSelfObject())
+            if (dynamic_cast<LObject*>(&actor) && !dynamic_cast<SelfObject*>(&actor))
                 throw std::runtime_error("Local scripts can modify only self");
 
             const MWWorld::Ptr ptr = actor.ptr();

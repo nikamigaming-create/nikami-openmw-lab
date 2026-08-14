@@ -82,8 +82,11 @@ namespace MWGui
         const std::string& getMessage() { return mMessage; }
         int getHeight();
         void update(int height);
-        void setVisible(bool value);
-
+//## VR_PATCH BEGIN
+// Rewrote handling of setVisible, now handled by base class.
+        ~MessageBox();
+//        void setVisible(bool value);
+//## VR_PATCH END
         float mCurrentTime;
         float mMaxTime;
 
@@ -110,10 +113,6 @@ namespace MWGui
 
         bool exit() override;
 
-        /// Activate an authored choice without manufacturing a platform input
-        /// event. The engine's opt-in unattended proof driver uses this path;
-        /// normal interaction remains in the UI callbacks.
-        void closeButton(std::size_t buttonIndex);
         void closeDefault();
 
         bool mMarkedToDelete;

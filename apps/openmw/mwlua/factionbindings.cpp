@@ -99,15 +99,9 @@ namespace MWLua
         };
         rankT["name"]
             = sol::readonly_property([](const FactionRank& rec) -> std::string_view { return rec.mRankName; });
-        rankT["primarySkillValue"]
-            = sol::readonly_property([](const FactionRank& rec) -> int { return rec.mPrimarySkill; });
-        rankT["favouredSkillValue"]
-            = sol::readonly_property([](const FactionRank& rec) -> int { return rec.mFavouredSkill; });
-        rankT["factionReputation"]
-            = sol::readonly_property([](const FactionRank& rec) -> int { return rec.mFactReputation; });
-        // deprecated
-        rankT["factionReaction"]
-            = sol::readonly_property([](const FactionRank& rec) -> int { return rec.mFactReputation; });
+        rankT["primarySkillValue"] = sol::readonly_property([](const FactionRank& rec) { return rec.mPrimarySkill; });
+        rankT["favouredSkillValue"] = sol::readonly_property([](const FactionRank& rec) { return rec.mFavouredSkill; });
+        rankT["factionReaction"] = sol::readonly_property([](const FactionRank& rec) { return rec.mFactReaction; });
         rankT["attributeValues"] = sol::readonly_property([lua = lua.lua_state()](const FactionRank& rec) {
             sol::table res(lua, sol::create);
             res.add(rec.mAttribute1);

@@ -246,7 +246,7 @@ namespace MWSound
         ///< Play a sound, independently of 3D-position
         ///< @param offset Number of seconds into the sound to start playback.
 
-        Sound* playSound(VFS::Path::NormalizedView fileName, float volume, float pitch, Type type = Type::Sfx,
+        Sound* playSound(std::string_view fileName, float volume, float pitch, Type type = Type::Sfx,
             PlayMode mode = PlayMode::Normal, float offset = 0) override;
         ///< Play a sound, independently of 3D-position
         ///< @param offset Number of seconds into the sound to start playback.
@@ -257,8 +257,8 @@ namespace MWSound
         ///< Play_NoTrack is specified.
         ///< @param offset Number of seconds into the sound to start playback.
 
-        Sound* playSound3D(const MWWorld::ConstPtr& reference, VFS::Path::NormalizedView fileName, float volume,
-            float pitch, Type type = Type::Sfx, PlayMode mode = PlayMode::Normal, float offset = 0) override;
+        Sound* playSound3D(const MWWorld::ConstPtr& reference, std::string_view fileName, float volume, float pitch,
+            Type type = Type::Sfx, PlayMode mode = PlayMode::Normal, float offset = 0) override;
         ///< Play a 3D sound attached to an MWWorld::Ptr. Will be updated automatically with the Ptr's position, unless
         ///< Play_NoTrack is specified.
         ///< @param offset Number of seconds into the sound to start playback.
@@ -276,7 +276,7 @@ namespace MWSound
         void stopSound3D(const MWWorld::ConstPtr& reference, const ESM::RefId& soundId) override;
         ///< Stop the given object from playing the given sound.
 
-        void stopSound3D(const MWWorld::ConstPtr& reference, VFS::Path::NormalizedView fileName) override;
+        void stopSound3D(const MWWorld::ConstPtr& reference, std::string_view fileName) override;
         ///< Stop the given object from playing the given sound.
 
         void stopSound3D(const MWWorld::ConstPtr& reference) override;
@@ -294,7 +294,7 @@ namespace MWSound
         bool getSoundPlaying(const MWWorld::ConstPtr& reference, const ESM::RefId& soundId) const override;
         ///< Is the given sound currently playing on the given object?
 
-        bool getSoundPlaying(const MWWorld::ConstPtr& reference, VFS::Path::NormalizedView fileName) const override;
+        bool getSoundPlaying(const MWWorld::ConstPtr& reference, std::string_view fileName) const override;
         ///< Is the given sound currently playing on the given object?
 
         void pauseSounds(MWSound::BlockerType blocker, int types = int(Type::Mask)) override;

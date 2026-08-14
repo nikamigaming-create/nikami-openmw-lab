@@ -300,7 +300,7 @@ namespace MWMechanics
                                    ->mValue.getFloat();
         int price = MWBase::Environment::get().getMechanicsManager()->getBarterOffer(
             mEnchanter, static_cast<int>(finalEffectCost * priceMultipler), true);
-        price *= static_cast<int>(count * getTypeMultiplier());
+        price *= count * getTypeMultiplier();
         return std::max(1, price);
     }
 
@@ -381,9 +381,8 @@ namespace MWMechanics
             {
                 MWWorld::Ptr player = getPlayer();
                 count = player.getClass().getContainerStore(player).count(mOldItemPtr.getCellRef().getRefId());
-                count = std::clamp(
-                    static_cast<int>(getGemCharge() * Settings::game().mProjectilesEnchantMultiplier / enchantPoints),
-                    1, count);
+                count = std::clamp<int>(
+                    getGemCharge() * Settings::game().mProjectilesEnchantMultiplier / enchantPoints, 1, count);
             }
         }
 

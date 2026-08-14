@@ -11,6 +11,8 @@
 
 #include <components/files/qtconversion.hpp>
 
+#include <apps/wizard/inisettings.hpp>
+
 Wizard::UnshieldWorker::UnshieldWorker(qint64 expectedMorrowindBsaSize, QObject* parent)
     : QObject(parent)
     , mExpectedMorrowindBsaSize(expectedMorrowindBsaSize)
@@ -396,22 +398,22 @@ void Wizard::UnshieldWorker::extract()
     // Update Morrowind configuration
     if (getInstallComponent(Wizard::Component_Tribunal))
     {
-        mIniSettings.setValue(QStringLiteral("Archives/Archive 0"), QVariant(QString("Tribunal.bsa")));
-        mIniSettings.setValue(QStringLiteral("Game Files/GameFile1"), QVariant(QString("Tribunal.esm")));
+        mIniSettings.setValue(QLatin1String("Archives/Archive 0"), QVariant(QString("Tribunal.bsa")));
+        mIniSettings.setValue(QLatin1String("Game Files/GameFile1"), QVariant(QString("Tribunal.esm")));
     }
 
     if (getInstallComponent(Wizard::Component_Bloodmoon))
     {
-        mIniSettings.setValue(QStringLiteral("Archives/Archive 0"), QVariant(QString("Bloodmoon.bsa")));
-        mIniSettings.setValue(QStringLiteral("Game Files/GameFile1"), QVariant(QString("Bloodmoon.esm")));
+        mIniSettings.setValue(QLatin1String("Archives/Archive 0"), QVariant(QString("Bloodmoon.bsa")));
+        mIniSettings.setValue(QLatin1String("Game Files/GameFile1"), QVariant(QString("Bloodmoon.esm")));
     }
 
     if (getInstallComponent(Wizard::Component_Tribunal) && getInstallComponent(Wizard::Component_Bloodmoon))
     {
-        mIniSettings.setValue(QStringLiteral("Archives/Archive 0"), QVariant(QString("Tribunal.bsa")));
-        mIniSettings.setValue(QStringLiteral("Archives/Archive 1"), QVariant(QString("Bloodmoon.bsa")));
-        mIniSettings.setValue(QStringLiteral("Game Files/GameFile1"), QVariant(QString("Tribunal.esm")));
-        mIniSettings.setValue(QStringLiteral("Game Files/GameFile2"), QVariant(QString("Bloodmoon.esm")));
+        mIniSettings.setValue(QLatin1String("Archives/Archive 0"), QVariant(QString("Tribunal.bsa")));
+        mIniSettings.setValue(QLatin1String("Archives/Archive 1"), QVariant(QString("Bloodmoon.bsa")));
+        mIniSettings.setValue(QLatin1String("Game Files/GameFile1"), QVariant(QString("Tribunal.esm")));
+        mIniSettings.setValue(QLatin1String("Game Files/GameFile2"), QVariant(QString("Bloodmoon.esm")));
     }
 
     // Write the settings to the Morrowind config file
@@ -419,7 +421,7 @@ void Wizard::UnshieldWorker::extract()
         return;
 
     // Remove the temporary directory
-    removeDirectory(getPath() + QDir::separator() + QStringLiteral("extract-temp"));
+    removeDirectory(getPath() + QDir::separator() + QLatin1String("extract-temp"));
 
     // Fill the progress bar
     int total = 0;
@@ -445,13 +447,13 @@ bool Wizard::UnshieldWorker::setupComponent(Component component)
     {
 
         case Wizard::Component_Morrowind:
-            name = QStringLiteral("Morrowind");
+            name = QLatin1String("Morrowind");
             break;
         case Wizard::Component_Tribunal:
-            name = QStringLiteral("Tribunal");
+            name = QLatin1String("Tribunal");
             break;
         case Wizard::Component_Bloodmoon:
-            name = QStringLiteral("Bloodmoon");
+            name = QLatin1String("Bloodmoon");
             break;
     }
 
@@ -485,7 +487,7 @@ bool Wizard::UnshieldWorker::setupComponent(Component component)
             disk.setPath(getDiskPath());
         }
 
-        QStringList list(findFiles(QStringLiteral("data1.hdr"), disk.absolutePath()));
+        QStringList list(findFiles(QLatin1String("data1.hdr"), disk.absolutePath()));
 
         for (const QString& file : list)
         {
@@ -494,9 +496,9 @@ bool Wizard::UnshieldWorker::setupComponent(Component component)
 
             if (component == Wizard::Component_Morrowind)
             {
-                bool morrowindFound = findInCab(QStringLiteral("Morrowind.bsa"), file);
-                bool tribunalFound = findInCab(QStringLiteral("Tribunal.bsa"), file);
-                bool bloodmoonFound = findInCab(QStringLiteral("Bloodmoon.bsa"), file);
+                bool morrowindFound = findInCab(QLatin1String("Morrowind.bsa"), file);
+                bool tribunalFound = findInCab(QLatin1String("Tribunal.bsa"), file);
+                bool bloodmoonFound = findInCab(QLatin1String("Bloodmoon.bsa"), file);
 
                 if (morrowindFound)
                 {
@@ -523,7 +525,7 @@ bool Wizard::UnshieldWorker::setupComponent(Component component)
             else
             {
 
-                if (findInCab(name + QStringLiteral(".bsa"), file))
+                if (findInCab(name + QLatin1String(".bsa"), file))
                 {
                     cabFile = file;
                     found = true;
@@ -565,13 +567,13 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
     {
 
         case Wizard::Component_Morrowind:
-            name = QStringLiteral("Morrowind");
+            name = QLatin1String("Morrowind");
             break;
         case Wizard::Component_Tribunal:
-            name = QStringLiteral("Tribunal");
+            name = QLatin1String("Tribunal");
             break;
         case Wizard::Component_Bloodmoon:
-            name = QStringLiteral("Bloodmoon");
+            name = QLatin1String("Bloodmoon");
             break;
     }
 
@@ -593,7 +595,7 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
 
     // Create temporary extract directory
     // TODO: Use QTemporaryDir in Qt 5.0
-    QString tempPath(getPath() + QDir::separator() + QStringLiteral("extract-temp"));
+    QString tempPath(getPath() + QDir::separator() + QLatin1String("extract-temp"));
     QDir temp;
 
     // Make sure the temporary folder is empty
@@ -630,9 +632,9 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
 
     // Install extracted directories
     QStringList directories;
-    directories << QStringLiteral("BookArt") << QStringLiteral("Fonts") << QStringLiteral("Icons")
-                << QStringLiteral("Meshes") << QStringLiteral("Music") << QStringLiteral("Sound")
-                << QStringLiteral("Splash") << QStringLiteral("Textures") << QStringLiteral("Video");
+    directories << QLatin1String("BookArt") << QLatin1String("Fonts") << QLatin1String("Icons")
+                << QLatin1String("Meshes") << QLatin1String("Music") << QLatin1String("Sound")
+                << QLatin1String("Splash") << QLatin1String("Textures") << QLatin1String("Video");
 
     for (const QString& dir : directories)
     {
@@ -657,7 +659,7 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
 
     // Install translation files
     QStringList extensions;
-    extensions << QStringLiteral(".cel") << QStringLiteral(".top") << QStringLiteral(".mrk");
+    extensions << QLatin1String(".cel") << QLatin1String(".top") << QLatin1String(".mrk");
 
     for (const QString& extension : extensions)
     {
@@ -671,7 +673,7 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
     if (component == Wizard::Component_Morrowind)
     {
         QStringList files;
-        files << QStringLiteral("Morrowind.esm") << QStringLiteral("Morrowind.bsa");
+        files << QLatin1String("Morrowind.esm") << QLatin1String("Morrowind.bsa");
 
         for (const QString& file : files)
         {
@@ -683,15 +685,15 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
         }
 
         // Copy Morrowind configuration file
-        if (!installFile(QStringLiteral("Morrowind.ini"), temp.absolutePath()))
+        if (!installFile(QLatin1String("Morrowind.ini"), temp.absolutePath()))
         {
             emit error(tr("Could not install Morrowind configuration file!"),
-                tr("Failed to install %1.").arg(QStringLiteral("Morrowind.ini")));
+                tr("Failed to install %1.").arg(QLatin1String("Morrowind.ini")));
             return false;
         }
 
         // Setup Morrowind configuration
-        setIniPath(getPath() + QDir::separator() + QStringLiteral("Morrowind.ini"));
+        setIniPath(getPath() + QDir::separator() + QLatin1String("Morrowind.ini"));
 
         if (!setupSettings())
             return false;
@@ -699,8 +701,8 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
 
     if (component == Wizard::Component_Tribunal)
     {
-        QFileInfo sounds(temp.absoluteFilePath(QStringLiteral("Sounds")));
-        QString dest(getPath() + QDir::separator() + QStringLiteral("Sound"));
+        QFileInfo sounds(temp.absoluteFilePath(QLatin1String("Sounds")));
+        QString dest(getPath() + QDir::separator() + QLatin1String("Sound"));
 
         if (sounds.exists())
         {
@@ -714,7 +716,7 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
         }
 
         QStringList files;
-        files << QStringLiteral("Tribunal.esm") << QStringLiteral("Tribunal.bsa");
+        files << QLatin1String("Tribunal.esm") << QLatin1String("Tribunal.bsa");
 
         for (const QString& file : files)
         {
@@ -728,20 +730,20 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
 
     if (component == Wizard::Component_Bloodmoon)
     {
-        QFileInfo original(getPath() + QDir::separator() + QStringLiteral("Tribunal.esm"));
+        QFileInfo original(getPath() + QDir::separator() + QLatin1String("Tribunal.esm"));
 
         if (original.exists())
         {
-            if (!installFile(QStringLiteral("Tribunal.esm"), temp.absolutePath()))
+            if (!installFile(QLatin1String("Tribunal.esm"), temp.absolutePath()))
             {
                 emit error(tr("Could not find Tribunal patch file!"),
-                    tr("Failed to find %1.").arg(QStringLiteral("Tribunal.esm")));
+                    tr("Failed to find %1.").arg(QLatin1String("Tribunal.esm")));
                 return false;
             }
         }
 
         QStringList files;
-        files << QStringLiteral("Bloodmoon.esm") << QStringLiteral("Bloodmoon.bsa");
+        files << QLatin1String("Bloodmoon.esm") << QLatin1String("Bloodmoon.bsa");
 
         for (const QString& file : files)
         {
@@ -753,7 +755,7 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
         }
 
         // Load Morrowind configuration settings from the setup script
-        QStringList list(findFiles(QStringLiteral("setup.inx"), getDiskPath()));
+        QStringList list(findFiles(QLatin1String("setup.inx"), getDiskPath()));
 
         emit textChanged(tr("Updating Morrowind configuration file"));
 
@@ -764,8 +766,8 @@ bool Wizard::UnshieldWorker::installComponent(Component component, const QString
     }
 
     // Finally, install Data Files directories from temp and disk
-    QStringList datafiles(findDirectories(QStringLiteral("Data Files"), temp.absolutePath()));
-    datafiles.append(findDirectories(QStringLiteral("Data Files"), info.absolutePath()));
+    QStringList datafiles(findDirectories(QLatin1String("Data Files"), temp.absolutePath()));
+    datafiles.append(findDirectories(QLatin1String("Data Files"), info.absolutePath()));
 
     for (const QString& dataDir : datafiles)
     {

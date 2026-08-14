@@ -18,7 +18,14 @@ namespace MWGui
     // Makes it possible to use ItemModel::moveItem to move an item from an inventory to the world.
     class WorldItemModel : public ItemModel
     {
-        MWWorld::Ptr dropItemImpl(const ItemStack& item, int count, bool copy)
+    public:
+        explicit WorldItemModel(float cursorX, float cursorY)
+            : mCursorX(cursorX)
+            , mCursorY(cursorY)
+        {
+        }
+
+        MWWorld::Ptr dropItemImpl(const ItemStack& item, size_t count, bool copy)
         {
             MWBase::World& world = *MWBase::Environment::get().getWorld();
 
@@ -35,11 +42,19 @@ namespace MWGui
             return dropped;
         }
 
-    public:
-        explicit WorldItemModel(float cursorX, float cursorY)
-            : mCursorX(cursorX)
-            , mCursorY(cursorY)
+        MWWorld::Ptr addItem(const ItemStack& item, size_t count, bool /*allowAutoEquip*/) override
         {
+            return dropItemImpl(item, count, false);
+        }
+
+        MWWorld::Ptr copyItem(const ItemStack& item, size_t count, bool /*allowAutoEquip*/) override
+        {
+            return dropItemImpl(item, count, true);
+        }
+
+        void removeItem(const ItemStack& /*item*/, size_t /*count*/) override
+        {
+            throw std::runtime_error("WorldItemModel::removeItem is not implemented");
         }
 
         ModelIndex getIndex(const ItemStack& /*item*/) override
@@ -57,27 +72,6 @@ namespace MWGui
         }
 
         bool usesContainer(const MWWorld::Ptr&) override { return false; }
-
-    protected:
-        MWWorld::Ptr addItem(const ItemStack& item, size_t count, bool /*allowAutoEquip*/) override
-        {
-            const int prevCount = item.mBase.getCellRef().getCount(false);
-            const int intCount = static_cast<int>(count);
-            item.mBase.getCellRef().setCount(intCount);
-            MWWorld::Ptr ptr = dropItemImpl(item, intCount, false);
-            item.mBase.getCellRef().setCount(prevCount);
-            return ptr;
-        }
-
-        MWWorld::Ptr copyItem(const ItemStack& item, size_t count, bool /*allowAutoEquip*/) override
-        {
-            return dropItemImpl(item, static_cast<int>(count), true);
-        }
-
-        void removeItem(const ItemStack& /*item*/, size_t /*count*/) override
-        {
-            throw std::runtime_error("WorldItemModel::removeItem is not implemented");
-        }
 
     private:
         float mCursorX;

@@ -1,15 +1,26 @@
 local types = require('openmw.types')
 local world = require('openmw.world')
-local auxUtil = require('openmw_aux.util')
 
 local handlersPerObject = {}
 local handlersPerType = {}
 
 local function useItem(obj, actor, force)
     local options = { force = force or false }
-    local handled = auxUtil.callMultipleEventHandlers({ handlersPerObject[obj.id], handlersPerType[obj.type] }, obj, actor, options)
-    if handled then
-        return
+    local handlers = handlersPerObject[obj.id]
+    if handlers then
+        for i = #handlers, 1, -1 do
+            if handlers[i](obj, actor, options) == false then
+                return -- skip other handlers
+            end
+        end
+    end
+    handlers = handlersPerType[obj.type]
+    if handlers then
+        for i = #handlers, 1, -1 do
+            if handlers[i](obj, actor, options) == false then
+                return -- skip other handlers
+            end
+        end
     end
     world._runStandardUseAction(obj, actor, options.force)
 end
@@ -58,7 +69,7 @@ return {
             handlers[#handlers + 1] = handler
         end,
 
-        --- Add new use action handler for a type of object.
+        --- Add new use action handler for a type of objects.
         -- If `handler(object, actor, options)` returns false, other handlers for
         -- the same object (including type handlers) will be skipped.
         -- @function [parent=#ItemUsage] addHandlerForType

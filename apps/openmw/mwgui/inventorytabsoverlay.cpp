@@ -11,17 +11,15 @@
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 
-#include "exposedwindow.hpp"
-
 namespace MWGui
 {
     InventoryTabsOverlay::InventoryTabsOverlay()
         : WindowBase("openmw_inventory_tabs.layout")
     {
         MyGUI::Button* tab;
-        constexpr std::string_view kTabIds[] = { "TabMap", "TabInventory", "TabSpells", "TabStats" };
+        static const char* kTabIds[] = { "TabMap", "TabInventory", "TabSpells", "TabStats" };
 
-        for (const std::string_view id : kTabIds)
+        for (const char* id : kTabIds)
         {
             getWidget(tab, id);
             // Switch on press. Waiting for MyGUI's synthetic click can lose the event when changing panes also
@@ -34,12 +32,10 @@ namespace MWGui
         getWidget(image, "BtnL2Image");
         image->setImageTexture(
             MWBase::Environment::get().getInputManager()->getControllerAxisIcon(SDL_CONTROLLER_AXIS_TRIGGERLEFT));
-        mLeftTriggerIcon = image;
 
         getWidget(image, "BtnR2Image");
         image->setImageTexture(
             MWBase::Environment::get().getInputManager()->getControllerAxisIcon(SDL_CONTROLLER_AXIS_TRIGGERRIGHT));
-        mRightTriggerIcon = image;
 
         // The overlay is only the height of the top strip. Keep its container focusable so MyGUI can
         // route presses to the child tab buttons; disabling focus on the parent also starves its children.
@@ -52,51 +48,27 @@ namespace MWGui
         return window->getHeight();
     }
 
-    void InventoryTabsOverlay::setPipBoyMode(bool enabled)
-    {
-        // The controller trigger glyphs are helpful in the OpenMW analogue,
-        // but they are not part of a Pip-Boy screen and visually overwhelm a
-        // compact wrist display.  The live tab buttons remain interactive.
-        if (mLeftTriggerIcon != nullptr)
-            mLeftTriggerIcon->setVisible(!enabled);
-        if (mRightTriggerIcon != nullptr)
-            mRightTriggerIcon->setVisible(!enabled);
-
-        const MyGUI::Colour terminalGreen(0.42f, 0.96f, 0.49f, 1.f);
-        const MyGUI::Colour analogueSand(0.80f, 0.71f, 0.54f, 1.f);
-        for (MyGUI::Button* tab : mTabs)
-            tab->setTextColour(enabled ? terminalGreen : analogueSand);
-
-        if (Window* window = mMainWidget->castType<Window>(false))
-        {
-            for (MyGUI::Widget* border : window->getSkinWidgetsByName("Border"))
-                border->setVisible(!enabled);
-        }
-    }
-
     void InventoryTabsOverlay::onTabPressed(
         MyGUI::Widget* sender, int /*left*/, int /*top*/, MyGUI::MouseButton button)
     {
         if (button != MyGUI::MouseButton::Left)
             return;
 
-        for (size_t i = 0; i < mTabs.size(); ++i)
+        for (int i = 0; i < static_cast<int>(mTabs.size()); i++)
         {
             if (mTabs[i] == sender)
             {
                 Log(Debug::Info) << "FNV/ESM4 input: Pip-Boy tab pressed index=" << i;
-                MWBase::WindowManager* windowManager = MWBase::Environment::get().getWindowManager();
-                const GuiMode mode = windowManager->getMode() == GM_FalloutPipBoy ? GM_FalloutPipBoy : GM_Inventory;
-                windowManager->setActiveControllerWindow(mode, i);
+                MWBase::Environment::get().getWindowManager()->setActiveControllerWindow(GM_Inventory, i);
                 setTab(i);
                 break;
             }
         }
     }
 
-    void InventoryTabsOverlay::setTab(size_t index)
+    void InventoryTabsOverlay::setTab(int index)
     {
-        for (size_t i = 0; i < mTabs.size(); ++i)
+        for (int i = 0; i < static_cast<int>(mTabs.size()); i++)
             mTabs[i]->setStateSelected(i == index);
     }
 

@@ -24,9 +24,10 @@ namespace Wizard
         bool validatePage() override;
 
     private slots:
-        void browseButtonClicked();
+        void on_browseButton_clicked();
 
     private:
+        MainWizard* mWizard;
         const Files::ConfigurationManager& mCfgMgr;
 
     protected:

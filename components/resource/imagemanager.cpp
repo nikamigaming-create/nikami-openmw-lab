@@ -2,7 +2,6 @@
 
 #include <cassert>
 #include <cstdlib>
-#include <string_view>
 #include <osgDB/Registry>
 
 #include <components/debug/debuglog.hpp>
@@ -26,46 +25,6 @@ USE_SERIALIZER_WRAPPER_LIBRARY(osg)
 
 namespace
 {
-    constexpr VFS::Path::NormalizedView sFalloutCursor("textures/interface/icons/misc/cursor.dds");
-    constexpr VFS::Path::NormalizedView sFalloutUiChrome("textures/interface/shared/button/frame_idle.dds");
-    constexpr VFS::Path::NormalizedView sFalloutCrosshair("textures/interface/hud/crosshair.dds");
-    constexpr VFS::Path::NormalizedView sFalloutCompass("textures/interface/hud/compass_cropped.dds");
-    constexpr VFS::Path::NormalizedView sFalloutStealthIndicator("textures/interface/hud/stealth_indicator.dds");
-    constexpr VFS::Path::NormalizedView sFalloutHitGradient("textures/interface/hud/hitgradientleft.dds");
-
-    bool isLegacyCursorPath(VFS::Path::NormalizedView path)
-    {
-        return path == "textures/tx_cursor.dds" || path == "textures/tx_cursormove.dds"
-            || path == "textures/cursor_drop_ground.dds";
-    }
-
-    bool isLegacyMorrowindUiPath(VFS::Path::NormalizedView path)
-    {
-        const std::string_view value = path.value();
-        return value == "textures/door_icon.dds" || value == "textures/target.dds" || value == "textures/compass.dds"
-            || value == "textures/scroll.dds" || value == "textures/player_hit_01.dds"
-            || value == "icons/tx_goldicon.dds" || value.starts_with("textures/menu_")
-            || value.starts_with("textures/tx_menubook") || value.starts_with("icons/k/");
-    }
-
-    bool resolveFalloutUiAsset(VFS::Path::NormalizedView path, const VFS::Manager& vfs,
-        VFS::Path::NormalizedView& resolvedPath)
-    {
-        if (!isLegacyMorrowindUiPath(path) || !vfs.exists(sFalloutUiChrome))
-            return false;
-
-        if (path == "textures/target.dds" && vfs.exists(sFalloutCrosshair))
-            resolvedPath = sFalloutCrosshair;
-        else if (path == "textures/compass.dds" && vfs.exists(sFalloutCompass))
-            resolvedPath = sFalloutCompass;
-        else if (path == "icons/k/stealth_sneak.dds" && vfs.exists(sFalloutStealthIndicator))
-            resolvedPath = sFalloutStealthIndicator;
-        else if (path == "textures/player_hit_01.dds" && vfs.exists(sFalloutHitGradient))
-            resolvedPath = sFalloutHitGradient;
-        else
-            resolvedPath = sFalloutUiChrome;
-        return true;
-    }
 
     osg::ref_ptr<osg::Image> createWarningImage()
     {
@@ -100,32 +59,6 @@ namespace
         return warningImage;
     }
 
-    bool isS3TC(osg::Image* image)
-    {
-        switch (image->getPixelFormat())
-        {
-            case GL_COMPRESSED_RGB_S3TC_DXT1_EXT:
-            case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
-            case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
-            case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
-                return true;
-        }
-        return false;
-    }
-
-    bool checkSupported(osg::Image* image)
-    {
-        // not bothering with checks for other compression formats right now
-        if (!isS3TC(image))
-            return true;
-
-        // hashtag yolo (CS might not have context when loading assets)
-        if (!SceneUtil::glExtensionsReady())
-            return true;
-
-        return SceneUtil::getGLExtensions().isTextureCompressionS3TCSupported;
-    }
-
 }
 
 namespace Resource
@@ -134,11 +67,40 @@ namespace Resource
     ImageManager::ImageManager(const VFS::Manager* vfs, double expiryDelay)
         : ResourceManager(vfs, expiryDelay)
         , mWarningImage(createWarningImage())
-        , mOptions(new osgDB::Options("dds_dxt1_detect_rgba ignoreTga2Fields"))
+        , mOptions(new osgDB::Options("dds_flip dds_dxt1_detect_rgba ignoreTga2Fields"))
+        , mOptionsNoFlip(new osgDB::Options("dds_dxt1_detect_rgba ignoreTga2Fields"))
     {
     }
 
     ImageManager::~ImageManager() {}
+
+    bool checkSupported(osg::Image* image)
+    {
+        switch (image->getPixelFormat())
+        {
+            case (GL_COMPRESSED_RGB_S3TC_DXT1_EXT):
+            case (GL_COMPRESSED_RGBA_S3TC_DXT1_EXT):
+            case (GL_COMPRESSED_RGBA_S3TC_DXT3_EXT):
+            case (GL_COMPRESSED_RGBA_S3TC_DXT5_EXT):
+            {
+                if (!SceneUtil::glExtensionsReady())
+                    return true; // hashtag yolo (CS might not have context when loading assets)
+                osg::GLExtensions& exts = SceneUtil::getGLExtensions();
+                if (!exts.isTextureCompressionS3TCSupported
+                    // This one works too. Should it be included in isTextureCompressionS3TCSupported()? Submitted as a
+                    // patch to OSG.
+                    && !osg::isGLExtensionSupported(exts.contextID, "GL_S3_s3tc"))
+                {
+                    return false;
+                }
+                break;
+            }
+            // not bothering with checks for other compression formats right now
+            default:
+                return true;
+        }
+        return true;
+    }
 
     osg::ref_ptr<osg::Image> ImageManager::getImage(VFS::Path::NormalizedView path, bool disableFlip)
     {
@@ -148,22 +110,9 @@ namespace Resource
         else
         {
             Files::IStreamPtr stream;
-            VFS::Path::NormalizedView resolvedPath = path;
-            if (!mVFS->exists(path) && resolveFalloutUiAsset(path, *mVFS, resolvedPath))
-            {
-                // The generic MyGUI layouts are still used while the FNV UI
-                // renderer is being assembled. Resolve their legacy chrome to
-                // installed Fallout interface art rather than requesting
-                // Morrowind-only texture names from Fallout archives.
-            }
-            else if (!mVFS->exists(path) && isLegacyCursorPath(path) && mVFS->exists(sFalloutCursor))
-            {
-                resolvedPath = sFalloutCursor;
-                Log(Debug::Info) << "Using native Fallout cursor " << resolvedPath << " for " << path;
-            }
             try
             {
-                stream = mVFS->get(resolvedPath);
+                stream = mVFS->get(path);
             }
             catch (std::exception& e)
             {
@@ -172,7 +121,7 @@ namespace Resource
                 return mWarningImage;
             }
 
-            const std::string ext(Misc::getFileExtension(resolvedPath.value()));
+            const std::string ext(Misc::getFileExtension(path.value()));
             osgDB::ReaderWriter* reader = osgDB::Registry::instance()->getReaderWriterForExtension(ext);
             if (!reader)
             {
@@ -204,7 +153,8 @@ namespace Resource
                 stream->seekg(0);
             }
 
-            osgDB::ReaderWriter::ReadResult result = reader->readImage(*stream, mOptions);
+            osgDB::ReaderWriter::ReadResult result
+                = reader->readImage(*stream, disableFlip ? mOptionsNoFlip : mOptions);
             if (!result.success())
             {
                 Log(Debug::Error) << "Error loading " << path << ": " << result.message() << " code "
@@ -231,7 +181,6 @@ namespace Resource
                     // requires update to getColor() to be released with OSG 3.6
                     osg::ref_ptr<osg::Image> newImage = new osg::Image;
                     newImage->setFileName(image->getFileName());
-                    newImage->setOrigin(image->getOrigin());
                     newImage->allocateImage(image->s(), image->t(), image->r(),
                         image->isImageTranslucent() ? GL_RGBA : GL_RGB, GL_UNSIGNED_BYTE);
                     for (int s = 0; s < image->s(); ++s)
@@ -245,7 +194,6 @@ namespace Resource
             {
                 osg::ref_ptr<osg::Image> newImage = new osg::Image;
                 newImage->setFileName(image->getFileName());
-                newImage->setOrigin(image->getOrigin());
                 newImage->allocateImage(image->s(), image->t(), image->r(), GL_RGB, GL_UNSIGNED_BYTE);
                 // OSG just won't write the alpha as there's nowhere to put it.
                 for (int s = 0; s < image->s(); ++s)
@@ -253,27 +201,6 @@ namespace Resource
                         for (int r = 0; r < image->r(); ++r)
                             newImage->setColor(image->getColor(s, t, r), s, t, r);
                 image = newImage;
-            }
-
-            // OSG might not set the right origin for DDS
-            if (ext == "dds")
-                image->setOrigin(osg::Image::TOP_LEFT);
-
-            // Convert the image to the convention we expect
-            if (image->getOrigin() == osg::Image::BOTTOM_LEFT && !disableFlip)
-            {
-                if (image->isCompressed() && !isS3TC(image))
-                {
-                    // This is most likely a KTX texture that OSG can't flip
-                    // We don't want it to be corrupted or displayed incorrectly, so bail
-                    // OSGoS *can* flip RGTC, but we can't verify that (yet?)
-                    Log(Debug::Error) << "Error loading " << path << ": cannot flip non-S3TC compressed texture";
-                    mCache->addEntryToObjectCache(path.value(), mWarningImage);
-                    return mWarningImage;
-                }
-
-                image->flipVertical();
-                image->setOrigin(osg::Image::TOP_LEFT);
             }
 
             mCache->addEntryToObjectCache(path.value(), image);

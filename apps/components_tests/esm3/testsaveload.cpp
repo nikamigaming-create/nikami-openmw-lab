@@ -1,7 +1,6 @@
 #include <components/esm/fourcc.hpp>
 #include <components/esm3/aipackage.hpp>
 #include <components/esm3/aisequence.hpp>
-#include <components/esm3/cellstate.hpp>
 #include <components/esm3/effectlist.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
@@ -9,11 +8,11 @@
 #include <components/esm3/loaddial.hpp>
 #include <components/esm3/loadinfo.hpp>
 #include <components/esm3/loadland.hpp>
-#include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadregn.hpp>
 #include <components/esm3/loadscpt.hpp>
 #include <components/esm3/loadweap.hpp>
 #include <components/esm3/player.hpp>
+#include <components/esm3/projectilestate.hpp>
 #include <components/esm3/quickkeys.hpp>
 
 #include <gmock/gmock.h>
@@ -265,6 +264,79 @@ namespace ESM
             EXPECT_EQ(result.mInventory.mList, record.mInventory.mList);
         }
 
+        TEST_F(Esm3SaveLoadRecordTest, falloutProjectileStateShouldPreserveFrozenImpactAndVatsPayload)
+        {
+            FalloutProjectileState record;
+            record.mId = RefId::formIdRefId({ 0x10203, 0 });
+            record.mPosition = Vector3(osg::Vec3f(1.f, 2.f, 3.f));
+            record.mOrientation = Quaternion(osg::Quat(0.1, 0.2, 0.3, 0.9));
+            record.mActorId = 42;
+            record.mVelocity = Vector3(osg::Vec3f(400.f, 500.f, 600.f));
+            record.mRotationVelocity = Vector3(osg::Vec3f(0.25f, 0.5f, 0.75f));
+            record.mPreviousPosition = Vector3(osg::Vec3f(-1.f, -2.f, -3.f));
+            record.mGravity = 1.5f;
+            record.mMaximumRange = 10000.f;
+            record.mDistanceTravelled = 321.f;
+            record.mElapsedTime = 1.75f;
+            record.mBounceCount = 3;
+            record.mWeapon = RefId::formIdRefId({ 0x40506, 0 });
+            record.mExplosion = RefId::formIdRefId({ 0x50607, 0 });
+            record.mRawDamage = 37.5f;
+            record.mLimbDamageMultiplier = 1.25f;
+            record.mExplosionDamageMultiplier = 0.875f;
+            record.mProjectileSkill = 62.f;
+            record.mAmmoEffects = { RefId::formIdRefId({ 0x70809, 0 }),
+                RefId::formIdRefId({ 0xa0b0c, 0 }) };
+            record.mFlags = FalloutProjectileState::Rotates | FalloutProjectileState::Critical
+                | FalloutProjectileState::HasVatsAction | FalloutProjectileState::VatsTargetHit
+                | FalloutProjectileState::Settled | FalloutProjectileState::Detonate
+                | FalloutProjectileState::Armed;
+            record.mVats.mTarget = RefId::formIdRefId({ 0xd0e0f, 0 });
+            record.mVats.mBodyPart = 3;
+            record.mVats.mDisplayedHitChance = 78;
+            record.mVats.mHealthPercent = 25;
+            record.mVats.mActorValue = 27;
+            record.mVats.mActionPointCost = 18.f;
+            record.mVats.mHealthDamageMultiplier = 0.75f;
+            record.mVats.mLimbDamageMultiplier = 1.4f;
+            record.mVats.mBodyPartName = "Left Arm";
+            record.mVats.mTargetNode = "Bip01 L UpperArm";
+
+            FalloutProjectileState result;
+            saveAndLoadRecord(record, CurrentSaveGameFormatVersion, result);
+
+            EXPECT_EQ(result.mId, record.mId);
+            EXPECT_THAT(result.mPosition.mValues, ElementsAre(1.f, 2.f, 3.f));
+            EXPECT_THAT(result.mOrientation.mValues, ElementsAreArray(record.mOrientation.mValues));
+            EXPECT_EQ(result.mActorId, 42);
+            EXPECT_THAT(result.mVelocity.mValues, ElementsAre(400.f, 500.f, 600.f));
+            EXPECT_THAT(result.mRotationVelocity.mValues, ElementsAre(0.25f, 0.5f, 0.75f));
+            EXPECT_THAT(result.mPreviousPosition.mValues, ElementsAre(-1.f, -2.f, -3.f));
+            EXPECT_EQ(result.mGravity, 1.5f);
+            EXPECT_EQ(result.mMaximumRange, 10000.f);
+            EXPECT_EQ(result.mDistanceTravelled, 321.f);
+            EXPECT_EQ(result.mElapsedTime, 1.75f);
+            EXPECT_EQ(result.mBounceCount, 3);
+            EXPECT_EQ(result.mWeapon, record.mWeapon);
+            EXPECT_EQ(result.mExplosion, record.mExplosion);
+            EXPECT_EQ(result.mRawDamage, 37.5f);
+            EXPECT_EQ(result.mLimbDamageMultiplier, 1.25f);
+            EXPECT_EQ(result.mExplosionDamageMultiplier, 0.875f);
+            EXPECT_EQ(result.mProjectileSkill, 62.f);
+            EXPECT_EQ(result.mAmmoEffects, record.mAmmoEffects);
+            EXPECT_EQ(result.mFlags, record.mFlags);
+            EXPECT_EQ(result.mVats.mTarget, record.mVats.mTarget);
+            EXPECT_EQ(result.mVats.mBodyPart, 3);
+            EXPECT_EQ(result.mVats.mDisplayedHitChance, 78);
+            EXPECT_EQ(result.mVats.mHealthPercent, 25);
+            EXPECT_EQ(result.mVats.mActorValue, 27);
+            EXPECT_EQ(result.mVats.mActionPointCost, 18.f);
+            EXPECT_EQ(result.mVats.mHealthDamageMultiplier, 0.75f);
+            EXPECT_EQ(result.mVats.mLimbDamageMultiplier, 1.4f);
+            EXPECT_EQ(result.mVats.mBodyPartName, "Left Arm");
+            EXPECT_EQ(result.mVats.mTargetNode, "Bip01 L UpperArm");
+        }
+
         TEST_F(Esm3SaveLoadRecordTest, regionSoundRefShouldSupportRefIdLongerThan32)
         {
             Region record;
@@ -382,56 +454,13 @@ namespace ESM
             record.blank();
             record.mLastHitAttemptObject = generateRandomRefId();
             record.mLastHitObject = generateRandomRefId();
-            record.mFalloutLimbDamage = { 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f };
-            record.mFalloutActorValueOverrides = { { 13, 650.f }, { 57, 2.f } };
-            record.mFalloutFactionOverrides = {
-                { ESM::FormId{ .mIndex = 0x1234, .mContentFile = 0 }, 1 },
-                { ESM::FormId{ .mIndex = 0x5678, .mContentFile = 0 },
-                    CreatureStats::FalloutFactionRemoved },
-            };
-            record.mFalloutRuntimeFlags = 0x0d;
-            record.mHasFalloutEquipmentOverride = true;
-            record.mFalloutEquippedItems = {
-                ESM::FormId{ .mIndex = 0x9abc, .mContentFile = 0 },
-                ESM::FormId{ .mIndex = 0xdef0, .mContentFile = 0 },
-            };
+            record.mFalloutActiveEffects.push_back({ generateRandomRefId(), generateRandomRefId(),
+                FalloutActiveEffectKind::ActorValueModifier, 0x76, 76, -1.f, 60.f, 41.25f, 42 });
             CreatureStats result;
             saveAndLoadRecord(record, GetParam(), result);
             EXPECT_EQ(record.mLastHitAttemptObject, result.mLastHitAttemptObject);
             EXPECT_EQ(record.mLastHitObject, result.mLastHitObject);
-            EXPECT_EQ(record.mFalloutLimbDamage, result.mFalloutLimbDamage);
-            EXPECT_EQ(record.mFalloutActorValueOverrides, result.mFalloutActorValueOverrides);
-            EXPECT_EQ(record.mFalloutFactionOverrides, result.mFalloutFactionOverrides);
-            EXPECT_EQ(record.mFalloutRuntimeFlags, result.mFalloutRuntimeFlags);
-            EXPECT_EQ(record.mHasFalloutEquipmentOverride, result.mHasFalloutEquipmentOverride);
-            EXPECT_EQ(record.mFalloutEquippedItems, result.mFalloutEquippedItems);
-        }
-
-        TEST_F(Esm3SaveLoadRecordTest, cellOwnerOverrideShouldRoundTripIncludingExplicitClear)
-        {
-            CellState owned{};
-            owned.mIsInterior = true;
-            owned.mHasOwnerOverride = true;
-            owned.mOwner = RefId(FormId{ .mIndex = 0x12345, .mContentFile = 0 });
-            CellState ownedResult{};
-            saveAndLoadRecord(owned, CurrentSaveGameFormatVersion, ownedResult);
-            EXPECT_TRUE(ownedResult.mHasOwnerOverride);
-            EXPECT_EQ(ownedResult.mOwner, owned.mOwner);
-
-            CellState publicCell{};
-            publicCell.mIsInterior = true;
-            publicCell.mHasOwnerOverride = true;
-            CellState publicResult{};
-            saveAndLoadRecord(publicCell, CurrentSaveGameFormatVersion, publicResult);
-            EXPECT_TRUE(publicResult.mHasOwnerOverride);
-            EXPECT_TRUE(publicResult.mOwner.empty());
-
-            CellState unchanged{};
-            unchanged.mIsInterior = true;
-            CellState unchangedResult{};
-            saveAndLoadRecord(unchanged, CurrentSaveGameFormatVersion, unchangedResult);
-            EXPECT_FALSE(unchangedResult.mHasOwnerOverride);
-            EXPECT_TRUE(unchangedResult.mOwner.empty());
+            EXPECT_EQ(record.mFalloutActiveEffects, result.mFalloutActiveEffects);
         }
 
         TEST_P(Esm3SaveLoadRecordTest, containerShouldNotChange)
@@ -592,7 +621,7 @@ namespace ESM
             record.mData.mY = 2;
             record.mData.mZ = 3;
             record.mData.mDuration = 4;
-            record.mTargetActor = RefNum{ .mIndex = 5, .mContentFile = -1 };
+            record.mTargetActorId = 5;
             record.mTargetId = generateRandomRefId(32);
             record.mCellId = generateRandomString(257);
             record.mRemainingDuration = 6;
@@ -608,10 +637,7 @@ namespace ESM
                 EXPECT_EQ(result.mData.mDuration, record.mRemainingDuration);
             else
                 EXPECT_EQ(result.mData.mDuration, record.mData.mDuration);
-            if (GetParam() > MaxActorIdSaveGameFormatVersion)
-            {
-                EXPECT_EQ(result.mTargetActor, record.mTargetActor);
-            }
+            EXPECT_EQ(result.mTargetActorId, record.mTargetActorId);
             EXPECT_EQ(result.mTargetId, record.mTargetId);
             EXPECT_EQ(result.mCellId, record.mCellId);
             EXPECT_EQ(result.mRemainingDuration, record.mRemainingDuration);
@@ -642,9 +668,9 @@ namespace ESM
         {
             EffectList record;
             record.mList.emplace_back(IndexedENAMstruct{ {
-                                                             .mEffectID = ESM::MagicEffect::SwiftSwim,
-                                                             .mSkill = ESM::Skill::MediumArmor,
-                                                             .mAttribute = ESM::Attribute::Agility,
+                                                             .mEffectID = 1,
+                                                             .mSkill = 2,
+                                                             .mAttribute = 3,
                                                              .mRange = 4,
                                                              .mArea = 5,
                                                              .mDuration = 6,

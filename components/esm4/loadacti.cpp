@@ -47,12 +47,6 @@ void ESM4::Activator::load(ESM4::Reader& reader)
             case ESM::fourCC("FULL"):
                 reader.getLocalizedString(mFullName);
                 break;
-            case ESM::fourCC("OBND"):
-                if (subHdr.dataSize == mObjectBounds.size())
-                    reader.get(mObjectBounds.data(), mObjectBounds.size());
-                else
-                    reader.skipSubRecordData();
-                break;
             case ESM::fourCC("MODL"):
                 reader.getZString(mModel);
                 break;
@@ -112,6 +106,7 @@ void ESM4::Activator::load(ESM4::Reader& reader)
             case ESM::fourCC("KNAM"):
             case ESM::fourCC("KSIZ"):
             case ESM::fourCC("KWDA"):
+            case ESM::fourCC("OBND"):
             case ESM::fourCC("PNAM"):
             case ESM::fourCC("VMAD"):
             case ESM::fourCC("WNAM"):

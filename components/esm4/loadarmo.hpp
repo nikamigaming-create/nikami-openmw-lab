@@ -148,7 +148,8 @@ namespace ESM4
             float weight;
         };
 
-        // Fallout 3/New Vegas ARMO DNAM. Damage resistance is stored in hundredths.
+        // Fallout 3/New Vegas ARMO DNAM. The resistance value is serialized in hundredths; keeping the raw
+        // integer avoids losing the authored value before the combat formula applies its scale.
         struct FalloutData
         {
             std::int16_t damageResistanceHundredths;

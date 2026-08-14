@@ -20,10 +20,13 @@ namespace MWMechanics
     class AiEscort final : public TypedAiPackage<AiEscort>
     {
     public:
-        /** The Actor will escort the specified actor to the position x, y, z until they reach their position, or
+        /// Implementation of AiEscort
+        /** The Actor will escort the specified actor to the world position x, y, z until they reach their position, or
            they run out of time \implement AiEscort **/
-        AiEscort(ESM::RefNum actor, std::string_view cellId, int duration, float x, float y, float z, bool repeat);
-        /// Implementation of AiEscort/AiEscortCell
+        AiEscort(const ESM::RefId& actorId, int duration, float x, float y, float z, bool repeat);
+        /// Implementation of AiEscortCell
+        /** The Actor will escort the specified actor to the cell position x, y, z until they reach their position, or
+           they run out of time \implement AiEscortCell **/
         AiEscort(
             const ESM::RefId& actorId, std::string_view cellId, int duration, float x, float y, float z, bool repeat);
 

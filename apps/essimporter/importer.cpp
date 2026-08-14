@@ -388,22 +388,13 @@ namespace ESSImport
         profile.save(writer);
         writer.endRecord(ESM::REC_SAVE);
 
-        writer.startRecord(ESM::REC_DIAS);
-        context.mDialogueState.save(writer);
-        writer.endRecord(ESM::REC_DIAS);
-
-        writer.startRecord(ESM::REC_LUAM);
-        writer.writeHNT<double>("LUAW", 0);
-        writer.writeFormId(context.mNextRefNum, true);
-        writer.endRecord(ESM::REC_LUAM);
-
         // Writing order should be Dynamic Store -> Cells -> Player,
         // so that references to dynamic records can be recognized when loading
-        for (const auto& [_, converter] : converters)
+        for (auto it = converters.begin(); it != converters.end(); ++it)
         {
-            if (converter->getStage() != 0)
+            if (it->second->getStage() != 0)
                 continue;
-            converter->write(writer);
+            it->second->write(writer);
         }
 
         writer.startRecord(ESM::REC_NPC_);
@@ -411,11 +402,11 @@ namespace ESSImport
         context.mPlayerBase.save(writer);
         writer.endRecord(ESM::REC_NPC_);
 
-        for (const auto& [_, converter] : converters)
+        for (auto it = converters.begin(); it != converters.end(); ++it)
         {
-            if (converter->getStage() != 1)
+            if (it->second->getStage() != 1)
                 continue;
-            converter->write(writer);
+            it->second->write(writer);
         }
 
         writer.startRecord(ESM::REC_PLAY);
@@ -427,13 +418,21 @@ namespace ESSImport
         context.mPlayer.save(writer);
         writer.endRecord(ESM::REC_PLAY);
 
+        writer.startRecord(ESM::REC_ACTC);
+        writer.writeHNT("COUN", context.mNextActorId);
+        writer.endRecord(ESM::REC_ACTC);
+
         // Stage 2 requires cell references to be written / actors IDs assigned
-        for (const auto& [_, converter] : converters)
+        for (auto it = converters.begin(); it != converters.end(); ++it)
         {
-            if (converter->getStage() != 2)
+            if (it->second->getStage() != 2)
                 continue;
-            converter->write(writer);
+            it->second->write(writer);
         }
+
+        writer.startRecord(ESM::REC_DIAS);
+        context.mDialogueState.save(writer);
+        writer.endRecord(ESM::REC_DIAS);
 
         writer.startRecord(ESM::REC_INPU);
         context.mControlsState.save(writer);

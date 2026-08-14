@@ -30,7 +30,6 @@
 #include "creatureanimation.hpp"
 #include "esm4npcanimation.hpp"
 #include "npcanimation.hpp"
-#include "occlusionculling.hpp"
 #include "vismask.hpp"
 
 namespace MWRender
@@ -173,7 +172,7 @@ namespace MWRender
         {
         public:
             WorldViewerActorProxyAnimation(const MWWorld::Ptr& ptr, Resource::ResourceSystem* resourceSystem,
-                std::string_view model, bool creature, bool hidden = false)
+                std::string_view model, bool creature)
                 : Animation(ptr, osg::ref_ptr<osg::Group>(ptr.getRefData().getBaseNode()), resourceSystem)
                 , mCreature(creature)
                 , mAnimate(envEnabled("OPENMW_WORLD_VIEWER_ESM4_ACTOR_PROXY_ANIMATE"))
@@ -185,7 +184,6 @@ namespace MWRender
                 mPoseRoot = new osg::MatrixTransform;
                 mPoseRoot->setName("World Viewer ESM4 Actor Proxy Pose Root");
                 osg::ref_ptr<osg::Geode> geode = new osg::Geode;
-                geode->setNodeMask(hidden ? 0 : ~osg::Node::NodeMask(0));
                 osg::StateSet* stateSet = geode->getOrCreateStateSet();
                 osg::ref_ptr<osg::Material> material = new osg::Material;
                 material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
@@ -341,10 +339,6 @@ namespace MWRender
         {
             cellnode = new osg::Group;
             cellnode->setName("Cell Root");
-            if (mOcclusionCuller)
-                cellnode->addCullCallback(new CellOcclusionCallback(mOcclusionCuller, mOccluderMinRadius,
-                    mOccluderMaxRadius, mOccluderShrinkFactor, mOccluderMeshResolution, mOccluderMaxMeshResolution,
-                    mOccluderInsideThreshold, mOccluderMaxDistance, mEnableStaticOccluders, mMaxTriangles));
             mRootNode->addChild(cellnode);
             mCellSceneNodes[ptr.getCell()] = cellnode;
         }
@@ -362,9 +356,6 @@ namespace MWRender
         cellnode->addChild(insert);
 
         insert->getOrCreateUserDataContainer()->addUserObject(new PtrHolder(ptr));
-
-        if (ptr.getType() == ESM::REC_DOOR || ptr.getType() == ESM::REC_DOOR4)
-            insert->setUserValue("skipOcclusion", true);
 
         const float* f = ptr.getRefData().getPosition().pos;
 
@@ -477,11 +468,7 @@ namespace MWRender
                 }
 
                 osg::ref_ptr<Animation> anim(
-                    new WorldViewerActorProxyAnimation(ptr, mResourceSystem, npcModel, false, true));
-                // Animation construction creates/initializes the object root
-                // and can restore its actor mask. Apply focus hiding after
-                // construction so non-target debug proxies remain invisible.
-                ptr.getRefData().getBaseNode()->setNodeMask(0);
+                    new WorldViewerActorProxyAnimation(ptr, mResourceSystem, npcModel, false));
                 mObjects.emplace(ptr.mRef, anim);
                 return;
             }
@@ -606,10 +593,6 @@ namespace MWRender
         if (mCellSceneNodes.find(newCell) == mCellSceneNodes.end())
         {
             cellnode = new osg::Group;
-            if (mOcclusionCuller)
-                cellnode->addCullCallback(new CellOcclusionCallback(mOcclusionCuller, mOccluderMinRadius,
-                    mOccluderMaxRadius, mOccluderShrinkFactor, mOccluderMeshResolution, mOccluderMaxMeshResolution,
-                    mOccluderInsideThreshold, mOccluderMaxDistance, mEnableStaticOccluders, mMaxTriangles));
             mRootNode->addChild(cellnode);
             mCellSceneNodes[newCell] = cellnode;
         }
@@ -651,24 +634,6 @@ namespace MWRender
             return iter->second;
 
         return nullptr;
-    }
-
-    void Objects::setOcclusionCuller(SceneUtil::OcclusionCuller* culler, float occluderMinRadius,
-        float occluderMaxRadius, float occluderShrinkFactor, int occluderMeshResolution, int occluderMaxMeshResolution,
-        float occluderInsideThreshold, float occluderMaxDistance, bool enableStaticOccluders,
-        unsigned int maxTriangles, OcclusionStorage* storage)
-    {
-        mOcclusionCuller = culler;
-        mOccluderMinRadius = occluderMinRadius;
-        mOccluderMaxRadius = occluderMaxRadius;
-        mOccluderShrinkFactor = occluderShrinkFactor;
-        mOccluderMeshResolution = occluderMeshResolution;
-        mOccluderMaxMeshResolution = occluderMaxMeshResolution;
-        mOccluderInsideThreshold = occluderInsideThreshold;
-        mOccluderMaxDistance = occluderMaxDistance;
-        mEnableStaticOccluders = enableStaticOccluders;
-        mMaxTriangles = maxTriangles;
-        mOcclusionStorage = storage;
     }
 
 }

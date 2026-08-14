@@ -71,6 +71,7 @@ namespace MWGui
         MyGUI::Widget* getEffectBox() { return mEffectBox; }
 
         void setEnemy(const MWWorld::Ptr& enemy);
+
         void setFalloutVatsVisible(bool visible, std::string_view targetName = {},
             std::span<const FalloutVatsBodyPartDisplay> bodyParts = {},
             float actionPointsBefore = 0.f, float actionPointsAfter = 0.f,
@@ -81,7 +82,6 @@ namespace MWGui
         void dropDraggedItem(float mouseX, float mouseY);
 
     private:
-        DragAndDrop* mDragAndDrop;
         MyGUI::ProgressBar *mHealth, *mMagicka, *mStamina, *mEnemyHealth, *mDrowning;
         MyGUI::Widget* mHealthFrame;
         MyGUI::Widget *mWeapBox, *mSpellBox, *mSneakBox;
@@ -107,27 +107,37 @@ namespace MWGui
         std::vector<FalloutVatsBodyPartWidgets> mFalloutVatsBodyPartWidgets;
         MyGUI::Widget *mDrowningBar, *mDrowningFrame, *mDrowningFlash;
 
-        std::string mCellName;
-        std::string mWeaponName;
-        std::string mSpellName;
-        std::unique_ptr<SpellIcons> mSpellIcons;
-        ESM::RefNum mEnemyActor;
-
         // bottom left elements
         int mHealthManaStaminaBaseLeft, mWeapBoxBaseLeft, mSpellBoxBaseLeft, mSneakBoxBaseLeft;
         // bottom right elements
         int mMinimapBoxBaseRight, mEffectBoxBaseRight;
+//## VR_PATCH BEGIN
+// Set aside initial size to use for sizing the hud in VR
+        MyGUI::IntSize mMainWidgetBaseSize;
+//## VR_PATCH END
 
-        float mCellNameTimer = 0.f;
-        float mWeaponSpellTimer = 0.f;
-        float mEnemyHealthTimer = -1;
-        float mDrowningFlashTheta = 0.f;
+        DragAndDrop* mDragAndDrop;
 
-        bool mMapVisible = true;
-        bool mWeaponVisible = true;
-        bool mSpellVisible = true;
-        bool mWorldMouseOver = false;
-        bool mIsDrowning = false;
+        std::string mCellName;
+        float mCellNameTimer;
+
+        std::string mWeaponName;
+        std::string mSpellName;
+        float mWeaponSpellTimer;
+
+        bool mMapVisible;
+        bool mWeaponVisible;
+        bool mSpellVisible;
+
+        bool mWorldMouseOver;
+
+        std::unique_ptr<SpellIcons> mSpellIcons;
+
+        int mEnemyActorId;
+        float mEnemyHealthTimer;
+
+        bool mIsDrowning;
+        float mDrowningFlashTheta;
 
         void onWorldClicked(MyGUI::Widget* sender);
         void onWorldMouseOver(MyGUI::Widget* sender, int x, int y);

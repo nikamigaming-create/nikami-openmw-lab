@@ -36,24 +36,18 @@ namespace
 
     osg::Vec3f AimDirToMovingTarget(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
         const osg::Vec3f& vLastTargetPos, float duration, int weapType, float strength);
-
-    bool hitAttemptMatchesTarget(const MWWorld::Ptr& actor, const MWWorld::Ptr& target)
-    {
-        ESM::RefNum hitNum = actor.getClass().getCreatureStats(actor).getHitAttemptActor();
-        return hitNum.isSet() && target.getCellRef().getRefNum() == hitNum;
-    }
 }
 
 namespace MWMechanics
 {
     AiCombat::AiCombat(const MWWorld::Ptr& actor)
     {
-        mTargetActor = actor.getCellRef().getRefNum();
+        mTargetActorId = actor.getClass().getCreatureStats(actor).getActorId();
     }
 
     AiCombat::AiCombat(const ESM::AiSequence::AiCombat* combat)
     {
-        mTargetActor = combat->mTargetActor;
+        mTargetActorId = combat->mTargetActorId;
     }
 
     void AiCombat::init() {}
@@ -115,11 +109,14 @@ namespace MWMechanics
         if (actor.getClass().getCreatureStats(actor).isDead())
             return true;
 
-        const MWWorld::Ptr target = getTarget(); // The target to follow
+        MWWorld::Ptr target = MWBase::Environment::get().getWorld()->searchPtrViaActorId(mTargetActorId);
+        if (target.isEmpty())
+            return true;
 
-        // Stop if the target doesn't exist
-        if (target.isEmpty() || !target.getCellRef().getCount() || !target.getRefData().isEnabled()
-            || target.getClass().getCreatureStats(target).isDead() || !target.getRefData().getBaseNode())
+        if (!target.getCellRef().getCount()
+            || !target.getRefData().isEnabled() // Really we should be checking whether the target is currently
+                                                // registered with the MechanicsManager
+            || target.getClass().getCreatureStats(target).isDead())
             return true;
 
         if (actor == target) // This should never happen.
@@ -197,7 +194,8 @@ namespace MWMechanics
                 = (std::find(playerFollowersAndEscorters.begin(), playerFollowersAndEscorters.end(), target)
                     != playerFollowersAndEscorters.end());
             if ((target == MWMechanics::getPlayer() || targetSidesWithPlayer)
-                && (hitAttemptMatchesTarget(actor, target) || hitAttemptMatchesTarget(target, actor)))
+                && ((stats.getHitAttemptActorId() == target.getClass().getCreatureStats(target).getActorId())
+                    || (target.getClass().getCreatureStats(target).getHitAttemptActorId() == stats.getActorId())))
                 forceFlee = true;
             else // Otherwise end combat
                 return true;
@@ -257,9 +255,12 @@ namespace MWMechanics
 
         if (isRangedCombat)
         {
-            // rotate actor taking into account target movement direction and projectile speed
-            osg::Vec3f vAimDir = AimDirToMovingTarget(actor, target, storage.mLastTargetPos, AI_REACTION_TIME,
-                (weapon ? weapon->mData.mType : 0), storage.mStrength);
+            // The current FNV delivery path preserves authored hitscan as an immediate ray. Do not apply
+            // Morrowind projectile lead to those actors; fireFalloutWeapon owns the exact target ray and spread.
+            osg::Vec3f vAimDir = isFalloutNewVegasActor(actor)
+                ? MWBase::Environment::get().getWorld()->aimToTarget(actor, target, true)
+                : AimDirToMovingTarget(actor, target, storage.mLastTargetPos, AI_REACTION_TIME,
+                    (weapon ? weapon->mData.mType : 0), storage.mStrength);
 
             storage.mMovement.mRotation[0] = getXAngleToDir(vAimDir);
             storage.mMovement.mRotation[2] = getZAngleToDir(vAimDir);
@@ -332,6 +333,13 @@ namespace MWMechanics
                     storage.mUseCustomDestination = false;
                     storage.stopAttack();
                     stats.setAttackingOrSpell(false);
+                    if (isFalloutNewVegasActor(actor))
+                    {
+                        Log(Debug::Warning) << "FNV AI path fallback: actor=" << actor.toString()
+                                            << " target=" << target.toString() << " range=" << rangeAttack
+                                            << " distance=" << distToTarget << " los=" << storage.mLOS
+                                            << " result=flee";
+                    }
                     currentAction = std::make_unique<ActionFlee>();
                     actionCooldown = currentAction->getActionCooldown();
                     storage.startFleeing();
@@ -434,7 +442,7 @@ namespace MWMechanics
                     storage.mFleeBlindRunTimer += duration;
 
                     storage.mMovement.mRotation[0] = -actor.getRefData().getPosition().rot[0];
-                    storage.mMovement.mRotation[2] = osg::PIf
+                    storage.mMovement.mRotation[2] = osg::PI
                         + getZAngleToDir(
                             target.getRefData().getPosition().asVec3() - actor.getRefData().getPosition().asVec3());
                     storage.mMovement.mPosition[1] = 1;
@@ -479,7 +487,22 @@ namespace MWMechanics
         actorMovementSettings.mPosition[2] = storage.mMovement.mPosition[2];
 
         rotateActorOnAxis(actor, 2, actorMovementSettings, storage);
-        rotateActorOnAxis(actor, 0, actorMovementSettings, storage);
+        const bool waitingForYaw = storage.mRotateMove;
+
+        // Grounded FNV actors aim firearms and melee strikes through the animated upper body and the explicit
+        // target ray. Their world transform does not consume pitch rotation, so waiting for root pitch here
+        // leaves them permanently ready-but-unable-to-attack. Flying and swimming actors still need full 3D
+        // steering. Also preserve both turn results for non-FNV actors instead of letting pitch overwrite yaw.
+        bool waitingForPitch = false;
+        if (!isFalloutNewVegasActor(actor) || canActorMoveByZAxis(actor))
+        {
+            rotateActorOnAxis(actor, 0, actorMovementSettings, storage);
+            waitingForPitch = storage.mRotateMove;
+        }
+        else
+            actorMovementSettings.mRotation[0] = 0.f;
+
+        storage.mRotateMove = waitingForYaw || waitingForPitch;
     }
 
     void AiCombat::rotateActorOnAxis(
@@ -488,15 +511,24 @@ namespace MWMechanics
         actorMovementSettings.mRotation[axis] = 0;
         bool isRangedCombat = false;
         storage.mCurrentAction->getCombatRange(isRangedCombat);
-        float eps = isRangedCombat ? osg::DegreesToRadians(0.5f) : osg::DegreesToRadians(3.f);
+        float eps = isRangedCombat ? osg::DegreesToRadians(0.5) : osg::DegreesToRadians(3.f);
         float targetAngleRadians = storage.mMovement.mRotation[axis];
         storage.mRotateMove = !smoothTurn(actor, targetAngleRadians, axis, eps);
+    }
+
+    MWWorld::Ptr AiCombat::getTarget() const
+    {
+        if (mCachedTarget.isEmpty() || mCachedTarget.mRef->isDeleted() || !mCachedTarget.getRefData().isEnabled())
+        {
+            mCachedTarget = MWBase::Environment::get().getWorld()->searchPtrViaActorId(mTargetActorId);
+        }
+        return mCachedTarget;
     }
 
     void AiCombat::writeState(ESM::AiSequence::AiSequence& sequence) const
     {
         auto combat = std::make_unique<ESM::AiSequence::AiCombat>();
-        combat->mTargetActor = mTargetActor;
+        combat->mTargetActorId = mTargetActorId;
 
         ESM::AiSequence::AiPackageContainer package;
         package.mType = ESM::AiSequence::Ai_Combat;
@@ -548,7 +580,14 @@ namespace MWMechanics
         }
 
         bool targetUsesRanged = false;
-        float rangeAttackOfTarget = ActionWeapon(targetWeapon).getCombatRange(targetUsesRanged);
+        float rangeAttackOfTarget = 0.f;
+        if (isFalloutNewVegasActor(target))
+        {
+            const std::optional<float> falloutRange = getFalloutCombatRange(target, targetUsesRanged);
+            rangeAttackOfTarget = falloutRange.value_or(0.f);
+        }
+        else
+            rangeAttackOfTarget = ActionWeapon(targetWeapon).getCombatRange(targetUsesRanged);
 
         if (mMovement.mPosition[0])
         {
@@ -560,7 +599,7 @@ namespace MWMechanics
         else if (actor.getClass().isBipedal(actor) && !isDistantCombat)
         {
             float moveDuration = 0;
-            double angleToTarget
+            float angleToTarget
                 = Misc::normalizeAngle(mMovement.mRotation[2] - actor.getRefData().getPosition().rot[2]);
             // Apply a big side step if enemy tries to get around and come from behind.
             // Otherwise apply a random side step (kind of dodging) with some probability
@@ -676,7 +715,7 @@ namespace MWMechanics
                         MWBase::Environment::get().getDialogueManager()->say(actor, ESM::RefId::stringRefId("attack"));
                     }
                 }
-                mAttackCooldown = std::min(baseDelay + 0.01f * Misc::Rng::roll0to99(prng), baseDelay + 0.9f);
+                mAttackCooldown = std::min(baseDelay + 0.01 * Misc::Rng::roll0to99(prng), baseDelay + 0.9);
             }
             else
                 mAttackCooldown -= AI_REACTION_TIME;

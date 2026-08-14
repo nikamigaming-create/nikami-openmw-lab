@@ -28,8 +28,7 @@ namespace MWGui
         enum Flags
         {
             Flag_Enchanted = (1 << 0),
-            Flag_Bound = (1 << 1),
-            Flag_Quest = (1 << 2),
+            Flag_Bound = (1 << 1)
         };
         int mFlags;
 
@@ -45,7 +44,7 @@ namespace MWGui
     {
     public:
         ItemModel();
-        virtual ~ItemModel() = default;
+        virtual ~ItemModel() {}
 
         typedef int ModelIndex; // -1 means invalid index
 
@@ -67,6 +66,10 @@ namespace MWGui
         virtual MWWorld::Ptr moveItem(
             const ItemStack& item, size_t count, ItemModel* otherModel, bool allowAutoEquip = true);
 
+        virtual MWWorld::Ptr addItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) = 0;
+        virtual MWWorld::Ptr copyItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) = 0;
+        virtual void removeItem(const ItemStack& item, size_t count) = 0;
+
         /// Is the player allowed to use items from this item model? (default true)
         virtual bool allowedToUseItems() const;
         virtual void onClose() {}
@@ -74,12 +77,6 @@ namespace MWGui
         virtual bool onTakeItem(const MWWorld::Ptr& item, int count);
 
         virtual bool usesContainer(const MWWorld::Ptr& container) = 0;
-
-    protected:
-        virtual MWWorld::Ptr addItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) = 0;
-        virtual MWWorld::Ptr copyItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) = 0;
-        virtual void removeItem(const ItemStack& item, size_t count) = 0;
-        friend class ProxyItemModel;
 
     private:
         ItemModel(const ItemModel&);
@@ -100,6 +97,9 @@ namespace MWGui
         bool onDropItem(const MWWorld::Ptr& item, int count) override;
         bool onTakeItem(const MWWorld::Ptr& item, int count) override;
 
+        MWWorld::Ptr addItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) override;
+        MWWorld::Ptr copyItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) override;
+        void removeItem(const ItemStack& item, size_t count) override;
         ModelIndex getIndex(const ItemStack& item) override;
 
         /// @note Takes ownership of the passed pointer.
@@ -109,11 +109,6 @@ namespace MWGui
         ModelIndex mapFromSource(ModelIndex index);
 
         bool usesContainer(const MWWorld::Ptr& container) override;
-
-    protected:
-        MWWorld::Ptr addItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) override;
-        MWWorld::Ptr copyItem(const ItemStack& item, size_t count, bool allowAutoEquip = true) override;
-        void removeItem(const ItemStack& item, size_t count) override;
 
     protected:
         std::unique_ptr<ItemModel> mSourceModel;

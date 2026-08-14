@@ -37,25 +37,6 @@ void ESM4::AIPackage::load(ESM4::Reader& reader)
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
 
-    // Fallout 3/New Vegas serialise the three package script slots as three
-    // consecutive SCHR-led script definitions.  The slot is implicit in that
-    // order; unlike INFO records there is no NEXT separator.
-    std::size_t packageScriptIndex = 0;
-    ScriptDefinition* activePackageScript = nullptr;
-    const auto selectPackageScript = [this](std::size_t index) -> ScriptDefinition* {
-        switch (index)
-        {
-            case 0:
-                return &mOnBeginScript;
-            case 1:
-                return &mOnEndScript;
-            case 2:
-                return &mOnChangeScript;
-            default:
-                return nullptr;
-        }
-    };
-
     while (reader.getSubRecordHeader())
     {
         const ESM4::SubRecordHeader& subHdr = reader.subRecordHeader();
@@ -221,31 +202,17 @@ void ESM4::AIPackage::load(ESM4::Reader& reader)
 
                 break;
             }
-            case ESM::fourCC("SCHR"):
-                activePackageScript = selectPackageScript(packageScriptIndex++);
-                if (activePackageScript != nullptr)
-                    loadScriptSubRecord(reader, *activePackageScript);
-                else
-                    reader.skipSubRecordData();
-                break;
-            case ESM::fourCC("SCDA"): // FO3
-            case ESM::fourCC("SCTX"): // FO3
-            case ESM::fourCC("SCRO"): // FO3
-            case ESM::fourCC("SLSD"): // FO3
-            case ESM::fourCC("SCVR"): // FO3
-            case ESM::fourCC("SCRV"): // FO3
-                if (activePackageScript != nullptr)
-                    loadScriptSubRecord(reader, *activePackageScript);
-                else
-                    reader.skipSubRecordData();
-                break;
             case ESM::fourCC("CTDT"): // always 20 for TES4
             case ESM::fourCC("TNAM"): // FO3
             case ESM::fourCC("INAM"): // FO3
             case ESM::fourCC("CNAM"): // FO3
+            case ESM::fourCC("SCHR"): // FO3
             case ESM::fourCC("POBA"): // FO3
             case ESM::fourCC("POCA"): // FO3
             case ESM::fourCC("POEA"): // FO3
+            case ESM::fourCC("SCTX"): // FO3
+            case ESM::fourCC("SCDA"): // FO3
+            case ESM::fourCC("SCRO"): // FO3
             case ESM::fourCC("PKDD"): // FO3
             case ESM::fourCC("PKD2"): // FO3
             case ESM::fourCC("PKPT"): // FO3
@@ -255,6 +222,9 @@ void ESM4::AIPackage::load(ESM4::Reader& reader)
             case ESM::fourCC("PUID"): // FO3
             case ESM::fourCC("PKW3"): // FO3
             case ESM::fourCC("PKFD"): // FO3
+            case ESM::fourCC("SLSD"): // FO3
+            case ESM::fourCC("SCVR"): // FO3
+            case ESM::fourCC("SCRV"): // FO3
             case ESM::fourCC("IDLB"): // FO3
             case ESM::fourCC("ANAM"): // TES5
             case ESM::fourCC("BNAM"): // TES5

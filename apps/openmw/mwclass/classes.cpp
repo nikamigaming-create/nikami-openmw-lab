@@ -83,6 +83,7 @@ namespace MWClass
         BodyPart::registerSelf();
 
         ESM4Activator::registerSelf();
+        // ESM4Named inventory and equipment policy is instantiated by these registrations.
         ESM4Named<ESM4::Ammunition>::registerSelf();
         ESM4Named<ESM4::Armor>::registerSelf();
         ESM4Named<ESM4::Book>::registerSelf();
@@ -91,8 +92,6 @@ namespace MWClass
         ESM4Container::registerSelf();
         ESM4Door::registerSelf();
         ESM4Named<ESM4::Flora>::registerSelf();
-        // ESM4 furniture uses ESM4Named's normal activation override, which
-        // publishes the generic Fallout furniture occupancy state to actors.
         ESM4Named<ESM4::Furniture>::registerSelf();
         ESM4Named<ESM4::Ingredient>::registerSelf();
         ESM4Named<ESM4::ItemMod>::registerSelf();

@@ -45,11 +45,11 @@ namespace MWGui
         GM_LoadingWallpaper,
         GM_Jail,
 
-        GM_QuickKeysMenu,
-
-        // Fallout keeps its Pip-Boy in a distinct GUI mode.  The ordinary
-        // inventory mode remains available for the OpenMW inventory analogue.
-        GM_FalloutPipBoy
+        GM_QuickKeysMenu
+//## VR_PATCH BEGIN
+        , GM_RadialMenu,
+        GM_VrMetaMenu
+//## VR_PATCH END
     };
 
     // Windows shown in inventory mode

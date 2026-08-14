@@ -17,7 +17,6 @@
 #include <components/widgets/box.hpp>
 
 #include "../mwbase/environment.hpp"
-#include "../mwbase/inputmanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 
@@ -31,10 +30,16 @@
 
 #include "itemmodel.hpp"
 
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+//## VR_PATCH END
+
 namespace MWGui
 {
     ToolTips::ToolTips()
-        : Layout("openmw_tooltips.layout")
+//## VR_PATCH BEGIN
+        : Layout(VR::getVR() ? "openmw_tooltips_vr.layout" : "openmw_tooltips.layout")
+//## VR_PATCH END
         , mFocusToolTipX(0.0)
         , mFocusToolTipY(0.0)
         , mHorizontalScrollIndex(0)
@@ -53,6 +58,12 @@ namespace MWGui
         // even if the mouse is over the tooltip
         mDynamicToolTipBox->setNeedMouseFocus(false);
         mMainWidget->setNeedMouseFocus(false);
+
+//## VR_PATCH BEGIN
+        // Tooltip delay is not useful in vr as a player cannot be perfectly still.
+        if (!VR::getVR())
+            mRemainingDelay = 0;
+//## VR_PATCH END
 
         for (size_t i = 0; i < mMainWidget->getChildCount(); ++i)
         {
@@ -93,9 +104,6 @@ namespace MWGui
 
         MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
         bool guiMode = winMgr->isGuiMode();
-        if (!guiMode
-            && !MWBase::Environment::get().getInputManager()->getControlSwitch("playerrollover"))
-            return;
 
         if (guiMode)
         {
@@ -105,7 +113,7 @@ namespace MWGui
 
             if (winMgr->getWorldMouseOver()
                 && (winMgr->isConsoleMode() || (winMgr->getMode() == GM_Container)
-                    || (winMgr->getMode() == GM_Inventory) || (winMgr->getMode() == GM_FalloutPipBoy)))
+                    || (winMgr->getMode() == GM_Inventory)))
             {
                 if (mFocusObject.isEmpty())
                     return;
@@ -142,7 +150,14 @@ namespace MWGui
                 else
                 {
                     mHorizontalScrollIndex = 0;
-                    mRemainingDelay = Settings::gui().mTooltipDelay;
+                    
+//## VR_PATCH BEGIN
+                    if(VR::getVR())
+                        mRemainingDelay = 0;
+                    else
+                        mRemainingDelay = Settings::gui().mTooltipDelay;
+                    
+//## VR_PATCH END
                 }
                 mLastMouseX = mousePos.left;
                 mLastMouseY = mousePos.top;
@@ -200,8 +215,7 @@ namespace MWGui
                         = *focus->getUserData<std::pair<ItemModel::ModelIndex, ItemModel*>>();
                     mFocusObject = pair.second->getItem(pair.first).mBase;
                     bool isAllowedToUse = pair.second->allowedToUseItems();
-                    tooltipSize = getToolTipViaPtr(
-                        static_cast<int>(pair.second->getItem(pair.first).mCount), false, !isAllowedToUse);
+                    tooltipSize = getToolTipViaPtr(pair.second->getItem(pair.first).mCount, false, !isAllowedToUse);
                 }
                 else if (type == "ToolTipInfo")
                 {
@@ -232,8 +246,8 @@ namespace MWGui
                     {
                         Widgets::SpellEffectParams params;
                         params.mEffectID = spellEffect.mData.mEffectID;
-                        params.mSkill = spellEffect.mData.mSkill;
-                        params.mAttribute = spellEffect.mData.mAttribute;
+                        params.mSkill = ESM::Skill::indexToRefId(spellEffect.mData.mSkill);
+                        params.mAttribute = ESM::Attribute::indexToRefId(spellEffect.mData.mAttribute);
                         params.mDuration = spellEffect.mData.mDuration;
                         params.mMagnMin = spellEffect.mData.mMagnMin;
                         params.mMagnMax = spellEffect.mData.mMagnMax;
@@ -359,6 +373,17 @@ namespace MWGui
         mFocusObject = focus;
 
         update(mFrameDuration);
+//## VR_PATCH BEGIN
+// Make sure visibility is updated in VR
+        bool visible = false;
+        for (unsigned int i = 0; i < mMainWidget->getChildCount(); ++i)
+        {
+            visible |= mMainWidget->getChildAt(i)->getVisible();
+        }
+
+        if (visible != mMainWidget->getVisible())
+            setVisible(visible);
+//## VR_PATCH END
     }
 
     MyGUI::IntSize ToolTips::getToolTipViaPtr(int count, bool image, bool isOwned)
@@ -451,8 +476,8 @@ namespace MWGui
 
         const int maximumWidth = MyGUI::RenderManager::getInstance().getViewSize().width - imageCaptionHPadding * 2;
 
-        const VFS::Path::Normalized realImage = Misc::ResourceHelpers::correctIconPath(
-            VFS::Path::toNormalized(image), *MWBase::Environment::get().getResourceSystem()->getVFS());
+        const std::string realImage
+            = Misc::ResourceHelpers::correctIconPath(image, MWBase::Environment::get().getResourceSystem()->getVFS());
 
         Gui::EditBox* captionWidget = mDynamicToolTipBox->createWidget<Gui::EditBox>(
             "NormalText", MyGUI::IntCoord(0, 0, 300, 300), MyGUI::Align::Left | MyGUI::Align::Top, "ToolTipCaption");
@@ -891,8 +916,8 @@ namespace MWGui
 
         widget->setUserString("ToolTipType", "Layout");
         widget->setUserString("ToolTipLayout", "BirthSignToolTip");
-        widget->setUserString("ImageTexture_BirthSignImage",
-            Misc::ResourceHelpers::correctTexturePath(VFS::Path::toNormalized(sign->mTexture), *vfs));
+        widget->setUserString(
+            "ImageTexture_BirthSignImage", Misc::ResourceHelpers::correctTexturePath(sign->mTexture, vfs));
         widget->setUserString("Caption_BirthSignName", sign->mName);
         widget->setUserString("Caption_BirthSignDescription", sign->mDescription);
 
@@ -958,22 +983,25 @@ namespace MWGui
         widget->setUserString("ToolTipLayout", "ClassToolTip");
     }
 
-    void ToolTips::createMagicEffectToolTip(MyGUI::Widget* widget, ESM::RefId effectId)
+    void ToolTips::createMagicEffectToolTip(MyGUI::Widget* widget, short id)
     {
         const auto& store = MWBase::Environment::get().getESMStore();
-        const ESM::MagicEffect* effect = store->get<ESM::MagicEffect>().find(effectId);
+        const ESM::MagicEffect* effect = store->get<ESM::MagicEffect>().find(id);
+        const std::string& name = ESM::MagicEffect::indexToGmstString(id);
 
-        const VFS::Path::Normalized iconPath = Misc::ResourceHelpers::correctBigIconPath(
-            VFS::Path::toNormalized(effect->mIcon), *MWBase::Environment::get().getResourceSystem()->getVFS());
+        std::string icon = effect->mIcon;
+        int slashPos = icon.rfind('\\');
+        icon.insert(slashPos + 1, "b_");
+        icon = Misc::ResourceHelpers::correctIconPath(icon, MWBase::Environment::get().getResourceSystem()->getVFS());
 
         widget->setUserString("ToolTipType", "Layout");
         widget->setUserString("ToolTipLayout", "MagicEffectToolTip");
-        widget->setUserString("Caption_MagicEffectName", effect->mName);
+        widget->setUserString("Caption_MagicEffectName", "#{" + name + "}");
         widget->setUserString("Caption_MagicEffectDescription", effect->mDescription);
         widget->setUserString("Caption_MagicEffectSchool",
             "#{sSchool}: "
                 + MyGUI::TextIterator::toTagsString(
                     store->get<ESM::Skill>().find(effect->mData.mSchool)->mSchool->mName));
-        widget->setUserString("ImageTexture_MagicEffectImage", iconPath);
+        widget->setUserString("ImageTexture_MagicEffectImage", icon);
     }
 }

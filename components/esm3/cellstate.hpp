@@ -23,12 +23,6 @@ namespace ESM
 
         TimeStamp mLastRespawn;
 
-        // Runtime ownership is optional because an absent override must retain
-        // the owner authored in the content file, while a present empty owner
-        // deliberately makes the cell public.
-        bool mHasOwnerOverride = false;
-        RefId mOwner;
-
         void load(ESMReader& esm);
         void save(ESMWriter& esm) const;
     };

@@ -83,7 +83,6 @@ namespace MWGui
     class SettingsWindow;
     class HUD;
     class WindowBase;
-    class DragAndDrop;
 
     enum ShowInDialogueMode
     {
@@ -93,6 +92,10 @@ namespace MWGui
     };
 
     struct TextColours;
+
+//## VR_PATCH BEGIN
+    class DragAndDrop;
+//## VR_PATCH END
 }
 
 namespace SFO
@@ -116,19 +119,12 @@ namespace MWBase
 
         WindowManager() {}
 
-        virtual ~WindowManager() = default;
+        virtual ~WindowManager() {}
 
         /// @note This method will block until the video finishes playing
         /// (and will continually update the window while doing so)
         virtual void playVideo(std::string_view name, bool allowSkipping, bool overrideSounds = true) = 0;
         virtual void skipVideo() = 0;
-        virtual bool isPlayingVideo() const = 0;
-        virtual void update(float duration) = 0;
-        virtual MWGui::DragAndDrop& getDragAndDrop() = 0;
-        virtual void viewerTraversals() = 0;
-        virtual void enterVoid() = 0;
-        virtual bool isInVoid() = 0;
-        virtual void exitVoid() = 0;
 
         virtual void setNewGame(bool newgame) = 0;
 
@@ -153,17 +149,6 @@ namespace MWBase
         virtual bool isSettingsWindowVisible() const = 0;
         virtual bool isInteractiveMessageBoxActive() const = 0;
         virtual void closeInteractiveMessageBoxWithDefaultButton() = 0;
-
-        /// Opens the engine's standalone character-appearance menu for an
-        /// authored ShowRaceMenu command. Unlike the Morrowind startup flow,
-        /// completing this menu returns control to the script that requested
-        /// it instead of advancing into unrelated class/birthsign dialogs.
-        virtual void showAuthoredRaceMenu() = 0;
-
-        /// Opens the isolated name handoff used by Fallout-family
-        /// GetPlayerName commands. It deliberately does not enter
-        /// Morrowind's full character-generation sequence.
-        virtual void showAuthoredNameMenu() = 0;
 
         virtual void toggleVisible(MWGui::GuiWindow wnd) = 0;
 
@@ -244,6 +229,7 @@ namespace MWBase
 
         /// activate selected quick key
         virtual void activateQuickKey(int index) = 0;
+        /// assign a zero-based Fallout hotkey slot to an inventory item
         virtual bool setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item) = 0;
         /// update activated quick key state (if action executing was delayed for some reason)
         virtual void updateActivatedQuickKey() = 0;
@@ -260,13 +246,18 @@ namespace MWBase
         virtual void showCrosshair(bool show) = 0;
         virtual bool setHudVisibility(bool show) = 0;
         virtual bool isHudVisible() const = 0;
+        /// Suppress only the legacy ESM3 HUD surface without changing menus, tooltips, or message boxes.
         virtual void setLegacyHudSuppressed(bool suppress) = 0;
-
-        /// Temporarily suppress the gameplay overlay while authored presentation
-        /// (for example a cinematic or character generation) owns the screen.
-        /// This is an effective-visibility override; callers retain their normal
-        /// HUD/cursor preferences and they become visible again when it is lifted.
-        virtual void setGameplayOverlaySuppressed(bool suppressed) = 0;
+//## VR_PATCH BEGIN
+        virtual MWGui::DragAndDrop& getDragAndDrop(void) = 0;
+        virtual bool isPlayingVideo(void) const = 0;
+        virtual void update(float duration) = 0;
+        virtual void viewerTraversals() = 0;
+        // Disables the scene until exitVoid() is called
+        virtual void enterVoid() = 0;
+        virtual bool isInVoid() = 0;
+        virtual void exitVoid() = 0;
+//## VR_PATCH END
 
         virtual void disallowMouse() = 0;
         virtual void allowMouse() = 0;
@@ -350,7 +341,7 @@ namespace MWBase
 
         virtual void write(ESM::ESMWriter& writer, Loading::Listener& progress) = 0;
         virtual void readRecord(ESM::ESMReader& reader, uint32_t type) = 0;
-        virtual size_t countSavedGameRecords() const = 0;
+        virtual int countSavedGameRecords() const = 0;
 
         /// Does the current stack of GUI-windows permit saving?
         virtual bool isSavingAllowed() const = 0;
@@ -424,15 +415,13 @@ namespace MWBase
         /// Same as viewer->getCamera()->getCullMask(), provided for consistency.
         virtual uint32_t getCullMask() = 0;
 
-        virtual void inventoryUpdated(const MWWorld::Ptr& ptr) const = 0;
-
         /// Return the window that should receive controller events
         virtual MWGui::WindowBase* getActiveControllerWindow() = 0;
         /// Return the available height for menus accounting for visible controller overlays
         virtual int getControllerMenuHeight() = 0;
         /// Cycle to the next window to receive controller events
         virtual void cycleActiveControllerWindow(bool next) = 0;
-        virtual void setActiveControllerWindow(MWGui::GuiMode mode, size_t activeIndex) = 0;
+        virtual void setActiveControllerWindow(MWGui::GuiMode mode, int activeIndex) = 0;
         virtual bool getControllerTooltipVisible() const = 0;
         virtual void setControllerTooltipVisible(bool visible) = 0;
         virtual bool getControllerTooltipEnabled() const = 0;

@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 
 #include <components/misc/notnullptr.hpp>
 
@@ -48,8 +49,6 @@ namespace ESM
 
         // Similar to the constructor but only returns preexisting ids
         static std::optional<StringRefId> deserializeExisting(std::string_view value);
-
-        static std::size_t totalCount();
 
     private:
         Misc::NotNullPtr<const std::string> mValue;

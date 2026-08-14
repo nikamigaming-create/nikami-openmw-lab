@@ -175,6 +175,9 @@ namespace ESM4
         std::string mEditorId;
         std::string mFullName;
         std::string mModel;
+        // FO3/FNV WEAP.MOD4 is the camera-space weapon mesh used with the
+        // _1stperson skeleton.  It is distinct from MODL, which remains the
+        // third-person/world actor model.
         std::string mFirstPersonModel;
         std::string mText;
         std::string mIcon;
@@ -213,6 +216,9 @@ namespace ESM4
     // Parse the stable FO3/FNV WEAP.DNAM prefix. The first 16 bytes contain the animation selectors and the
     // 68-byte prefix contains the complete primary ballistic contract. Later games reuse DNAM incompatibly.
     [[nodiscard]] bool loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Data& data);
+
+    /// Parse the exact 16-byte FO3/FNV WEAP.CRDT critical-hit payload. Later games reuse weapon records
+    /// incompatibly, so callers must gate this helper by game/version before adjusting the returned effect FormID.
     [[nodiscard]] bool loadFalloutWeaponCrdt(
         std::span<const std::uint8_t> crdt, Weapon::CriticalData& data);
 }

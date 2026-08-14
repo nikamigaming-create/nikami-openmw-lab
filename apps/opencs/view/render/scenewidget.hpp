@@ -15,10 +15,12 @@
 
 #include <osgViewer/CompositeViewer>
 
+#include "lightingbright.hpp"
+#include "lightingday.hpp"
+#include "lightingnight.hpp"
+
 class QMouseEvent;
 class QWheelEvent;
-class QResizeEvent;
-class QShowEvent;
 
 class osgQOpenGLWidget;
 class CompositeOsgRenderer;
@@ -33,7 +35,6 @@ namespace osg
     class Group;
     class Camera;
     class Geometry;
-    class Light;
 }
 
 namespace osg
@@ -52,26 +53,19 @@ namespace CSMPrefs
     class Setting;
 }
 
-namespace SceneUtil
-{
-    class PerViewUniformStateUpdater;
-    class SharedUniformStateUpdater;
-    class StateUpdater;
-}
-
 namespace CSVRender
 {
     class CameraController;
     class FreeCameraController;
     class OrbitCameraController;
+    class Lighting;
 
     class RenderWidget : public QWidget
     {
         Q_OBJECT
 
     public:
-        RenderWidget(std::shared_ptr<Resource::ResourceSystem> resourceSystem, QWidget* parent = nullptr,
-            Qt::WindowFlags f = Qt::WindowFlags());
+        RenderWidget(QWidget* parent = nullptr, Qt::WindowFlags f = Qt::WindowFlags());
         virtual ~RenderWidget();
 
         /// Initiates a request to redraw the view
@@ -86,13 +80,6 @@ namespace CSVRender
         CompositeOsgRenderer* mRenderer;
         osg::ref_ptr<osgViewer::View> mView;
         osg::ref_ptr<osg::Group> mRootNode;
-        osg::ref_ptr<osg::Light> mSunLight;
-
-        std::shared_ptr<Resource::ResourceSystem> mResourceSystem;
-
-        osg::ref_ptr<SceneUtil::StateUpdater> mStateUpdater;
-        osg::ref_ptr<SceneUtil::SharedUniformStateUpdater> mSharedUniformStateUpdater;
-        osg::ref_ptr<SceneUtil::PerViewUniformStateUpdater> mPerViewUniformStateUpdater;
 
         void updateCameraParameters(double overrideAspect = -1.0);
 
@@ -125,21 +112,13 @@ namespace CSVRender
         }
 
     protected:
-        enum LightingMode
-        {
-            Bright,
-            Night,
-            Day
-        };
+        void setLighting(Lighting* lighting);
+        ///< \attention The ownership of \a lighting is not transferred to *this.
 
-        LightingMode mLightingMode = LightingMode::Day;
-
-        void setLighting(LightingMode mode);
+        void setAmbient(const osg::Vec4f& ambient);
 
         void mouseMoveEvent(QMouseEvent* event) override;
         void wheelEvent(QWheelEvent* event) override;
-        void resizeEvent(QResizeEvent* event) override;
-        void showEvent(QShowEvent* event) override;
 
         osg::ref_ptr<osg::Geometry> createGradientRectangle(QColor& bgColour, QColor& gradientColour);
         osg::ref_ptr<osg::Camera> createGradientCamera(QColor& bgColour, QColor& gradientColour);
@@ -147,11 +126,16 @@ namespace CSVRender
 
         std::shared_ptr<Resource::ResourceSystem> mResourceSystem;
 
+        Lighting* mLighting;
+
         osg::ref_ptr<osg::PositionAttitudeTransform> mSelectionMarkerNode;
         osg::ref_ptr<osg::Camera> mGradientCamera;
         osg::Vec4f mDefaultAmbient;
         bool mHasDefaultAmbient;
         bool mIsExterior;
+        LightingDay mLightingDay;
+        LightingNight mLightingNight;
+        LightingBright mLightingBright;
 
         QPointF mPrevMouse;
 

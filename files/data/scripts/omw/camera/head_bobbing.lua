@@ -12,19 +12,11 @@ local settings = storage.playerSection('SettingsOMWCameraHeadBobbing')
 
 local doubleStepLength, stepHeight, maxRoll
 
-local function settingOrDefault(key, default)
-    local value = settings:get(key)
-    if value == nil then return default end
-    return value
-end
-
 local function updateSettings()
-    -- Camera settings are registered by a companion settings script.  Use its
-    -- declared defaults until that script has populated persistent storage.
-    M.enabled = settingOrDefault('enabled', false)
-    doubleStepLength = settingOrDefault('step', 90) * 2
-    stepHeight = settingOrDefault('height', 3)
-    maxRoll = math.rad(settingOrDefault('roll', 0.2))
+    M.enabled = settings:get('enabled')
+    doubleStepLength = settings:get('step') * 2
+    stepHeight = settings:get('height')
+    maxRoll = math.rad(settings:get('roll'))
 end
 
 updateSettings()

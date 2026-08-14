@@ -2,7 +2,10 @@
 #include "serializerefid.hpp"
 
 #include <charconv>
+#include <iomanip>
+#include <mutex>
 #include <ostream>
+#include <sstream>
 #include <system_error>
 #include <unordered_set>
 
@@ -141,10 +144,5 @@ namespace ESM
         StringRefId id;
         id.mValue = &*it;
         return id;
-    }
-
-    std::size_t StringRefId::totalCount()
-    {
-        return getRefIds().lock()->size();
     }
 }

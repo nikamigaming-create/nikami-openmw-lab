@@ -187,28 +187,29 @@ namespace MWScript
         const Compiler::Locals& declarations = MWBase::Environment::get().getScriptManager()->getLocals(script);
 
         int index = 0, numshorts = 0, numlongs = 0;
-        for (const auto& [_, value] : locals.mVariables)
+        for (unsigned int v = 0; v < locals.mVariables.size(); ++v)
         {
-            ESM::VarType type = value.getType();
+            ESM::VarType type = locals.mVariables[v].second.getType();
             if (type == ESM::VT_Short)
                 ++numshorts;
             else if (type == ESM::VT_Int)
                 ++numlongs;
         }
 
-        for (const auto& [name, value] : locals.mVariables)
+        for (std::vector<std::pair<std::string, ESM::Variant>>::const_iterator iter = locals.mVariables.begin();
+             iter != locals.mVariables.end(); ++iter, ++index)
         {
-            if (name.empty())
+            if (iter->first.empty())
             {
                 // no variable names available (this will happen for legacy, i.e. ESS-imported savegames only)
                 try
                 {
                     if (index >= numshorts + numlongs)
-                        mFloats.at(index - (numshorts + numlongs)) = value.getFloat();
+                        mFloats.at(index - (numshorts + numlongs)) = iter->second.getFloat();
                     else if (index >= numshorts)
-                        mLongs.at(index - numshorts) = value.getInteger();
+                        mLongs.at(index - numshorts) = iter->second.getInteger();
                     else
-                        mShorts.at(index) = static_cast<Interpreter::Type_Short>(value.getInteger());
+                        mShorts.at(index) = iter->second.getInteger();
                 }
                 catch (std::exception& e)
                 {
@@ -219,8 +220,8 @@ namespace MWScript
             }
             else
             {
-                char type = declarations.getType(name);
-                int index2 = declarations.getIndex(name);
+                char type = declarations.getType(iter->first);
+                int index2 = declarations.getIndex(iter->first);
 
                 // silently ignore locals that don't exist anymore
                 if (type == ' ' || index2 == -1)
@@ -231,13 +232,13 @@ namespace MWScript
                     switch (type)
                     {
                         case 's':
-                            mShorts.at(index2) = static_cast<Interpreter::Type_Short>(value.getInteger());
+                            mShorts.at(index2) = iter->second.getInteger();
                             break;
                         case 'l':
-                            mLongs.at(index2) = value.getInteger();
+                            mLongs.at(index2) = iter->second.getInteger();
                             break;
                         case 'f':
-                            mFloats.at(index2) = value.getFloat();
+                            mFloats.at(index2) = iter->second.getFloat();
                             break;
                     }
                 }

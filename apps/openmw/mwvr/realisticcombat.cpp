@@ -129,7 +129,7 @@ namespace MWVR
 
         void StateMachine::update(float dt, bool enabled)
         {
-            // Use the local reference space for swing state management to avoid the player character
+            // Use the local reference space for swing state management to avoid the player character 
             // moving around the stage interfering with the calculated swing speed.
             auto tp = OpenXRInput::instance().getSpace(mSpace)->locate(VR::ReferenceSpace::Local);
             auto weaponType = MWBase::Environment::get().getWorld()->getActiveWeaponType();
@@ -340,7 +340,7 @@ namespace MWVR
             }
         }
 
-        void StateMachine::transition_swingingToImpact(MWWorld::Ptr victim, osg::Vec3f hitPosition, bool success)
+        void StateMachine::transition_swingingToImpact(MWWorld::Ptr victim, osg::Vec3f hitPosition, bool success) 
         {
             mPtr.getClass().hit(mPtr, mStrength, mSwingType, victim, hitPosition, success, true);
             transition(SwingState_Impact, false);

@@ -61,14 +61,6 @@ namespace ESM4
             float rotationY = 0.f;
             float rotationZ = 0.f;
             float bounciness = 0.f;
-            float coneSpread = 0.f;
-            float collisionRadius = 0.f;
-            float lifetime = 0.f;
-            float relaunchInterval = 0.f;
-            ESM::FormId decalData;
-            ESM::FormId collisionLayer;
-            std::uint8_t tracerFrequency = 0;
-            ESM::FormId vatsProjectile;
             bool present = false;
         };
 
@@ -86,8 +78,6 @@ namespace ESM4
     };
 
     [[nodiscard]] bool loadFalloutProjectileData(std::span<const std::uint8_t> bytes, Projectile::Data& data);
-    [[nodiscard]] bool loadSkyrimProjectileData(std::span<const std::uint8_t> bytes, Projectile::Data& data);
-    [[nodiscard]] bool loadFallout4ProjectileData(std::span<const std::uint8_t> bytes, Projectile::Data& data);
 }
 
 #endif

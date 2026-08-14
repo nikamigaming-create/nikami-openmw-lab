@@ -31,12 +31,17 @@
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/player.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/npcstats.hpp"
 
 #include "tooltips.hpp"
+
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+//## VR_PATCH END
 
 namespace MWGui
 {
@@ -88,10 +93,66 @@ namespace MWGui
                 return {};
             return attribute.mName;
         }
+
+        std::optional<std::size_t> falloutSpecialIndex(ESM::RefId id)
+        {
+            if (id == ESM::Attribute::Strength)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Strength);
+            if (id == ESM::Attribute::Willpower)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Perception);
+            if (id == ESM::Attribute::Endurance)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Endurance);
+            if (id == ESM::Attribute::Personality)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Charisma);
+            if (id == ESM::Attribute::Intelligence)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Intelligence);
+            if (id == ESM::Attribute::Agility)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Agility);
+            if (id == ESM::Attribute::Luck)
+                return static_cast<std::size_t>(MWWorld::FalloutSpecial::Luck);
+            return std::nullopt;
+        }
+
+        std::optional<std::array<float, 21>> readFalloutActorValues()
+        {
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return std::nullopt;
+
+            const MWWorld::FalloutPlayerRuntimeState& state = world->getFalloutPlayerRuntimeState();
+            if (!state.isInitialized())
+                return std::nullopt;
+
+            std::array<float, 21> result{};
+            for (std::size_t index = 0; index < MWWorld::FalloutPlayerState::SpecialCount; ++index)
+            {
+                const auto value = state.getCurrentActorValue(
+                    MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin + static_cast<std::uint32_t>(index));
+                if (!value)
+                    return std::nullopt;
+                result[index] = value->mValue;
+            }
+            for (std::size_t index = 0; index < MWWorld::FalloutPlayerState::SkillCount; ++index)
+            {
+                const auto value = state.getCurrentActorValue(
+                    MWWorld::FalloutPlayerRuntimeState::SkillActorValueBegin + static_cast<std::uint32_t>(index));
+                if (!value)
+                    return std::nullopt;
+                result[MWWorld::FalloutPlayerState::SpecialCount + index] = value->mValue;
+            }
+            return result;
+        }
+
+        int falloutDisplayValue(float value)
+        {
+            return static_cast<int>(value);
+        }
     }
 
     StatsWindow::StatsWindow(DragAndDrop* drag)
-        : WindowPinnableBase("openmw_stats_window.layout")
+//## VR_PATCH BEGIN
+        : WindowPinnableBase(VR::getVR() ? "openmw_stats_window_vr.layout" : "openmw_stats_window.layout")
+//## VR_PATCH END
         , NoDrop(drag, mMainWidget)
         , mSkillView(nullptr)
         , mReputation(0)
@@ -152,7 +213,11 @@ namespace MWGui
         }
 
         if (falloutContent)
+        {
+            Log(Debug::Info) << "FNV/ESM4 UI init: stats Fallout refresh begin";
+            refreshFalloutActorValues();
             Log(Debug::Info) << "FNV/ESM4 proof: stats panel labels loaded HP/AP/WG";
+        }
 
         onWindowResize(t);
     }
@@ -170,11 +235,6 @@ namespace MWGui
     {
         int windowWidth = window->getSize().width;
         int windowHeight = window->getSize().height;
-        const bool pipBoyMode = isFalloutStatsContent()
-            && MWBase::Environment::get().getWindowManager()->getMode() == MWGui::GM_FalloutPipBoy;
-        const int chromeTop = pipBoyMode ? std::max(58, windowHeight * 10 / 100) : 0;
-        const int chromeBottom = pipBoyMode ? std::max(52, windowHeight * 9 / 100) : 0;
-        const int contentHeight = std::max(1, windowHeight - chromeTop - chromeBottom);
 
         // initial values defined in openmw_stats_window.layout, if custom options are not present in .layout, a default
         // is loaded
@@ -194,21 +254,20 @@ namespace MWGui
         mRightPane->setVisible(windowWidth >= minLeftOffsetWidth);
         if (!mRightPane->getVisible())
         {
-            mLeftPane->setCoord(MyGUI::IntCoord(0, chromeTop, windowWidth - leftOffsetWidth, contentHeight));
+            mLeftPane->setCoord(MyGUI::IntCoord(0, 0, windowWidth - leftOffsetWidth, windowHeight));
         }
         // if there's some space for right pane
         else if (windowWidth < mMinFullWidth)
         {
-            mLeftPane->setCoord(MyGUI::IntCoord(0, chromeTop, minLeftWidth, contentHeight));
-            mRightPane->setCoord(MyGUI::IntCoord(minLeftWidth, chromeTop, windowWidth - minLeftWidth, contentHeight));
+            mLeftPane->setCoord(MyGUI::IntCoord(0, 0, minLeftWidth, windowHeight));
+            mRightPane->setCoord(MyGUI::IntCoord(minLeftWidth, 0, windowWidth - minLeftWidth, windowHeight));
         }
         // if there's enough space for both panes
         else
         {
-            mLeftPane->setCoord(
-                MyGUI::IntCoord(0, chromeTop, static_cast<int>(leftPaneRatio * windowWidth), contentHeight));
-            mRightPane->setCoord(MyGUI::IntCoord(static_cast<int>(leftPaneRatio * windowWidth), chromeTop,
-                static_cast<int>(rightPaneRatio * windowWidth), contentHeight));
+            mLeftPane->setCoord(MyGUI::IntCoord(0, 0, static_cast<int>(leftPaneRatio * windowWidth), windowHeight));
+            mRightPane->setCoord(MyGUI::IntCoord(static_cast<int>(leftPaneRatio * windowWidth), 0,
+                static_cast<int>(rightPaneRatio * windowWidth), windowHeight));
         }
 
         // Canvas size must be expressed with VScroll disabled, otherwise MyGUI would expand the scroll area when the
@@ -238,6 +297,20 @@ namespace MWGui
 
     void StatsWindow::setAttribute(ESM::RefId id, const MWMechanics::AttributeValue& value)
     {
+        if (isFalloutStatsContent())
+        {
+            refreshFalloutActorValues();
+            const std::optional<std::size_t> index = falloutSpecialIndex(id);
+            const auto widget = mAttributeWidgets.find(id);
+            if (index && mFalloutActorValues && widget != mAttributeWidgets.end())
+            {
+                widget->second->setCaption(std::to_string(falloutDisplayValue((*mFalloutActorValues)[*index])));
+                widget->second->_setWidgetState("normal");
+            }
+            mChanged = true;
+            return;
+        }
+
         auto it = mAttributeWidgets.find(id);
         if (it != mAttributeWidgets.end())
         {
@@ -250,9 +323,28 @@ namespace MWGui
             else
                 box->_setWidgetState("normal");
         }
+    }
 
-        if (isFalloutStatsContent())
-            mChanged = true;
+    bool StatsWindow::refreshFalloutActorValues()
+    {
+        const std::optional<std::array<float, 21>> values = readFalloutActorValues();
+        if (values == mFalloutActorValues)
+            return false;
+
+        mFalloutActorValues = values;
+        if (mFalloutActorValues)
+        {
+            for (const auto& [id, widget] : mAttributeWidgets)
+            {
+                const std::optional<std::size_t> index = falloutSpecialIndex(id);
+                if (!index)
+                    continue;
+                widget->setCaption(std::to_string(falloutDisplayValue((*mFalloutActorValues)[*index])));
+                widget->_setWidgetState("normal");
+            }
+        }
+        mChanged = true;
+        return true;
     }
 
     void StatsWindow::setValue(std::string_view id, const MWMechanics::DynamicStat<float>& value)
@@ -332,8 +424,8 @@ namespace MWGui
         MyGUI::TextBox* nameWidget = widgets.first;
         if (valueWidget && nameWidget)
         {
-            float modified = value.getModified(), base = value.getBase();
-            std::string text = MyGUI::utility::toString(static_cast<int>(modified));
+            int modified = value.getModified(), base = value.getBase();
+            std::string text = MyGUI::utility::toString(modified);
             std::string state = "normal";
             if (modified > base)
                 state = "increased";
@@ -415,8 +507,8 @@ namespace MWGui
         bool first = true;
         for (const auto& attribute : store->get<ESM::Attribute>())
         {
-            int mult = playerStats.getLevelupAttributeMultiplier(attribute.mId);
-            mult = std::min(mult, static_cast<int>(100 - playerStats.getAttribute(attribute.mId).getBase()));
+            float mult = playerStats.getLevelupAttributeMultiplier(attribute.mId);
+            mult = std::min(mult, 100 - playerStats.getAttribute(attribute.mId).getBase());
             if (mult > 1)
             {
                 if (!first)
@@ -450,6 +542,9 @@ namespace MWGui
         setBirthSign(signId);
         setReputation(playerStats.getReputation());
         setBounty(playerStats.getBounty());
+
+        if (isFalloutStatsContent())
+            refreshFalloutActorValues();
 
         if (mChanged)
             updateSkillArea();
@@ -812,70 +907,51 @@ namespace MWGui
         MyGUI::IntCoord coord1(10, 0, mSkillView->getWidth() - (10 + valueSize) - 24, 18);
         MyGUI::IntCoord coord2(coord1.left + coord1.width, coord1.top, valueSize, coord1.height);
 
-        const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
-        MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
-        const MWMechanics::NpcStats& npcStats = player.getClass().getNpcStats(player);
-        const auto findAttributeValue = [&](ESM::RefId id, int fallback) {
-            try
-            {
-                const int value = static_cast<int>(npcStats.getAttribute(id).getModified());
-                if (value > 10)
-                    return std::clamp((value + 5) / 10, 1, 10);
-                return value;
-            }
-            catch (const std::exception&)
-            {
-                return fallback;
-            }
-        };
-        const auto findSkillValue = [&](std::string_view sourceName, int fallback) {
-            const std::string wanted(sourceName);
-            for (const ESM::Skill& skill : esmStore.get<ESM::Skill>())
-            {
-                if (lowerAscii(skill.mName) != wanted)
-                    continue;
-                const auto found = mSkillValues.find(skill.mId);
-                if (found != mSkillValues.end())
-                    return static_cast<int>(found->second.getModified());
-            }
-            return fallback;
-        };
+        refreshFalloutActorValues();
+        if (!mFalloutActorValues)
+            return false;
 
         addGroup("S.P.E.C.I.A.L.", coord1, coord2);
-        addValueItem("Strength", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Strength, 6)), "normal",
-            coord1, coord2);
-        addValueItem("Perception", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Willpower, 5)),
-            "normal", coord1, coord2);
-        addValueItem("Endurance", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Endurance, 6)),
-            "normal", coord1, coord2);
-        addValueItem("Charisma", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Personality, 5)),
-            "normal", coord1, coord2);
-        addValueItem("Intelligence", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Intelligence, 6)),
-            "normal", coord1, coord2);
-        addValueItem("Agility", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Agility, 6)), "normal",
-            coord1, coord2);
-        addValueItem("Luck", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Luck, 6)), "normal", coord1,
-            coord2);
+        const std::array<std::pair<std::string_view, MWWorld::FalloutSpecial>, 7> special{ {
+            { "Strength", MWWorld::FalloutSpecial::Strength },
+            { "Perception", MWWorld::FalloutSpecial::Perception },
+            { "Endurance", MWWorld::FalloutSpecial::Endurance },
+            { "Charisma", MWWorld::FalloutSpecial::Charisma },
+            { "Intelligence", MWWorld::FalloutSpecial::Intelligence },
+            { "Agility", MWWorld::FalloutSpecial::Agility },
+            { "Luck", MWWorld::FalloutSpecial::Luck },
+        } };
+        for (const auto& [label, value] : special)
+        {
+            const std::size_t index = static_cast<std::size_t>(value);
+            addValueItem(label, MyGUI::utility::toString(falloutDisplayValue((*mFalloutActorValues)[index])),
+                "normal", coord1, coord2);
+        }
 
         addSeparator(coord1, coord2);
         addGroup("SKILLS", coord1, coord2);
-        const std::array<std::pair<std::string_view, std::string_view>, 13> falloutSkills{ {
-            { "Barter", "mercantile" },
-            { "Energy Weapons", "destruction" },
-            { "Explosives", "conjuration" },
-            { "Guns", "marksman" },
-            { "Lockpick", "security" },
-            { "Medicine", "restoration" },
-            { "Melee Weapons", "longblade" },
-            { "Repair", "armorer" },
-            { "Science", "mysticism" },
-            { "Sneak", "sneak" },
-            { "Speech", "speechcraft" },
-            { "Survival", "unarmored" },
-            { "Unarmed", "handtohand" },
+        const std::array<std::pair<std::string_view, MWWorld::FalloutSkill>, 13> falloutSkills{ {
+            { "Barter", MWWorld::FalloutSkill::Barter },
+            { "Energy Weapons", MWWorld::FalloutSkill::EnergyWeapons },
+            { "Explosives", MWWorld::FalloutSkill::Explosives },
+            { "Guns", MWWorld::FalloutSkill::SmallGuns },
+            { "Lockpick", MWWorld::FalloutSkill::Lockpick },
+            { "Medicine", MWWorld::FalloutSkill::Medicine },
+            { "Melee Weapons", MWWorld::FalloutSkill::MeleeWeapons },
+            { "Repair", MWWorld::FalloutSkill::Repair },
+            { "Science", MWWorld::FalloutSkill::Science },
+            { "Sneak", MWWorld::FalloutSkill::Sneak },
+            { "Speech", MWWorld::FalloutSkill::Speech },
+            { "Survival", MWWorld::FalloutSkill::SurvivalOrThrowing },
+            { "Unarmed", MWWorld::FalloutSkill::Unarmed },
         } };
-        for (const auto& [label, sourceName] : falloutSkills)
-            addValueItem(label, MyGUI::utility::toString(findSkillValue(sourceName, 35)), "normal", coord1, coord2);
+        for (const auto& [label, value] : falloutSkills)
+        {
+            const std::size_t index
+                = MWWorld::FalloutPlayerState::SpecialCount + static_cast<std::size_t>(value);
+            addValueItem(label, MyGUI::utility::toString(falloutDisplayValue((*mFalloutActorValues)[index])),
+                "normal", coord1, coord2);
+        }
 
         addSeparator(coord1, coord2);
         addGroup("REPUTATION", coord1, coord2);
@@ -929,7 +1005,7 @@ namespace MWGui
     void StatsWindow::setActiveControllerWindow(bool active)
     {
         MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
-        if (winMgr->getMode() == MWGui::GM_Inventory || winMgr->getMode() == MWGui::GM_FalloutPipBoy)
+        if (winMgr->getMode() == MWGui::GM_Inventory)
         {
             // Fill the screen, or limit to a certain size on large screens. Size chosen to
             // show all stats.

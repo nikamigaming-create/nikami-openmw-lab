@@ -124,7 +124,7 @@ namespace MWClass
         const ESM4::Activator& activator = *ptr.get<ESM4::Activator>()->mBase;
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
         if (store != nullptr && store->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas
-            && MWWorld::getFnvCraftingStationCategory(activator))
+            && MWWorld::getFnvCraftingStationCategory(*store, activator))
         {
             MWWorld::FnvCraftingPreparationError error = MWWorld::FnvCraftingPreparationError::None;
             std::optional<MWWorld::PreparedFnvCraftingCatalog> catalog

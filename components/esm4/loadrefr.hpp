@@ -122,10 +122,6 @@ namespace ESM4
         std::uint8_t mMapMarkerFlags = 0;
         std::uint8_t mMapMarkerType = Map_None;
 
-        // ONAM is a zero-sized subrecord on a placed door.  It declares that
-        // the reference starts open, independently of the base DOOR record.
-        bool mOpenByDefault = false;
-
         EnableParent mEsp;
 
         std::int32_t mCount = 1; // only if > 1

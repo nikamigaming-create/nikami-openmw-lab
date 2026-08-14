@@ -18,11 +18,13 @@ namespace Wizard
         bool validatePage() override;
 
     private slots:
-        void browseButtonClicked();
+        void on_browseButton_clicked();
         void textChanged(const QString& text);
 
     private:
         MainWizard* mWizard;
+
+        bool versionIsOK(QString directoryName);
 
     protected:
         void initializePage() override;

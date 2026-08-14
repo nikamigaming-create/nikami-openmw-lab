@@ -4,7 +4,6 @@
 #if defined(__ANDROID__)
 
 #include <filesystem>
-#include <vector>
 /**
  * \namespace Files
  */
@@ -44,7 +43,7 @@ namespace Files
          */
         std::filesystem::path getCachePath() const;
 
-        std::vector<std::filesystem::path> getInstallPaths() const;
+        std::filesystem::path getInstallPath() const;
     };
 
 } /* namespace Files */

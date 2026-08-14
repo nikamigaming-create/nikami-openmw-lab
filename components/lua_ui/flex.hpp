@@ -1,8 +1,6 @@
 #ifndef OPENMW_LUAUI_FLEX
 #define OPENMW_LUAUI_FLEX
 
-#include <vector>
-
 #include "alignment.hpp"
 #include "widget.hpp"
 
@@ -19,8 +17,6 @@ namespace LuaUi
         MyGUI::IntSize childScalingSize() const override;
 
         void updateCoord() override;
-
-        const std::vector<std::string_view>& allUsedProperties() const override;
 
     private:
         bool mHorizontal;

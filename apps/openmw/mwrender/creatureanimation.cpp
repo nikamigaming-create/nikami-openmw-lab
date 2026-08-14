@@ -9,7 +9,6 @@
 #include <osg/CullFace>
 #include <osg/Depth>
 #include <osg/FrameStamp>
-#include <osg/Geode>
 #include <osg/GLExtensions>
 #include <osg/Geometry>
 #include <osg/LOD>
@@ -343,23 +342,14 @@ namespace MWRender
         class ForceFalloutCreatureBodyVisibleVisitor : public osg::NodeVisitor
         {
         public:
-            ForceFalloutCreatureBodyVisibleVisitor()
+            explicit ForceFalloutCreatureBodyVisibleVisitor(SceneUtil::Skeleton* skeleton)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mSkeleton(skeleton)
             {
             }
 
             void apply(osg::Node& node) override
             {
-                node.setNodeMask(~0u);
-                traverse(node);
-            }
-
-            void apply(osg::Geode& node) override
-            {
-                // NodeVisitor's default Geode overload reaches drawables but
-                // does not dispatch through apply(Node).  Restore the Geode
-                // mask explicitly so the enabled FNV RigGeometry children are
-                // not still hidden by their immediate parent.
                 node.setNodeMask(~0u);
                 traverse(node);
             }
@@ -389,8 +379,26 @@ namespace MWRender
                     if (node != nullptr)
                         node->setNodeMask(~0u);
                 }
+
+                // RigGeometry is reparented under the live actor skeleton during
+                // attachment. The traversal path above can still describe the
+                // detached body clone, so restore the masks on the drawable's
+                // actual skeleton path as well. This is the exact failure seen
+                // on Victor: all 13 rigs were anchored correctly but every live
+                // parental path remained masked off.
+                for (const osg::NodePath& path : drawable.getParentalNodePaths())
+                {
+                    bool insideSkeleton = false;
+                    for (osg::Node* node : path)
+                    {
+                        insideSkeleton = insideSkeleton || node == mSkeleton;
+                        if (insideSkeleton && node != nullptr)
+                            node->setNodeMask(~0u);
+                    }
+                }
             }
 
+            SceneUtil::Skeleton* mSkeleton;
             unsigned int mRigGeometryCount = 0;
             unsigned int mStaticGeometryCount = 0;
             unsigned int mOtherDrawableCount = 0;
@@ -399,8 +407,9 @@ namespace MWRender
         class CreatureRigTopologyVisitor : public osg::NodeVisitor
         {
         public:
-            explicit CreatureRigTopologyVisitor(const SceneUtil::Skeleton* expectedSkeleton)
+            CreatureRigTopologyVisitor(const osg::Node* auditRoot, const SceneUtil::Skeleton* expectedSkeleton)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mAuditRoot(auditRoot)
                 , mExpectedSkeleton(expectedSkeleton)
             {
             }
@@ -417,9 +426,13 @@ namespace MWRender
                 for (const osg::NodePath& path : paths)
                 {
                     unsigned int effectiveMask = drawable.getNodeMask();
+                    bool insideAuditRoot = false;
                     for (const osg::Node* node : path)
-                        if (node != nullptr)
+                    {
+                        insideAuditRoot = insideAuditRoot || node == mAuditRoot;
+                        if (insideAuditRoot && node != nullptr)
                             effectiveMask &= node->getNodeMask();
+                    }
                     hasVisiblePath = hasVisiblePath || effectiveMask != 0;
                 }
                 if (hasVisiblePath)
@@ -444,6 +457,7 @@ namespace MWRender
                     ++mVisibleRigGeometryCount;
             }
 
+            const osg::Node* mAuditRoot;
             const SceneUtil::Skeleton* mExpectedSkeleton;
             unsigned int mDrawableCount = 0;
             unsigned int mParentedDrawableCount = 0;
@@ -461,7 +475,11 @@ namespace MWRender
             if (bodyNode == nullptr)
                 return;
 
-            CreatureRigTopologyVisitor visitor(skeleton);
+            // Audit the creature body subtree itself. The actor owner can be
+            // temporarily hidden while its render object is assembled (and corpse
+            // pose wrappers intentionally do this), which is not evidence that the
+            // body's authored drawable masks or rig topology failed.
+            CreatureRigTopologyVisitor visitor(bodyNode, skeleton);
             bodyNode->accept(visitor);
             const bool drawableGate = visitor.mDrawableCount != 0
                 && visitor.mParentedDrawableCount == visitor.mDrawableCount
@@ -488,34 +506,13 @@ namespace MWRender
                 << " status=" << (passed ? "passed" : "failed");
         }
 
-        void forceFalloutCreatureBodyVisible(
-            osg::Node* bodyNode, const std::string& editorId, const VFS::Path::Normalized& bodyPath)
+        void forceFalloutCreatureBodyVisible(osg::Node* bodyNode, SceneUtil::Skeleton* skeleton,
+            const std::string& editorId, const VFS::Path::Normalized& bodyPath)
         {
             if (bodyNode == nullptr)
                 return;
 
-            // The source NIF can be attached below an ESM4 actor wrapper that
-            // keeps the old hidden mask.  Restoring only the body subtree is
-            // insufficient: every ancestor in a drawable's parental path
-            // participates in the effective render mask.  Restore the body
-            // and its actual attachment path, including all parents in case
-            // the scene graph is shared.
-            std::set<osg::Node*> restoredAncestors;
-            std::vector<osg::Node*> pending{ bodyNode };
-            while (!pending.empty())
-            {
-                osg::Node* node = pending.back();
-                pending.pop_back();
-                if (node == nullptr || !restoredAncestors.insert(node).second)
-                    continue;
-
-                node->setNodeMask(~0u);
-                node->setCullingActive(false);
-                for (unsigned int index = 0; index < node->getNumParents(); ++index)
-                    pending.push_back(node->getParent(index));
-            }
-
-            ForceFalloutCreatureBodyVisibleVisitor visitor;
+            ForceFalloutCreatureBodyVisibleVisitor visitor(skeleton);
             bodyNode->accept(visitor);
             Log(Debug::Verbose) << "FNV/ESM4 diag: forced creature body render mask for " << editorId
                              << " path=" << bodyPath
@@ -1108,9 +1105,9 @@ namespace MWRender
                     const osg::Camera* camera = renderInfo.getCurrentCamera();
                     const osg::Viewport* viewport = state == nullptr ? nullptr : state->getCurrentViewport();
                     const osg::Matrixd modelView
-                        = state == nullptr ? osg::Matrixd::identity() : state->getModelViewMatrix();
+                        = state == nullptr ? osg::Matrixd::identity() : osg::Matrixd(state->getModelViewMatrix());
                     const osg::Matrixd projection
-                        = state == nullptr ? osg::Matrixd::identity() : state->getProjectionMatrix();
+                        = state == nullptr ? osg::Matrixd::identity() : osg::Matrixd(state->getProjectionMatrix());
                     const osg::Matrixd modelViewProjection = modelView * projection;
 
                     FalloutCreatureScreenVertexAudit vertexAudit;
@@ -1760,7 +1757,7 @@ void main()
                     }
                     const bool requireVisible = shouldForceFalloutCreatureAddonVisible(bodyPath, nifPrn);
                     if (requireVisible)
-                        forceFalloutCreatureBodyVisible(bodyNode, ref->mBase->mEditorId, bodyPath);
+                        forceFalloutCreatureBodyVisible(bodyNode, mSkeleton, ref->mBase->mEditorId, bodyPath);
                     auditCreatureRigTopology(
                         bodyNode, mSkeleton, mObjectRoot, ref->mBase->mEditorId, bodyPath, requireVisible);
                     if (std::getenv("OPENMW_FNV_CREATURE_BODY_DIAG") != nullptr)
@@ -1853,41 +1850,6 @@ void main()
                                             << FonvCreatureHitReactionSemanticGroup
                                             << " source=<none> status=unavailable";
                     }
-
-                    static constexpr std::string_view fallbackNames[] = {
-                        "skeleton.kf",
-                        "idle.kf",
-                        "forward.kf",
-                        "backward.kf",
-                        "left.kf",
-                        "right.kf",
-                        "walkforward.kf",
-                        "runforward.kf",
-                        "attackleft.kf",
-                        "attackright.kf",
-                        "attack1.kf",
-                    };
-                    for (std::string_view fallback : fallbackNames)
-                    {
-                        std::string path = animationDirectory + std::string(fallback);
-                        std::string normalizedPath;
-                        if (findCreatureKf(*vfs, path, normalizedPath))
-                        {
-                            addAnimSource(normalizedPath, model);
-                            ++fallbackKfs;
-                        }
-                    }
-
-                    std::string normalizedDirectory = animationDirectory;
-                    VFS::Path::normalizeFilenameInPlace(normalizedDirectory);
-                    std::string probeToken = normalizedDirectory;
-                    if (probeToken.ends_with('/'))
-                        probeToken.pop_back();
-                    const std::vector<std::string> discoveredKfPaths
-                        = collectDiscoveredCreatureKfs(*vfs, normalizedDirectory, probeToken, effective.mEditorId);
-                    discoveredKfs = static_cast<unsigned int>(discoveredKfPaths.size());
-                    for (const std::string& path : discoveredKfPaths)
-                        addAnimSource(path, model);
                 }
                 else
                     Log(Debug::Warning) << "FNV/ESM4 diag: skipped marker-creature animation binding for "

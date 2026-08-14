@@ -159,8 +159,13 @@ namespace MWWorld
         const std::vector<PreparedFnvCraftingCatalogEntry>& getEntries() const { return mEntries; }
     };
 
-    /// Return a category only for the two audited FNV base/script pairs.
+    /// Return a category only for the two frozen FNV base/script pairs.
     [[nodiscard]] std::optional<ESM::FormId> getFnvCraftingStationCategory(const ESM4::Activator& station);
+
+    /// Additionally resolve the strict canonical player.showrecipemenu wrapper from the station's authored SCPT.
+    /// Scripts with extra gameplay gates or ambiguous/missing RCCT editor IDs remain unsupported.
+    [[nodiscard]] std::optional<ESM::FormId> getFnvCraftingStationCategory(
+        const ESMStore& store, const ESM4::Activator& station);
 
     /// Freeze the complete live recipe catalog before opening UI. This does
     /// not inspect inventory, construct outputs, or create a mutation plan.

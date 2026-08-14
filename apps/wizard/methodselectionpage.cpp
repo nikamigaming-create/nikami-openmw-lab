@@ -20,6 +20,7 @@ Wizard::MethodSelectionPage::MethodSelectionPage(QWidget* parent)
 #ifndef OPENMW_USE_UNSHIELD
     retailDiscRadioButton->setEnabled(false);
     existingLocationRadioButton->setChecked(true);
+    buyLinkButton->released();
 #endif
 
     QFont font = existingLocationRadioButton->font();
@@ -27,17 +28,21 @@ Wizard::MethodSelectionPage::MethodSelectionPage(QWidget* parent)
     existingLocationRadioButton->setFont(font);
     retailDiscRadioButton->setFont(font);
 
-    registerField(QStringLiteral("installation.retailDisc"), retailDiscRadioButton);
+    registerField(QLatin1String("installation.retailDisc"), retailDiscRadioButton);
 
     connect(buyLinkButton, &QPushButton::released, this, &MethodSelectionPage::handleBuyButton);
 }
 
 int Wizard::MethodSelectionPage::nextId() const
 {
-    if (field(QStringLiteral("installation.retailDisc")).toBool())
+    if (field(QLatin1String("installation.retailDisc")).toBool() == true)
+    {
         return MainWizard::Page_InstallationTarget;
-
-    return MainWizard::Page_ExistingInstallation;
+    }
+    else
+    {
+        return MainWizard::Page_ExistingInstallation;
+    }
 }
 
 void Wizard::MethodSelectionPage::handleBuyButton()

@@ -73,6 +73,15 @@ namespace MWRender
         mFogColor = color;
     }
 
+    void FogManager::configureExplicit(float fogNear, float fogFar, float underwaterFog, const osg::Vec4f& color)
+    {
+        mLandFogStart = std::max(0.f, fogNear);
+        mLandFogEnd = std::max(mLandFogStart, fogFar);
+        mUnderwaterFogStart = std::min(mLandFogEnd, 7168.f) * (1 - underwaterFog);
+        mUnderwaterFogEnd = std::min(mLandFogEnd, 7168.f);
+        mFogColor = color;
+    }
+
     float FogManager::getFogStart(bool isUnderwater) const
     {
         return isUnderwater ? mUnderwaterFogStart : mLandFogStart;

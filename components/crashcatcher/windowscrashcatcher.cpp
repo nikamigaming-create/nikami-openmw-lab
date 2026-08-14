@@ -185,7 +185,7 @@ namespace Crash
         {
             executablePath.resize(executablePath.size() + MAX_PATH);
             copied = GetModuleFileNameW(nullptr, executablePath.data(), static_cast<DWORD>(executablePath.size()));
-        } while (GetLastError() == ERROR_INSUFFICIENT_BUFFER);
+        } while (copied >= executablePath.size());
         executablePath.resize(copied);
 
         writePathToShm(mShm->mStartup.mDumpDirectoryPath, dumpPath);

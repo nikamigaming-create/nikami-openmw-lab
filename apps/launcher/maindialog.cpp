@@ -121,7 +121,7 @@ void Launcher::MainDialog::createPages()
     mDataFilesPage = new DataFilesPage(mCfgMgr, mGameSettings, mLauncherSettings, this);
     mGraphicsPage = new GraphicsPage(this);
     mImportPage = new ImportPage(mCfgMgr, mGameSettings, mLauncherSettings, this);
-    mSettingsPage = new SettingsPage(mCfgMgr, mGameSettings, this);
+    mSettingsPage = new SettingsPage(mGameSettings, this);
 
     // Add the pages to the stacked widget
     pagesWidget->addWidget(mDataFilesPage);
@@ -592,13 +592,17 @@ void Launcher::MainDialog::play()
         return;
     }
 
-    // Launch the game detached
-
-    if (mGameInvoker->startProcess(QLatin1String("openmw"), true))
+    // Launch the executable included by the selected build variant.
+#ifdef OPENMW_LAUNCHER_VR
+    constexpr auto executable = "openmw_vr";
+#else
+    constexpr auto executable = "openmw";
+#endif
+    if (mGameInvoker->startProcess(QLatin1String(executable), true))
         return qApp->quit();
 }
 
 void Launcher::MainDialog::help()
 {
-    Misc::HelpViewer::openHelp({});
+    Misc::HelpViewer::openHelp("reference/index.html");
 }

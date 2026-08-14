@@ -59,7 +59,7 @@ namespace Terrain
         class ChunkManager
         {
         public:
-            virtual ~ChunkManager() = default;
+            virtual ~ChunkManager() {}
             ChunkManager() = default;
             ChunkManager(ESM::RefId worldspace)
                 : ChunkManager()

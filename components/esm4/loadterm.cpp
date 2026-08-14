@@ -77,25 +77,6 @@ namespace
         return version == ESM::VER_132 || version == ESM::VER_133 || version == ESM::VER_134;
     }
 
-    bool isTtwCapitalWastelandMaster(const ESM4::Reader& reader)
-    {
-        // TTW's converted Capital Wasteland masters use New Vegas-era header
-        // versions, but their TERM records retain Fallout 3's broader layout
-        // (for example, a 312-byte MODT).  Dispatch those records to the
-        // established permissive Fallout 3 reader rather than treating them
-        // as malformed native FNV terminals.
-        const std::string fileName = reader.getFileName().filename().string();
-        static constexpr std::array<std::string_view, 6> masters = {
-            "Fallout3.esm",
-            "Anchorage.esm",
-            "ThePitt.esm",
-            "BrokenSteel.esm",
-            "PointLookout.esm",
-            "Zeta.esm",
-        };
-        return std::find(masters.begin(), masters.end(), fileName) != masters.end();
-    }
-
     [[noreturn]] void fail(std::string_view message)
     {
         throw std::runtime_error("ESM4::Terminal::load - " + std::string(message));
@@ -269,7 +250,7 @@ namespace
 
 void ESM4::Terminal::load(ESM4::Reader& reader)
 {
-    if (!isFalloutNewVegas(reader) || isTtwCapitalWastelandMaster(reader))
+    if (!isFalloutNewVegas(reader))
     {
         loadLegacy(*this, reader);
         return;
@@ -350,10 +331,7 @@ void ESM4::Terminal::load(ESM4::Reader& reader)
                 case ESM::fourCC("MODT"):
                     if (topPhase != TopPhase::Model)
                         fail("MODT appears without MODL or is out of order");
-                    // TTW's MS03 RobCo master-control terminal retains a
-                    // 216-byte Fallout 3 model payload. The payload is kept
-                    // opaque, so accepting this observed layout is lossless.
-                    requireOneOfSizes(header, { 96, 120, 144, 168, 216 });
+                    requireOneOfSizes(header, { 96, 120, 144, 168 });
                     readBytes(reader, value.mModelData, "MODT");
                     topPhase = TopPhase::ModelData;
                     break;
@@ -423,12 +401,7 @@ void ESM4::Terminal::load(ESM4::Reader& reader)
                 menuPhase = MenuPhase::Flags;
                 break;
             case ESM::fourCC("ANAM"):
-                // TTW's converted Fallout3.esm contains one legacy terminal
-                // menu (MQ06VaultTecTerminalSubMenuRestricted) with ITXT,
-                // ANAM and SCHR but no RNAM result text.  FNV's native menu
-                // records always include RNAM; accept the legacy empty-result
-                // form without weakening the ordering checks for later fields.
-                if (menuPhase != MenuPhase::ResultText && menuPhase != MenuPhase::Flags)
+                if (menuPhase != MenuPhase::Flags)
                     fail("ANAM is missing, duplicated, or out of order");
                 requireSize(header, 1);
                 readExact(reader, menu->mFlags, "ANAM");
@@ -504,12 +477,7 @@ void ESM4::Terminal::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("SCRV"):
             {
-                // TTW's DLC03ControlTowerTerminal emits a local-variable
-                // reference after its first SCRO FormID reference. Retain the
-                // reference and accept that legacy ordering; later SCRO/CTDA
-                // handling remains unchanged.
-                if (menuPhase != MenuPhase::ScriptBody && menuPhase != MenuPhase::LocalReferences
-                    && menuPhase != MenuPhase::FormReferences)
+                if (menuPhase != MenuPhase::ScriptBody && menuPhase != MenuPhase::LocalReferences)
                     fail("SCRV appears outside the local-reference section");
                 if (menu->mScript.localVarData.empty())
                     fail("SCRV appears without local-variable metadata");

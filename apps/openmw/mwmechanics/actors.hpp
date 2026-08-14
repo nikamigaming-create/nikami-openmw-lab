@@ -13,7 +13,6 @@ namespace ESM
 {
     class ESMReader;
     class ESMWriter;
-    struct FormId;
 }
 
 namespace osg
@@ -38,6 +37,7 @@ namespace MWMechanics
     struct FalloutVatsQueuedAction;
     class Actor;
     class CharacterController;
+    class CreatureStats;
     class SidingCache;
 
     class Actors
@@ -86,9 +86,7 @@ namespace MWMechanics
 
         /// Removes an actor from combat and makes all of their allies stop fighting the actor's targets
         void stopCombat(const MWWorld::Ptr& ptr) const;
-        bool lookAt(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
-            ESM::FormId targetId, bool rotateBody) const;
-        void stopLooking(const MWWorld::Ptr& ptr) const;
+        bool playFalloutDialogueAnimation(const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) const;
 
         void playIdleDialogue(const MWWorld::Ptr& actor) const;
         void updateMovementSpeed(const MWWorld::Ptr& actor) const;
@@ -117,8 +115,6 @@ namespace MWMechanics
         bool isSneaking(const MWWorld::Ptr& ptr) const;
 
         void forceStateUpdate(const MWWorld::Ptr& ptr) const;
-
-        bool playFalloutDialogueAnimation(const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) const;
         bool reloadFalloutWeapon(const MWWorld::Ptr& actor) const;
         bool prepareFalloutVatsRangedAttack(const MWWorld::Ptr& actor) const;
         bool consumeFalloutVatsRangedAttackRelease(const MWWorld::Ptr& actor) const;
@@ -145,7 +141,7 @@ namespace MWMechanics
 
         bool isAnyObjectInRange(const osg::Vec3f& position, float radius) const;
 
-        void cleanupSummonedCreature(ESM::RefNum creature) const;
+        void cleanupSummonedCreature(CreatureStats& casterStats, int creatureActorId) const;
 
         /// Returns the list of actors which are siding with the given actor in fights
         /**ie AiFollow or AiEscort is active and the target is the actor **/
@@ -182,6 +178,7 @@ namespace MWMechanics
         int getGreetingTimer(const MWWorld::Ptr& ptr) const;
         float getAngleToPlayer(const MWWorld::Ptr& ptr) const;
         GreetingState getGreetingState(const MWWorld::Ptr& ptr) const;
+        bool isTurningToPlayer(const MWWorld::Ptr& ptr) const;
 
     private:
         std::map<ESM::RefId, int> mDeathCount;
@@ -194,6 +191,8 @@ namespace MWMechanics
         float mTimerUpdateHello = 0;
         float mSneakTimer = 0; // Times update of sneak icon
         float mSneakSkillTimer = 0; // Times sneak skill progress from "avoid notice"
+        int mDialogueFacingActorId = -1;
+
         void updateVisibility(const MWWorld::Ptr& ptr, CharacterController& ctrl) const;
 
         MWWorld::Ptr getDialogueActorForFacing(const MWWorld::Ptr& player) const;
@@ -205,10 +204,11 @@ namespace MWMechanics
         void calculateRestoration(const MWWorld::Ptr& ptr, float duration) const;
 
         void updateCrimePursuit(const MWWorld::Ptr& ptr, float duration, SidingCache& cachedAllies) const;
+        void updateCombatEvents(Actor& actor) const;
 
         void killDeadActors();
 
-        void purgeSpellEffects(ESM::RefNum creature) const;
+        void purgeSpellEffects(int casterActorId) const;
 
         void predictAndAvoidCollisions(float duration) const;
 

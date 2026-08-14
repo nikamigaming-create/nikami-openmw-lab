@@ -139,8 +139,6 @@ namespace Shader
     bool parseDirectives(std::string& source, std::vector<std::string>& linkedShaderTemplateNames,
         const ShaderManager::DefineMap& defines, const ShaderManager::DefineMap& globalDefines,
         const std::string& templateName);
-
-    ShaderManager::DefineMap getDefaultDefines();
 }
 
 #endif

@@ -45,12 +45,6 @@ namespace MWGui
         void setRaceId(const ESM::RefId& raceId);
         void setGender(Gender gender) { mGenderIndex = gender == GM_Male ? 0 : 1; }
 
-        /// Completes the dialog through the ordinary OK callback using its
-        /// currently selected authored default. This is used only by the
-        /// opt-in unattended compatibility harness; it never injects host
-        /// input or bypasses the dialog's selection validation.
-        void acceptDefault();
-
         void setNextButtonShow(bool shown);
         void onOpen() override;
         void onClose() override;
@@ -116,7 +110,7 @@ namespace MWGui
         MyGUI::Widget* mSpellPowerList;
         std::vector<MyGUI::Widget*> mSpellPowerItems;
 
-        size_t mGenderIndex, mFaceIndex, mHairIndex;
+        int mGenderIndex, mFaceIndex, mHairIndex;
 
         ESM::RefId mCurrentRaceId;
 

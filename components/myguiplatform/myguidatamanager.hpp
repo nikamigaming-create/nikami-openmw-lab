@@ -3,9 +3,8 @@
 
 #include <MyGUI_DataManager.h>
 
+#include <filesystem>
 #include <string>
-
-#include <components/vfs/pathutil.hpp>
 
 namespace VFS
 {
@@ -18,10 +17,9 @@ namespace MyGUIPlatform
     class DataManager : public MyGUI::DataManager
     {
     public:
-        explicit DataManager(VFS::Path::NormalizedView path, const VFS::Manager* vfs);
+        explicit DataManager(const std::string& path, const VFS::Manager* vfs);
 
-        void setResourcePath(VFS::Path::NormalizedView path);
-        VFS::Path::NormalizedView getResourcePath() const;
+        void setResourcePath(const std::filesystem::path& path);
 
         /** Get data stream from specified resource name.
             @param name Resource name (usually file name).
@@ -50,7 +48,7 @@ namespace MyGUIPlatform
         std::string getDataPath(const std::string& name) const override;
 
     private:
-        VFS::Path::Normalized mResourcePath;
+        std::filesystem::path mResourcePath;
 
         const VFS::Manager* mVfs;
     };

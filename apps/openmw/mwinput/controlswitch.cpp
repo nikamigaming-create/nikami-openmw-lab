@@ -19,13 +19,9 @@ namespace MWInput
     void ControlSwitch::clear()
     {
         mSwitches["playercontrols"] = true;
-        mSwitches["playermovement"] = true;
-        mSwitches["playerinterface"] = true;
         mSwitches["playerfighting"] = true;
         mSwitches["playerjumping"] = true;
         mSwitches["playerlooking"] = true;
-        mSwitches["playersneaking"] = true;
-        mSwitches["playerrollover"] = true;
         mSwitches["playermagic"] = true;
         mSwitches["playerviewswitch"] = true;
         mSwitches["vanitymode"] = true;
@@ -62,10 +58,6 @@ namespace MWInput
         controls.mVanityModeDisabled = !mSwitches["vanitymode"];
         controls.mWeaponDrawingDisabled = !mSwitches["playerfighting"];
         controls.mSpellDrawingDisabled = !mSwitches["playermagic"];
-        controls.mMovementDisabled = !mSwitches["playermovement"];
-        controls.mInterfaceDisabled = !mSwitches["playerinterface"];
-        controls.mSneakingDisabled = !mSwitches["playersneaking"];
-        controls.mRolloverDisabled = !mSwitches["playerrollover"];
 
         writer.startRecord(ESM::REC_INPU);
         controls.save(writer);
@@ -84,13 +76,9 @@ namespace MWInput
         set("vanitymode", !controls.mVanityModeDisabled);
         set("playerfighting", !controls.mWeaponDrawingDisabled);
         set("playermagic", !controls.mSpellDrawingDisabled);
-        set("playermovement", !controls.mMovementDisabled);
-        set("playerinterface", !controls.mInterfaceDisabled);
-        set("playersneaking", !controls.mSneakingDisabled);
-        set("playerrollover", !controls.mRolloverDisabled);
     }
 
-    size_t ControlSwitch::countSavedGameRecords() const
+    int ControlSwitch::countSavedGameRecords() const
     {
         return 1;
     }

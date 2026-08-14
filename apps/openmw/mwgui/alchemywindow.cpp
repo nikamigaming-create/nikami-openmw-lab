@@ -32,16 +32,26 @@
 #include "sortfilteritemmodel.hpp"
 #include "widgets.hpp"
 
+//## VR_PATCH BEGIN
+#include <components/vr/vr.hpp>
+#include "../mwvr/vrlistbox.hpp"
+//## VR_PATCH END
 namespace MWGui
 {
     AlchemyWindow::AlchemyWindow()
-        : WindowBase("openmw_alchemy_window.layout")
+//## VR_PATCH BEGIN
+        : WindowBase(VR::getVR() ? "openmw_alchemy_window_vr.layout" : "openmw_alchemy_window.layout")
+//## VR_PATCH END
         , mCurrentFilter(FilterType::ByName)
         , mModel(nullptr)
         , mSortModel(nullptr)
+        , mFilterValue(nullptr)
         , mAlchemy(std::make_unique<MWMechanics::Alchemy>())
         , mApparatus(4)
         , mIngredients(4)
+        , mFilterCombo(nullptr)
+        , mFilterEdit(nullptr)
+        , mFilterButton(nullptr)
     {
         getWidget(mCreateButton, "CreateButton");
         getWidget(mCancelButton, "CancelButton");
@@ -59,8 +69,31 @@ namespace MWGui
         getWidget(mDecreaseButton, "DecreaseButton");
         getWidget(mNameEdit, "NameEdit");
         getWidget(mItemView, "ItemView");
-        getWidget(mFilterValue, "FilterValue");
-        getWidget(mFilterType, "FilterType");
+//## VR_PATCH BEGIN
+// The regular, vanilla filter is extremely obnoxious to use in VR
+// so I replace it with a combo box.
+// Something something dehardcoded UI in 2090
+        if(VR::getVR())
+        {
+            getWidget(mFilterCombo, "FilterValue");
+            getWidget(mFilterType, "FilterType");
+            getWidget(mFilterEdit, "FilterEdit");
+            getWidget(mFilterButton, "FilterButton");
+            mFilterListBox = new MWVR::VrListBox();
+            mFilterCombo->setVisible(false);
+            mFilterCombo->setUserString("Hidden", "true");
+
+            mFilterButton->eventMouseButtonClick += MyGUI::newDelegate(this, &AlchemyWindow::onFilterButtonClicked);
+            mFilterEdit->eventEditTextChange += MyGUI::newDelegate(this, &AlchemyWindow::onFilterEdited);
+            mFilterCombo->eventComboChangePosition += MyGUI::newDelegate(this, &AlchemyWindow::onFilterChanged);
+            mFilterCombo->eventEditTextChange += MyGUI::newDelegate(this, &AlchemyWindow::onFilterEdited);
+        }
+        else
+        {
+            getWidget(mFilterValue, "FilterValue");
+            getWidget(mFilterType, "FilterType");
+        }
+//## VR_PATCH END
 
         mBrewCountEdit->eventValueChanged += MyGUI::newDelegate(this, &AlchemyWindow::onCountValueChanged);
         mBrewCountEdit->eventEditSelectAccept += MyGUI::newDelegate(this, &AlchemyWindow::onAccept);
@@ -88,8 +121,13 @@ namespace MWGui
         mCancelButton->eventMouseButtonClick += MyGUI::newDelegate(this, &AlchemyWindow::onCancelButtonClicked);
 
         mNameEdit->eventEditSelectAccept += MyGUI::newDelegate(this, &AlchemyWindow::onAccept);
-        mFilterValue->eventComboChangePosition += MyGUI::newDelegate(this, &AlchemyWindow::onFilterChanged);
-        mFilterValue->eventEditTextChange += MyGUI::newDelegate(this, &AlchemyWindow::onFilterEdited);
+//## VR_PATCH BEGIN
+        if(!VR::getVR())
+        {
+            mFilterValue->eventComboChangePosition += MyGUI::newDelegate(this, &AlchemyWindow::onFilterChanged);
+            mFilterValue->eventEditTextChange += MyGUI::newDelegate(this, &AlchemyWindow::onFilterEdited);
+        }
+//## VR_PATCH END
         mFilterType->eventMouseButtonClick += MyGUI::newDelegate(this, &AlchemyWindow::switchFilterType);
 
         if (Settings::gui().mControllerMenus)
@@ -184,7 +222,15 @@ namespace MWGui
         else
             mCurrentFilter = FilterType::ByEffect;
         updateFilters();
-        mFilterValue->clearIndexSelected();
+//## VR_PATCH BEGIN
+        if(VR::getVR())
+        {
+            mFilterCombo->clearIndexSelected();
+            mFilterEdit->setCaption("");
+        }
+        else
+            mFilterValue->clearIndexSelected();
+//## VR_PATCH END
         updateFilters();
     }
 
@@ -206,43 +252,66 @@ namespace MWGui
         }
         mSortModel->setNameFilter({});
         mSortModel->setEffectFilter({});
-        mFilterValue->clearIndexSelected();
+//## VR_PATCH BEGIN
+        if(VR::getVR())
+        {
+            mFilterCombo->clearIndexSelected();
+            mFilterEdit->setCaption("");
+        }
+        else
+            mFilterValue->clearIndexSelected();
+//## VR_PATCH END
         updateFilters();
         mItemView->update();
     }
 
+//## VR_PATCH BEGIN
+// Items and their effects need to be persisted as members for use in the combo box.
+// Replaces temporary values with members to this effect.
     void AlchemyWindow::updateFilters()
     {
-        std::set<std::string> itemNames, itemEffects;
+        mItemEffects.clear();
+        mItemNames.clear();
         for (size_t i = 0; i < mModel->getItemCount(); ++i)
         {
-            MWWorld::Ptr item = mModel->getItem(static_cast<ItemModel::ModelIndex>(i)).mBase;
+            MWWorld::Ptr item = mModel->getItem(i).mBase;
             if (item.getType() != ESM::Ingredient::sRecordId)
                 continue;
 
-            itemNames.emplace(item.getClass().getName(item));
+            mItemNames.emplace(item.getClass().getName(item));
 
             MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
             auto const alchemySkill = player.getClass().getSkill(player, ESM::Skill::Alchemy);
 
             auto const effects = MWMechanics::Alchemy::effectsDescription(item, alchemySkill);
-            itemEffects.insert(effects.begin(), effects.end());
+            mItemEffects.insert(effects.begin(), effects.end());
         }
 
-        mFilterValue->removeAllItems();
-        auto const addItems = [&](auto const& container) {
-            for (auto const& item : container)
-                mFilterValue->addItem(item);
-        };
+        mFilterCombo->removeAllItems();
+        for (auto const& item : items())
+        {
+            mFilterCombo->addItem(item);
+        }
+    }
+//## VR_PATCH END
+
+//## VR_PATCH BEGIN
+// Retrieve the filtered items
+    const std::set<std::string>& AlchemyWindow::items()
+    {
         switch (mCurrentFilter)
         {
             case FilterType::ByName:
-                addItems(itemNames);
+                return mItemNames;
                 break;
             case FilterType::ByEffect:
-                addItems(itemEffects);
+                return mItemEffects;
                 break;
         }
+
+        // Can't be reached. Here to silence warnings.
+        return mItemNames;
+//## VR_PATCH END
     }
 
     void AlchemyWindow::applyFilter(const std::string& filter)
@@ -271,6 +340,20 @@ namespace MWGui
     {
         applyFilter(sender->getCaption());
     }
+
+//## VR_PATCH BEGIN
+    void AlchemyWindow::onFilterButtonClicked(MyGUI::Widget* _sender)
+    {
+        mFilterListBox->open(mFilterCombo, [this](std::size_t index) {
+            if (index != MyGUI::ITEM_NONE)
+            {
+                auto filter = mFilterCombo->getItemNameAt(index);
+                mFilterEdit->setCaption(filter);
+                applyFilter(filter);
+            }
+        });
+    }
+//## VR_PATCH END
 
     void AlchemyWindow::onOpen()
     {
@@ -376,7 +459,7 @@ namespace MWGui
             mItemSelectionDialog->eventDialogCanceled += MyGUI::newDelegate(this, &AlchemyWindow::onItemCancel);
             mItemSelectionDialog->setVisible(true);
             mItemSelectionDialog->openContainer(MWMechanics::getPlayer());
-            mItemSelectionDialog->getSortModel()->setApparatusTypeFilter(static_cast<int32_t>(i));
+            mItemSelectionDialog->getSortModel()->setApparatusTypeFilter(i);
             mItemSelectionDialog->setFilter(SortFilterItemModel::Filter_OnlyAlchemyTools);
         }
         else
@@ -589,11 +672,11 @@ namespace MWGui
         if (arg.button == SDL_CONTROLLER_BUTTON_B)
         {
             // Remove active ingredients or close the window, starting with right-most slot.
-            for (size_t i = mIngredients.size(); i > 0; --i)
+            for (int i = mIngredients.size() - 1; i >= 0; --i)
             {
-                if (mIngredients[i - 1]->isUserString("ToolTipType"))
+                if (mIngredients[i]->isUserString("ToolTipType"))
                 {
-                    onIngredientSelected(mIngredients[i - 1]);
+                    onIngredientSelected(mIngredients[i]);
                     return true;
                 }
             }

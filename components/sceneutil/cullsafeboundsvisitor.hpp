@@ -26,14 +26,14 @@ namespace SceneUtil
             mBoundingBox.init();
         }
 
-        void apply(osg::Drawable& drawable) override
+        void apply(osg::Drawable& drawable)
         {
             osg::BoundingBox bbox = drawable.getInitialBound();
             bbox.expandBy(drawable.computeBoundingBox());
             applyBoundingBox(bbox);
         }
 
-        void apply(osg::Transform& transform) override
+        void apply(osg::Transform& transform)
         {
             osg::Matrix matrix;
             if (!mMatrixStack.empty())

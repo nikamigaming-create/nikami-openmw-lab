@@ -25,6 +25,7 @@
 #include <osg/Shape>
 #include <osg/ShapeDrawable>
 #include <osg/Image>
+#include <osg/Texture2D>
 #include <osgDB/WriteFile>
 
 #include <algorithm>
@@ -50,6 +51,7 @@
 #include <components/misc/constants.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/lower.hpp>
+#include <components/resource/imagemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/attach.hpp>
@@ -58,6 +60,7 @@
 #include <components/sceneutil/riggeometryosgaextension.hpp>
 #include <components/sceneutil/shadow.hpp>
 #include <components/sceneutil/skeleton.hpp>
+#include <components/sceneutil/texturetype.hpp>
 
 #include <components/settings/settings.hpp>
 #include <components/settings/values.hpp>
@@ -139,6 +142,32 @@ namespace MWVR
     osg::Vec3f scaleVec3(const osg::Vec3f& lhs, const osg::Vec3f& rhs)
     {
         return osg::Vec3f(lhs.x() * rhs.x(), lhs.y() * rhs.y(), lhs.z() * rhs.z());
+    }
+
+    void applyFalloutVrDiffuseOverride(
+        std::string_view texture, Resource::ResourceSystem* resourceSystem, osg::Node& node)
+    {
+        if (texture.empty() || resourceSystem == nullptr)
+            return;
+
+        const VFS::Path::Normalized correctedTexture
+            = Misc::ResourceHelpers::correctTexturePath(texture, resourceSystem->getVFS());
+        osg::ref_ptr<osg::Texture2D> diffuse
+            = new osg::Texture2D(resourceSystem->getImageManager()->getImage(correctedTexture));
+        diffuse->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+        diffuse->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+        resourceSystem->getSceneManager()->applyFilterSettings(diffuse);
+
+        osg::ref_ptr<osg::StateSet> stateSet;
+        if (const osg::StateSet* existing = node.getStateSet())
+            stateSet = new osg::StateSet(*existing, osg::CopyOp::SHALLOW_COPY);
+        else
+            stateSet = new osg::StateSet;
+        stateSet->setTextureAttributeAndModes(
+            0, diffuse, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        stateSet->setTextureAttributeAndModes(0, new SceneUtil::TextureType("diffuseMap"),
+            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        node.setStateSet(stateSet);
     }
 
     float clampUnit(float value)
@@ -3483,10 +3512,10 @@ namespace MWVR
                     const osg::Vec3 handMinusAimLocal = aimOrientation.inverse() * handMinusAimWorld;
                     const osg::Quat sourceFromAim = sourceOrientation * aimOrientation.inverse();
                     const osg::Quat handFromAim = orientation * aimOrientation.inverse();
-                    double sourceAngle = 0.0;
+                    osg::Quat::value_type sourceAngle = 0.f;
                     osg::Vec3 sourceAxis;
                     sourceFromAim.getRotate(sourceAngle, sourceAxis);
-                    double handAngle = 0.0;
+                    osg::Quat::value_type handAngle = 0.f;
                     osg::Vec3 handAxis;
                     handFromAim.getRotate(handAngle, handAxis);
                     Log(Debug::Verbose) << "FNV/ESM4 diag: VR hand aim-frame audit hand=" << mDebugName
@@ -4023,7 +4052,7 @@ namespace MWVR
             && std::equal(surfaces.begin(), surfaces.end(), mFalloutVrHandSurfaces.begin(),
                 [](const FalloutVrHandSurface& left, const FalloutVrHandSurface& right) {
                     return left.model == right.model && left.diffuseTexture == right.diffuseTexture
-                        && left.source == right.source && left.left == right.left;
+                        && left.source == right.source && left.left == right.left && left.kind == right.kind;
                 });
 
         if (sameSurfaces)
@@ -4147,6 +4176,7 @@ namespace MWVR
         const NodeMap& nodeMap = getNodeMap();
         osg::Group* leftHand = nullptr;
         osg::Group* rightHand = nullptr;
+        osg::Group* weapon = nullptr;
         osg::Group* bip01 = nullptr;
         if (const auto found = nodeMap.find("Bip01"); found != nodeMap.end())
             bip01 = found->second.get();
@@ -4154,6 +4184,14 @@ namespace MWVR
             leftHand = found->second.get();
         if (const auto found = nodeMap.find("Bip01 R Hand"); found != nodeMap.end())
             rightHand = found->second.get();
+        for (std::string_view candidate : { "Weapon", "Bip01 Weapon" })
+        {
+            if (const auto found = nodeMap.find(std::string(candidate)); found != nodeMap.end())
+            {
+                weapon = found->second.get();
+                break;
+            }
+        }
 
         osg::Group* master = mSkeleton != nullptr ? static_cast<osg::Group*>(mSkeleton) : mObjectRoot.get();
         const float pipBoyRotX = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_X", 0.f);
@@ -4166,8 +4204,7 @@ namespace MWVR
         std::array<bool, 2> pipBoySocketTargetValid = { false, false };
         for (const FalloutVrHandSurface& surface : mFalloutVrHandSurfaces)
         {
-            const std::string loweredModel = Misc::StringUtils::lowerCase(surface.model);
-            if (loweredModel.find("pipboyarm") == std::string::npos)
+            if (surface.kind != FalloutVrHandSurface::Kind::PipBoy)
                 continue;
 
             const VFS::Path::Normalized correctedModel
@@ -4230,14 +4267,17 @@ namespace MWVR
             if (surface.model.empty())
                 continue;
 
-            std::string loweredModel = Misc::StringUtils::lowerCase(surface.model);
-            const bool pipBoyArm = loweredModel.find("pipboyarm") != std::string::npos;
+            const bool pipBoyArm = surface.kind == FalloutVrHandSurface::Kind::PipBoy;
+            const bool weaponSurface = surface.kind == FalloutVrHandSurface::Kind::Weapon;
             const bool rightPipBoyCalibration = pipBoyArm && !surface.left
                 && surface.source.find("right-pipboy-calibration") != std::string::npos;
-            const bool riggedHandPart = !pipBoyArm
-                && (loweredModel.find("hand") != std::string::npos || loweredModel.find("glove") != std::string::npos);
+            const bool riggedHandPart = surface.kind == FalloutVrHandSurface::Kind::Hand;
 
-            osg::Group* attachNode = surface.left ? leftHand : rightHand;
+            osg::Group* attachNode = weaponSurface && weapon != nullptr
+                ? weapon
+                : (surface.left ? leftHand : rightHand);
+            if (weaponSurface && weapon == nullptr)
+                Log(Debug::Warning) << "FNV/ESM4 diag: VR weapon attachment node missing; falling back to right hand";
             if (attachNode == nullptr)
             {
                 Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly attach skipped missing "
@@ -4775,6 +4815,12 @@ namespace MWVR
                     Log(Debug::Warning) << "FNV/ESM4 diag: PipBoy wrist offset skipped; attached node is not PAT";
             }
 
+            // These surfaces are attached outside the normal ESM4 actor-part assembly path. Keep
+            // skin overrides actor-local, then rebuild their shaders so environment maps stay in
+            // the environment slot instead of being sampled as the visible base texture.
+            applyFalloutVrDiffuseOverride(surface.diffuseTexture, mResourceSystem, *attached);
+            mResourceSystem->getSceneManager()->recreateShaders(attached, "objects", true);
+
             attached->setName("FNV VRHandsOnly " + correctedModel.value());
             mFalloutVrHandSurfaceNodes.push_back(attached);
             if (pipBoyArm)
@@ -4791,6 +4837,7 @@ namespace MWVR
                              << " riggedHandPart=" << riggedHandPart
                              << " staticizedHandPart=" << staticizedRiggedHandPart
                              << " pipBoyArm=" << pipBoyArm
+                             << " weaponSurface=" << weaponSurface
                              << " master=" << master->getName()
                              << " diffuse=" << surface.diffuseTexture;
         }

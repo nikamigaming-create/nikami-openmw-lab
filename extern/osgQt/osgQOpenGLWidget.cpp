@@ -48,7 +48,10 @@ void osgQOpenGLWidget::initializeGL()
 void osgQOpenGLWidget::resizeGL(int w, int h)
 {
     Q_ASSERT(m_renderer);
-    m_renderer->resize(w * devicePixelRatio(), h * devicePixelRatio());
+    QScreen* screen = windowHandle()
+                      && windowHandle()->screen() ? windowHandle()->screen() :
+                      qApp->screens().front();
+    m_renderer->resize(w * screen->devicePixelRatio(), h * screen->devicePixelRatio());
 }
 
 void osgQOpenGLWidget::paintGL()
@@ -90,13 +93,4 @@ void osgQOpenGLWidget::createRenderer()
     if (!m_renderer) m_renderer = new CompositeOsgRenderer(this);
 
     m_renderer->setupOSG();
-}
-
-bool osgQOpenGLWidget::event(QEvent* e)
-{
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-    if (m_renderer && e->type() == QEvent::DevicePixelRatioChange)
-        m_renderer->resize(width() * devicePixelRatio(), height() * devicePixelRatio());
-#endif
-    return QOpenGLWidget::event(e);
 }

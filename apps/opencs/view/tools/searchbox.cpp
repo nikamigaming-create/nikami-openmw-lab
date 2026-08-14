@@ -8,38 +8,28 @@
 
 #include "../../model/tools/search.hpp"
 
-void CSVTools::SearchBox::updateSearchButtons()
+void CSVTools::SearchBox::updateSearchButton()
 {
-    mReplace.setEnabled(false);
     if (!mSearchEnabled)
-    {
         mSearch.setEnabled(false);
-        return;
-    }
-
-    const CSMTools::Search::Type type = static_cast<CSMTools::Search::Type>(mMode.currentIndex());
-    if (type == CSMTools::Search::Type_RecordState)
+    else
     {
-        mSearch.setEnabled(true);
-        return;
-    }
-
-    bool canSearch = false;
-    QString style;
-    if (!mText.text().isEmpty())
-    {
-        canSearch = true;
-        if (type == CSMTools::Search::Type_TextRegEx || type == CSMTools::Search::Type_IdRegEx)
+        switch (mMode.currentIndex())
         {
-            canSearch = QRegularExpression(mText.text()).isValid();
-            if (!canSearch)
-                style = "QLineEdit { color: red; }";
+            case 0:
+            case 1:
+            case 2:
+            case 3:
+
+                mSearch.setEnabled(!mText.text().isEmpty());
+                break;
+
+            case 4:
+
+                mSearch.setEnabled(true);
+                break;
         }
     }
-
-    mText.setStyleSheet(style);
-    mSearch.setEnabled(canSearch);
-    mReplace.setEnabled(mAllowReplace && mSearchResultCount > 0);
 }
 
 CSVTools::SearchBox::SearchBox(QWidget* parent)
@@ -86,7 +76,6 @@ CSVTools::SearchBox::SearchBox(QWidget* parent)
     mLayout->addWidget(&mReplaceInput, 1, 1);
 
     mLayout->addWidget(&mReplace, 1, 3);
-    mReplace.setEnabled(false);
 
     // layout adjustments
     mLayout->setColumnMinimumWidth(2, 50);
@@ -99,29 +88,13 @@ CSVTools::SearchBox::SearchBox(QWidget* parent)
     // update
     modeSelected(0);
 
-    updateSearchButtons();
-}
-
-void CSVTools::SearchBox::setEditLock(bool locked)
-{
-    mAllowReplace = !locked;
-    updateSearchButtons();
+    updateSearchButton();
 }
 
 void CSVTools::SearchBox::setSearchMode(bool enabled)
 {
     mSearchEnabled = enabled;
-    updateSearchButtons();
-}
-
-void CSVTools::SearchBox::setSearchResultCount(int resultCount)
-{
-    int priorResultCount = mSearchResultCount;
-    mSearchResultCount = resultCount;
-
-    // Update search buttons only if we're changing between zero and non-zero
-    if ((priorResultCount == 0) != (mSearchResultCount == 0))
-        updateSearchButtons();
+    updateSearchButton();
 }
 
 CSMTools::Search CSVTools::SearchBox::getSearch() const
@@ -173,6 +146,11 @@ std::string CSVTools::SearchBox::getReplaceText() const
     }
 }
 
+void CSVTools::SearchBox::setEditLock(bool locked)
+{
+    mReplace.setEnabled(!locked);
+}
+
 void CSVTools::SearchBox::focus()
 {
     mInput.currentWidget()->setFocus();
@@ -199,12 +177,12 @@ void CSVTools::SearchBox::modeSelected(int index)
 
     mInput.currentWidget()->setFocus();
 
-    updateSearchButtons();
+    updateSearchButton();
 }
 
 void CSVTools::SearchBox::textChanged(const QString& text)
 {
-    updateSearchButtons();
+    updateSearchButton();
 }
 
 void CSVTools::SearchBox::startSearch(bool checked)

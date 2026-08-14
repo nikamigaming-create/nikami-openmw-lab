@@ -51,7 +51,10 @@ namespace MWInput
     /**
      * @brief Class that provides a high-level API for game input
      */
-    class InputManager final : public MWBase::InputManager
+//## VR_PATCH BEGIN
+// the vr input manager needs to derive this.
+    class InputManager : public MWBase::InputManager
+//## VR_PATCH END
     {
     public:
         InputManager(SDL_Window* window, osg::ref_ptr<osgViewer::Viewer> viewer,
@@ -59,7 +62,9 @@ namespace MWInput
             bool userFileExists, const std::filesystem::path& userControllerBindingsFile,
             const std::filesystem::path& controllerBindingsFile, bool grab);
 
-        ~InputManager() final;
+//## VR_PATCH BEGIN
+        virtual ~InputManager();
+//## VR_PATCH END
 
         /// Clear all savegame-specific data
         void clear() override;
@@ -101,7 +106,7 @@ namespace MWInput
         std::string getControllerButtonIcon(int button) override;
         std::string getControllerAxisIcon(int axis) override;
 
-        size_t countSavedGameRecords() const override;
+        int countSavedGameRecords() const override;
         void write(ESM::ESMWriter& writer, Loading::Listener& progress) override;
         void readRecord(ESM::ESMReader& reader, uint32_t type) override;
 
@@ -112,8 +117,14 @@ namespace MWInput
         void setFalloutUnattendedUseDown(bool down) override;
 
         bool controlsDisabled() override { return mControlsDisabled; }
+//## VR_PATCH BEGIN
+        void applyHapticsLeftHand(float intensity) override{}
+        void applyHapticsRightHand(float intensity) override{}
 
-    private:
+        void injectEscapeKey() override;
+
+    protected:
+//## VR_PATCH END
         bool mControlsDisabled;
 
         enum class SelfDriveEventKind

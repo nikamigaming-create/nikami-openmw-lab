@@ -33,21 +33,16 @@ namespace Gui
         static std::string_view getFontForFace(std::string_view face);
 
     private:
-        struct FontId
-        {
-            std::string_view mValue;
-        };
-
         ToUTF8::FromType mEncoding;
         const VFS::Manager* mVFS;
         float mScalingFactor;
         bool mExportFonts;
 
         void loadFonts();
-        void loadFont(FontId fontId, std::string_view fontName);
+        void loadFont(const std::string& fontName, const std::string& fontId);
 
-        void loadBitmapFont(FontId fontId, const VFS::Path::Normalized& path, std::istream& stream);
-        void loadTrueTypeFont(FontId fontId, const VFS::Path::Normalized& path, std::istream& stream);
+        void loadBitmapFont(const std::string& fileName, const std::string& fontId);
+        void loadTrueTypeFont(const std::string& fileName, const std::string& fontId);
 
         FontLoader(const FontLoader&);
         void operator=(const FontLoader&);

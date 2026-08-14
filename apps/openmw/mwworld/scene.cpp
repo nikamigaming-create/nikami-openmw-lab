@@ -12,7 +12,6 @@
 #include <BulletCollision/CollisionDispatch/btCollisionObject.h>
 
 #include <components/debug/debuglog.hpp>
-#include <components/debug/fnvseamlesstelemetry.hpp>
 #include <components/detournavigator/agentbounds.hpp>
 #include <components/detournavigator/debug.hpp>
 #include <components/detournavigator/heightfieldshape.hpp>
@@ -48,7 +47,6 @@
 
 #include "../mwclass/esm4npc.hpp"
 #include "../mwclass/fnvaipackage.hpp"
-#include "../mwclass/fnvfurnitureplacement.hpp"
 #include "../mwclass/fnvfurniturelifecycle.hpp"
 
 #include "../mwrender/landmanager.hpp"
@@ -81,21 +79,22 @@ namespace
     {
         const ESM::Position& position = ptr.getRefData().getPosition();
         bool tes4Npc = false;
-        bool falloutActor = false;
+        bool falloutNpc = false;
+        bool falloutCreature = false;
         if (ptr.getType() == ESM::REC_NPC_4)
         {
             const MWWorld::LiveCellRef<ESM4::Npc>* npc = ptr.get<ESM4::Npc>();
             tes4Npc = npc != nullptr && npc->mBase != nullptr && npc->mBase->mIsTES4;
-            falloutActor = npc != nullptr && npc->mBase != nullptr
+            falloutNpc = npc != nullptr && npc->mBase != nullptr
                 && (npc->mBase->mIsFO3 || npc->mBase->mIsFONV);
         }
         else if (ptr.getType() == ESM::REC_CREA4)
         {
             const MWWorld::LiveCellRef<ESM4::Creature>* creature = ptr.get<ESM4::Creature>();
-            falloutActor = creature != nullptr && creature->mBase != nullptr && creature->mBase->mIsFONV;
+            falloutCreature = creature != nullptr && creature->mBase != nullptr && creature->mBase->mIsFONV;
         }
-        return osg::Quat(
-            MWWorld::getActorModelYaw(position.rot[2], tes4Npc, falloutActor), osg::Vec3(0, 0, -1));
+        return osg::Quat(MWWorld::getActorModelYaw(position.rot[2], tes4Npc, falloutNpc, falloutCreature),
+            osg::Vec3(0, 0, -1));
     }
 
     osg::Quat makeInversedOrderObjectOsgQuat(const ESM::Position& position)
@@ -524,32 +523,16 @@ namespace
         const auto& packageStore = store->get<ESM4::AIPackage>();
 
         const ESM4::AIPackage* selected = nullptr;
-        const ESM4::AIPackage* unscheduledFallback = nullptr;
         for (ESM::FormId packageId : packageRecord->mAIPackages)
         {
             const ESM4::AIPackage* package = packageStore.search(packageId);
-            if (package == nullptr || !fnvPackageConditionsPass(*package))
-                continue;
-
-            if (fnvPackageCoversHour(*package, hour))
+            if (package != nullptr && MWClass::fnvNpcAiPackageProcedureSupported(package->mData.type)
+                && fnvPackageConditionsPass(*package) && fnvPackageCoversHour(*package, hour))
             {
                 selected = package;
                 break;
             }
-
-            // Fallout's permanently-active fallback packages deliberately have
-            // no PSDT time window.  The runtime AI selector uses the first
-            // eligible one when no scheduled package applies; scene insertion
-            // must make the identical choice so its furniture marker/entry
-            // data is available before the actor controller starts.  Without
-            // this, Doc Mitchell reaches the chair's origin as a standing
-            // actor and the later furniture package has no placement to own.
-            if (unscheduledFallback == nullptr && !fnvPackageHasExplicitTime(*package))
-                unscheduledFallback = package;
         }
-
-        if (selected == nullptr)
-            selected = unscheduledFallback;
 
         if (selected == nullptr)
             return FnvPackagePrePlacement::None;
@@ -591,12 +574,22 @@ namespace
         // let the runtime package/pathing code perform an actual transition.
         // The legacy behavior remains available only to focused compatibility
         // captures that explicitly request it.
-        if (!sameCell && !envEnabled("OPENMW_FNV_ENABLE_CROSS_CELL_PACKAGE_PREPLACEMENT"))
+        const bool sameCellPrePlacement = envEnabled("OPENMW_FNV_ENABLE_SAME_CELL_PACKAGE_PREPLACEMENT");
+        const bool furnitureEntryPrePlacement
+            = furnitureTarget && envEnabled("OPENMW_FNV_FURNITURE_ENTRY_MARKER_PLACEMENT");
+        const bool crossCellPrePlacement = envEnabled("OPENMW_FNV_ENABLE_CROSS_CELL_PACKAGE_PREPLACEMENT");
+        if (!MWClass::fnvPackagePrePlacementEnabled(
+                sameCell, sameCellPrePlacement || furnitureEntryPrePlacement, crossCellPrePlacement))
         {
-            Log(Debug::Verbose) << "FNV/ESM4: deferred cross-cell package goal " << selected->mEditorId
+            Log(Debug::Verbose) << "FNV/ESM4: deferred " << (sameCell ? "same-cell" : "cross-cell")
+                                << " package goal " << selected->mEditorId
                                 << " actor=" << traits->mEditorId << " targetCell=" << target->mParent
                                 << " currentCell=" << currentCellId;
-            return FnvPackagePrePlacement::None;
+            // Furniture packages still need their marker-derived entry and
+            // settled transforms, so defer the same-cell decision until that
+            // metadata has been prepared below.
+            if (!sameCell)
+                return FnvPackagePrePlacement::None;
         }
 
         ESM::Position position = ptr.getRefData().getPosition();
@@ -607,37 +600,72 @@ namespace
         position.rot[1] = 0.f;
         position.rot[2] = target->mPos.rot[2];
 
-        const MWClass::FalloutFurniturePlacement resolvedFurniturePlacement = furnitureTarget
-            ? MWClass::makeFalloutFurniturePlacement(*store, *target)
-            : MWClass::FalloutFurniturePlacement{};
-        if (resolvedFurniturePlacement.mValid)
+        const FnvFurnitureMarkerPlacement marker = getFnvFurnitureMarkerPlacement(*store, *target);
+        if (marker.mFound && std::getenv("OPENMW_FNV_DISABLE_FURNITURE_MARKER_PLACEMENT") == nullptr)
         {
-            const bool entryMarkerPlacement = envEnabled("OPENMW_FNV_FURNITURE_ENTRY_MARKER_PLACEMENT");
-            MWClass::ESM4Npc::setFurniturePlacement(ptr, resolvedFurniturePlacement);
-            MWClass::ESM4Npc::setFurnitureState(ptr, MWClass::FalloutFurnitureState::Approaching);
-
-            position.pos[0] = resolvedFurniturePlacement.mEntryPosition.x();
-            position.pos[1] = resolvedFurniturePlacement.mEntryPosition.y();
-            position.pos[2] = resolvedFurniturePlacement.mEntryPosition.z();
-            position.rot[2] = resolvedFurniturePlacement.mEntryYaw;
-
-            if (sameCell && !entryMarkerPlacement)
+            const osg::Vec3f proofOffset = transformFnvFurnitureMarkerOffsetForProof(marker.mOffset);
+            const osg::Vec3f worldOffset = rotateFnvPackageOffset(proofOffset, target->mPos.rot[2]);
+            if (furnitureTarget)
             {
-                Log(Debug::Verbose) << "FNV/ESM4 diag: deferred same-cell furniture placement to runtime package "
-                                    << selected->mEditorId << " targetRef=" << target->mEditorId
-                                    << " markerIndex=" << static_cast<unsigned int>(resolvedFurniturePlacement.mMarkerIndex)
-                                    << " enterGroup=" << resolvedFurniturePlacement.mEnterGroup
-                                    << " exitGroup=" << resolvedFurniturePlacement.mExitGroup << " for " << traits->mEditorId;
-                return FnvPackagePrePlacement::None;
+                MWClass::FalloutFurniturePlacement placement;
+                placement.mEntryPosition = osg::Vec3f(target->mPos.pos[0] + worldOffset.x(),
+                    target->mPos.pos[1] + worldOffset.y(), target->mPos.pos[2] + worldOffset.z());
+                placement.mSettledPosition = osg::Vec3f(
+                    target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2] + marker.mOffset.z());
+                placement.mEntryYaw = applyFnvFurnitureMarkerHeading(target->mPos.rot[2], marker.mHeading);
+                placement.mSettledYaw = target->mPos.rot[2];
+                placement.mFurnitureRef = target->mId;
+                placement.mMarkerIndex = marker.mMarkerIndex;
+                placement.mPositionRef = marker.mPositionRef;
+                placement.mValid = true;
+
+                const bool alongY = std::abs(marker.mOffset.y()) >= std::abs(marker.mOffset.x());
+                const std::string_view direction = alongY ? (marker.mOffset.y() >= 0.f ? "forward" : "back")
+                                                          : (marker.mOffset.x() < 0.f ? "left" : "right");
+                placement.mEnterGroup = "chair" + std::string(direction) + "enter";
+                placement.mExitGroup = "chair" + std::string(direction) + "exit";
+                MWClass::ESM4Npc::setFurniturePlacement(ptr, placement);
+                MWClass::ESM4Npc::setFurnitureState(ptr, MWClass::FalloutFurnitureState::Approaching);
+
+                position.pos[0] = placement.mEntryPosition.x();
+                position.pos[1] = placement.mEntryPosition.y();
+                position.pos[2] = placement.mEntryPosition.z();
+                position.rot[2] = placement.mEntryYaw;
+
+                if (sameCell && !furnitureEntryPrePlacement && !sameCellPrePlacement)
+                {
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: deferred same-cell furniture placement to runtime package "
+                                     << selected->mEditorId << " targetRef=" << target->mEditorId
+                                     << " markerIndex=" << static_cast<unsigned int>(placement.mMarkerIndex)
+                                     << " enterGroup=" << placement.mEnterGroup
+                                     << " exitGroup=" << placement.mExitGroup << " for " << traits->mEditorId;
+                    return FnvPackagePrePlacement::None;
+                }
+            }
+            else
+            {
+                position.pos[0] += worldOffset.x();
+                position.pos[1] += worldOffset.y();
+                position.pos[2] += worldOffset.z();
+                position.rot[2] = applyFnvFurnitureMarkerHeading(target->mPos.rot[2], marker.mHeading);
             }
             Log(Debug::Verbose) << "FNV/ESM4 diag: applied furniture marker package placement "
-                                << selected->mEditorId << " targetRef=" << target->mEditorId
-                                << " markerIndex=" << static_cast<unsigned int>(resolvedFurniturePlacement.mMarkerIndex)
-                                << " positionRef=" << static_cast<int>(resolvedFurniturePlacement.mPositionRef)
-                                << " state=entry finalPos=(" << position.pos[0] << "," << position.pos[1] << ","
-                                << position.pos[2] << ") finalRotZ=" << position.rot[2] << " for "
-                                << traits->mEditorId;
+                             << selected->mEditorId << " targetRef=" << target->mEditorId
+                             << " markerOffset=(" << marker.mOffset.x() << "," << marker.mOffset.y() << ","
+                             << marker.mOffset.z() << ") proofOffset=(" << proofOffset.x() << ","
+                             << proofOffset.y() << "," << proofOffset.z() << ") worldOffset=(" << worldOffset.x()
+                             << "," << worldOffset.y() << "," << worldOffset.z() << ") heading=" << marker.mHeading
+                             << " type=" << marker.mType << " entryPoint=" << marker.mEntryPoint
+                             << " positionRef=" << static_cast<int>(marker.mPositionRef)
+                             << " legacy=" << marker.mLegacy
+                             << " state=" << (furnitureTarget ? "entry" : "target")
+                             << " finalPos=(" << position.pos[0] << "," << position.pos[1] << ","
+                             << position.pos[2] << ") finalRotZ=" << position.rot[2] << " for "
+                             << traits->mEditorId;
         }
+
+        if (sameCell && !sameCellPrePlacement && !furnitureEntryPrePlacement)
+            return FnvPackagePrePlacement::None;
 
         if (!sameCell)
         {
@@ -779,13 +807,13 @@ namespace
                 const btTransform closedDoorTransform(
                     Misc::Convert::makeBulletQuaternion(ptr.getCellRef().getPosition()), transform.getOrigin());
 
-                const auto start = Misc::Convert::makeOsgVec3f(closedDoorTransform(center + toPoint));
+                const auto start = Misc::Convert::toOsg(closedDoorTransform(center + toPoint));
                 const auto startPoint = physics.castRay(start, start - osg::Vec3f(0, 0, 1000), { ptr }, {},
                     MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap
                         | MWPhysics::CollisionType_Water);
                 const auto connectionStart = startPoint.mHit ? startPoint.mHitPos : start;
 
-                const auto end = Misc::Convert::makeOsgVec3f(closedDoorTransform(center - toPoint));
+                const auto end = Misc::Convert::toOsg(closedDoorTransform(center - toPoint));
                 const auto endPoint = physics.castRay(end, end - osg::Vec3f(0, 0, 1000), { ptr }, {},
                     MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap
                         | MWPhysics::CollisionType_Water);
@@ -809,19 +837,6 @@ namespace
             if (!navigator.addAgent(agentBounds))
                 Log(Debug::Warning) << "Agent bounds are not supported by navigator for " << ptr.toString() << ": "
                                     << agentBounds;
-        }
-    }
-
-    void applyEsm4OpenByDefaultDoorAfterNavigation(const MWWorld::Ptr& ptr, MWWorld::World& world)
-    {
-        // ESM4 ONAM means "Open By Default".  This must happen after the second
-        // scene insertion phase: that phase creates the navigator DoorShapes
-        // connection through the doorway.  Opening before it removes the ESM4
-        // collision object, causing the navigator to lose the authored route.
-        if (ptr.getType() == ESM::REC_DOOR4 && ptr.getCellRef().isEsm4OpenByDefault()
-            && !ptr.getRefData().getCustomData())
-        {
-            world.activateDoor(ptr);
         }
     }
 
@@ -1077,9 +1092,11 @@ namespace MWWorld
                 mPhysics->addHeightField(defaultHeight.data(), cellX, cellY, worldsize, verts,
                     ESM::Land::DEFAULT_HEIGHT, ESM::Land::DEFAULT_HEIGHT, land.get());
             }
-            if (mPhysics->getHeightField(cellX, cellY))
+            if (const auto heightField = mPhysics->getHeightField(cellX, cellY))
             {
                 const osg::Vec2i cellPosition(cellX, cellY);
+                const btVector3& origin = heightField->getCollisionObject()->getWorldTransform().getOrigin();
+                const osg::Vec3f shift(origin.x(), origin.y(), origin.z());
                 const HeightfieldShape shape = [&]() -> HeightfieldShape {
                     if (data == nullptr)
                     {
@@ -1130,7 +1147,7 @@ namespace MWWorld
 
             if (cellVariant.isExterior())
             {
-                if (mPhysics->getHeightField(cellX, cellY))
+                if (mPhysics->getHeightField(cellX, cellY) != nullptr)
                     mNavigator.addWater(
                         osg::Vec2i(cellX, cellY), ESM::Land::REAL_SIZE, waterLevel, navigatorUpdateGuard);
             }
@@ -1182,7 +1199,7 @@ namespace MWWorld
             const osg::Vec2f center = ESM::indexToPosition(
                 ESM::ExteriorCellLocation(currentGridCenter->x(), currentGridCenter->y(), worldspace), true);
             float distance = std::max(std::abs(center.x() - pos.x()), std::abs(center.y() - pos.y()));
-            int cellSize = ESM::getCellSize(worldspace);
+            float cellSize = ESM::getCellSize(worldspace);
             const float maxDistance = cellSize / 2 + mCellLoadingThreshold; // 1/2 cell size + threshold
             if (distance <= maxDistance)
                 return *currentGridCenter;
@@ -1236,22 +1253,11 @@ namespace MWWorld
 
     void Scene::changeCellGrid(const osg::Vec3f& pos, ESM::ExteriorCellLocation playerCellIndex, bool changeEvent)
     {
-        const auto gridChangeStart = std::chrono::steady_clock::now();
-        const std::size_t activeCellsBefore = mActiveCells.size();
         const int halfGridSize
             = isEsm4Ext(playerCellIndex.mWorldspace) ? getViewerEsm4CellGridRadius() : Constants::CellGridRadius;
         auto navigatorUpdateGuard = mNavigator.makeUpdateGuard();
         const int playerCellX = playerCellIndex.mX;
         const int playerCellY = playerCellIndex.mY;
-
-        Debug::FNVSeamlessTelemetry::Event("grid-change-begin")
-            .string("worldspace", playerCellIndex.mWorldspace.toDebugString())
-            .integer("gridX", playerCellX)
-            .integer("gridY", playerCellY)
-            .integer("halfGridSize", halfGridSize)
-            .boolean("changeEvent", changeEvent)
-            .integer("activeCellsBefore", activeCellsBefore)
-            .emit();
 
         for (auto iter = mActiveCells.begin(); iter != mActiveCells.end();)
         {
@@ -1285,9 +1291,7 @@ namespace MWWorld
         mPreloader->setTerrain(mRendering.getTerrain());
         if (mRendering.pagingUnlockCache())
             mPreloader->abortTerrainPreloadExcept(nullptr);
-        const bool terrainAlreadyLoaded
-            = mPreloader->isTerrainLoaded(PositionCellGrid{ pos, newGrid }, mRendering.getReferenceTime());
-        if (!terrainAlreadyLoaded)
+        if (!mPreloader->isTerrainLoaded(PositionCellGrid{ pos, newGrid }, mRendering.getReferenceTime()))
             preloadTerrain(pos, playerCellIndex.mWorldspace, true);
         mPagedRefs.clear();
         mRendering.getPagedRefnums(newGrid, mPagedRefs);
@@ -1303,19 +1307,6 @@ namespace MWWorld
             refsToLoad += mWorld.getWorldModel().getExterior(location).count();
             cellsPositionsToLoad.emplace_back(x, y);
         });
-
-        Debug::FNVSeamlessTelemetry::Event("grid-load-plan")
-            .string("worldspace", playerCellIndex.mWorldspace.toDebugString())
-            .integer("gridX", playerCellX)
-            .integer("gridY", playerCellY)
-            .integer("cellsToLoad", cellsPositionsToLoad.size())
-            .integer("referencesToLoad", refsToLoad)
-            .boolean("terrainAlreadyLoaded", terrainAlreadyLoaded)
-            .boolean("preloadEnabled", mPreloadEnabled)
-            .boolean("preloadExteriorGrid", mPreloadExteriorGrid)
-            .boolean("preloadDoors", mPreloadDoors)
-            .boolean("preloadFastTravel", mPreloadFastTravel)
-            .emit();
 
         Loading::Listener* loadingListener = MWBase::Environment::get().getWindowManager()->getLoadingScreen();
         Loading::ScopedLoad load(loadingListener);
@@ -1345,17 +1336,6 @@ namespace MWWorld
             mCellChanged = true;
 
         mCellLoaded = true;
-
-        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                   std::chrono::steady_clock::now() - gridChangeStart)
-                                   .count();
-        Debug::FNVSeamlessTelemetry::Event("grid-change-end")
-            .string("worldspace", playerCellIndex.mWorldspace.toDebugString())
-            .integer("gridX", playerCellX)
-            .integer("gridY", playerCellY)
-            .integer("activeCellsAfter", mActiveCells.size())
-            .integer("elapsedMs", elapsedMs)
-            .emit();
     }
 
     void Scene::addPostponedPhysicsObjects()
@@ -1590,38 +1570,7 @@ namespace MWWorld
         std::string_view cellName, const ESM::Position& position, bool adjustPlayerPos, bool changeEvent)
     {
         CellStore& cell = mWorld.getWorldModel().getInterior(cellName);
-        const auto transitionStart = std::chrono::steady_clock::now();
-        const std::string sourceCell = mCurrentCell != nullptr && mCurrentCell->getCell() != nullptr
-            ? mCurrentCell->getCell()->getId().toDebugString()
-            : std::string();
-        const std::string sourceWorldspace = mCurrentCell != nullptr && mCurrentCell->getCell() != nullptr
-            ? mCurrentCell->getCell()->getWorldSpace().toDebugString()
-            : std::string();
         bool useFading = (mCurrentCell != nullptr);
-
-        const auto emitTransitionEnd = [&] {
-            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                       std::chrono::steady_clock::now() - transitionStart)
-                                       .count();
-            Debug::FNVSeamlessTelemetry::Event("scene-transition-end")
-                .string("route", "interior")
-                .string("destinationCell", cell.getCell()->getId().toDebugString())
-                .boolean("changeEvent", changeEvent)
-                .integer("elapsedMs", elapsedMs)
-                .emit();
-        };
-
-        Debug::FNVSeamlessTelemetry::Event("scene-transition-begin")
-            .string("route", "interior")
-            .string("sourceCell", sourceCell)
-            .string("sourceWorldspace", sourceWorldspace)
-            .string("destinationCell", cell.getCell()->getId().toDebugString())
-            .string("destinationWorldspace", cell.getCell()->getWorldSpace().toDebugString())
-            .boolean("changeEvent", changeEvent)
-            .boolean("usesFade", useFading)
-            .string("handoffState", "not-applicable")
-            .emit();
-
         if (useFading)
             MWBase::Environment::get().getWindowManager()->fadeScreenOut(0.5);
 
@@ -1637,7 +1586,6 @@ namespace MWWorld
             if (adjustPlayerPos)
                 mWorld.getPlayerPtr().getClass().adjustPosition(mWorld.getPlayerPtr(), true);
             MWBase::Environment::get().getWindowManager()->fadeScreenIn(0.5);
-            emitTransitionEnd();
             return;
         }
 
@@ -1683,40 +1631,15 @@ namespace MWWorld
         MWBase::Environment::get().getWindowManager()->changeCell(mCurrentCell);
 
         MWBase::Environment::get().getWorld()->getPostProcessor()->setExteriorFlag(cell.getCell()->isQuasiExterior());
-        emitTransitionEnd();
     }
 
     void Scene::changeToExteriorCell(
         const ESM::RefId& extCellId, const ESM::Position& position, bool adjustPlayerPos, bool changeEvent)
     {
-        const auto transitionStart = std::chrono::steady_clock::now();
-        const std::string sourceCell = mCurrentCell != nullptr && mCurrentCell->getCell() != nullptr
-            ? mCurrentCell->getCell()->getId().toDebugString()
-            : std::string();
-        const std::string sourceWorldspace = mCurrentCell != nullptr && mCurrentCell->getCell() != nullptr
-            ? mCurrentCell->getCell()->getWorldSpace().toDebugString()
-            : std::string();
-        const bool sourceExterior = mCurrentCell != nullptr && mCurrentCell->isExterior();
 
         if (changeEvent)
             MWBase::Environment::get().getWindowManager()->fadeScreenOut(0.5);
         CellStore& current = mWorld.getWorldModel().getCell(extCellId);
-
-        const bool sameWorldspace = sourceExterior && mCurrentCell->getCell()->getWorldSpace()
-            == current.getCell()->getWorldSpace();
-        const std::string handoffState = sourceExterior && !sameWorldspace ? "not-implemented" : "not-applicable";
-        Debug::FNVSeamlessTelemetry::Event("scene-transition-begin")
-            .string("route", "exterior")
-            .string("sourceCell", sourceCell)
-            .string("sourceWorldspace", sourceWorldspace)
-            .string("destinationCell", current.getCell()->getId().toDebugString())
-            .string("destinationWorldspace", current.getCell()->getWorldSpace().toDebugString())
-            .boolean("sourceExterior", sourceExterior)
-            .boolean("sameWorldspace", sameWorldspace)
-            .boolean("changeEvent", changeEvent)
-            .boolean("usesFade", changeEvent)
-            .string("handoffState", handoffState)
-            .emit();
 
         const osg::Vec2i cellIndex(current.getCell()->getGridX(), current.getCell()->getGridY());
 
@@ -1729,17 +1652,6 @@ namespace MWWorld
             MWBase::Environment::get().getWindowManager()->fadeScreenIn(0.5);
 
         MWBase::Environment::get().getWorld()->getPostProcessor()->setExteriorFlag(true);
-
-        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                   std::chrono::steady_clock::now() - transitionStart)
-                                   .count();
-        Debug::FNVSeamlessTelemetry::Event("scene-transition-end")
-            .string("route", "exterior")
-            .string("destinationCell", current.getCell()->getId().toDebugString())
-            .boolean("sameWorldspace", sameWorldspace)
-            .string("handoffState", handoffState)
-            .integer("elapsedMs", elapsedMs)
-            .emit();
     }
 
     CellStore* Scene::getCurrentCell()
@@ -1774,7 +1686,6 @@ namespace MWWorld
             if (skipDistantEsm4Actors && isEsm4Actor(ptr) && ptr.getClass().isActor())
                 return;
             addObject(ptr, mWorld, *mPhysics, mLowestPoint, isInterior, mNavigator, navigatorUpdateGuard);
-            applyEsm4OpenByDefaultDoorAfterNavigation(ptr, mWorld);
         });
         if (skippedDistantEsm4Actors != 0)
             Log(Debug::Info) << "World viewer: kept connected ESM4 exterior geometry while deferring "
@@ -1789,7 +1700,6 @@ namespace MWWorld
         {
             addObject(ptr, mWorld, mPagedRefs, *mPhysics, mRendering);
             addObject(ptr, mWorld, *mPhysics, mLowestPoint, isInterior, mNavigator);
-            applyEsm4OpenByDefaultDoorAfterNavigation(ptr, mWorld);
             mWorld.scaleObject(ptr, ptr.getCellRef().getScale());
         }
         catch (std::exception& e)
@@ -1826,6 +1736,17 @@ namespace MWWorld
     bool Scene::isCellActive(const CellStore& cell)
     {
         return mActiveCells.contains(&cell);
+    }
+
+    Ptr Scene::searchPtrViaActorId(int actorId)
+    {
+        for (CellStoreCollection::const_iterator iter(mActiveCells.begin()); iter != mActiveCells.end(); ++iter)
+        {
+            Ptr ptr = (*iter)->searchViaActorId(actorId);
+            if (!ptr.isEmpty())
+                return ptr;
+        }
+        return Ptr();
     }
 
     class PreloadMeshItem : public SceneUtil::WorkItem
@@ -2001,7 +1922,7 @@ namespace MWWorld
         cellY = mCurrentGridCenter.y();
         ESM::RefId extWorldspace = mWorld.getCurrentWorldspace();
 
-        int cellSize = ESM::getCellSize(extWorldspace);
+        float cellSize = ESM::getCellSize(extWorldspace);
 
         for (int dx = -halfGridSizePlusOne; dx <= halfGridSizePlusOne; ++dx)
         {

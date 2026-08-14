@@ -83,6 +83,12 @@ void ESM4::ActorCharacter::load(ESM4::Reader& reader)
                 reader.getFormId(mEsp.parent);
                 reader.get(mEsp.flags);
                 break;
+            case ESM::fourCC("XLKR"):
+                if (subHdr.dataSize == sizeof(std::uint32_t))
+                    reader.getFormId(mLinkedReference);
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("XCNT"):
             {
                 reader.get(mCount);
@@ -99,7 +105,6 @@ void ESM4::ActorCharacter::load(ESM4::Reader& reader)
             case ESM::fourCC("XHOR"):
             case ESM::fourCC("XLCM"): // levelled creature
             case ESM::fourCC("XLCN"): // location
-            case ESM::fourCC("XLKR"): // location route?
             case ESM::fourCC("XLRT"): // location type
             //
             case ESM::fourCC("XPRD"):

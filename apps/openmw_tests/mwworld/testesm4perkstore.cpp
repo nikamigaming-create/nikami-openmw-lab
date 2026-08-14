@@ -128,7 +128,6 @@ namespace
 
         MWWorld::ESMStore store;
         store.loadESM4(*reader, nullptr);
-        store.setUp();
 
         const auto& perks = store.get<ESM4::Perk>();
         ASSERT_EQ(perks.getSize(), 1);

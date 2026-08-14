@@ -93,7 +93,7 @@ namespace ESM4
     struct Quest
     {
         // NOTE: these values are for TES4
-        enum QuestFlags
+        enum Quest_Flags
         {
             Flag_StartGameEnabled = 0x01,
             Flag_AllowRepeatConvTopic = 0x04,

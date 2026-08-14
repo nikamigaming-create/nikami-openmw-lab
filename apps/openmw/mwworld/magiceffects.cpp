@@ -48,7 +48,7 @@ namespace MWWorld
             for (auto& effect : spell->mEffects.mList)
             {
                 if (effect.mData.mEffectID == ESM::MagicEffect::DrainAttribute)
-                    stats.mWorsenings[ESM::Attribute::refIdToIndex(effect.mData.mAttribute)] = oldStats.mWorsenings;
+                    stats.mWorsenings[effect.mData.mAttribute] = oldStats.mWorsenings;
             }
             creatureStats.mCorprusSpells[id] = stats;
         }
@@ -61,7 +61,7 @@ namespace MWWorld
             ESM::ActiveSpells::ActiveSpellParams params;
             params.mSourceSpellId = id;
             params.mDisplayName = spell->mName;
-            params.mCaster.mIndex = creatureStats.mActorId;
+            params.mCasterActorId = creatureStats.mActorId;
             if (spell->mData.mType == ESM::Spell::ST_Ability)
                 params.mFlags = ESM::Compatibility::ActiveSpells::Type_Ability_Flags;
             else
@@ -93,8 +93,8 @@ namespace MWWorld
                     else
                     {
                         effect.mMagnitude = 0.f;
-                        effect.mMinMagnitude = static_cast<float>(enam.mData.mMagnMin);
-                        effect.mMaxMagnitude = static_cast<float>(enam.mData.mMagnMax);
+                        effect.mMinMagnitude = enam.mData.mMagnMin;
+                        effect.mMaxMagnitude = enam.mData.mMagnMax;
                         effect.mFlags = ESM::ActiveEffect::Flag_None;
                     }
                     params.mEffects.emplace_back(effect);
@@ -106,7 +106,7 @@ namespace MWWorld
         for (std::size_t i = 0; i < inventory.mItems.size(); ++i)
         {
             ESM::ObjectState& item = inventory.mItems[i];
-            auto slot = inventory.mEquipmentSlots.find(static_cast<uint32_t>(i));
+            auto slot = inventory.mEquipmentSlots.find(i);
             if (slot != inventory.mEquipmentSlots.end())
             {
                 MWBase::Environment::get().getWorldModel()->assignSaveFileRefNum(item.mRef);
@@ -137,7 +137,7 @@ namespace MWWorld
             ESM::ActiveSpells::ActiveSpellParams params;
             params.mSourceSpellId = id;
             params.mDisplayName = std::move(name);
-            params.mCaster.mIndex = creatureStats.mActorId;
+            params.mCasterActorId = creatureStats.mActorId;
             params.mFlags = ESM::Compatibility::ActiveSpells::Type_Enchantment_Flags;
             params.mWorsenings = -1;
             params.mNextWorsening = ESM::TimeStamp();
@@ -196,7 +196,7 @@ namespace MWWorld
                     {
                         if (effect.mEffectId == key.mEffectId && effect.mEffectIndex == key.mEffectIndex)
                         {
-                            effect.mArg = ESM::RefNum{ .mIndex = static_cast<uint32_t>(actorId), .mContentFile = -1 };
+                            effect.mArg = actorId;
                             effect.mFlags |= ESM::ActiveEffect::Flag_Applied | ESM::ActiveEffect::Flag_Remove;
                             found = true;
                             break;
@@ -216,7 +216,7 @@ namespace MWWorld
             dynamic.mMod = 0.f;
         }
         for (auto& setting : creatureStats.mAiSettings)
-            setting.mMod = 0;
+            setting.mMod = 0.f;
         if (npcStats)
         {
             for (auto& skill : npcStats->mSkills)
@@ -231,7 +231,7 @@ namespace MWWorld
         for (auto& dynamic : creatureStats.mDynamic)
             dynamic.mMod = 0.f;
         for (auto& setting : creatureStats.mAiSettings)
-            setting.mMod = 0;
+            setting.mMod = 0.f;
     }
 
     // Versions 17-27 wrote an equipment slot index to mItem

@@ -38,9 +38,12 @@ namespace ESM
         if (mRunning)
             esm.writeHNT("RUN_", int32_t{ 1 });
 
-        esm.writeHNORefId("TARG", mTargetId);
-        if (mTargetRef.isSet())
-            esm.writeFormId(mTargetRef, true, "FRMR");
+        if (!mTargetId.empty())
+        {
+            esm.writeHNORefId("TARG", mTargetId);
+            if (mTargetRef.isSet())
+                esm.writeFormId(mTargetRef, true, "FRMR");
+        }
     }
 
 }

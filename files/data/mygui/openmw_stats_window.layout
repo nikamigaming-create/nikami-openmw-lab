@@ -3,26 +3,6 @@
 <MyGUI type="Layout">
     <Widget type="Window" skin="MW_Window_Pinnable" layer="Windows" position="0 0 500 342" name="_Main">
         <Property key="MinSize" value="244 114"/>
-        <Widget type="ImageBox" skin="ImageBox" position="0 0 500 342" align="Stretch" name="PipBoyBackdrop">
-            <Property key="ImageTexture" value="textures\interface\shared\background\pipboy.dds"/>
-            <Property key="Colour" value="#174d26"/>
-            <Property key="NeedMouse" value="false"/>
-            <Property key="Visible" value="false"/>
-        </Widget>
-        <Widget type="TextBox" skin="NormalText" position="42 18 420 26" align="Top HStretch" name="PipBoyHeader">
-            <Property key="Caption" value="PIP-BOY 3000  //  STATS"/>
-            <Property key="TextColour" value="#74ff86"/>
-            <Property key="TextAlign" value="Left VCenter"/>
-            <Property key="NeedMouse" value="false"/>
-            <Property key="Visible" value="false"/>
-        </Widget>
-        <Widget type="TextBox" skin="NormalText" position="42 312 416 20" align="Bottom HStretch" name="PipBoyFooter">
-            <Property key="Caption" value="STATUS / SPECIAL / SKILLS"/>
-            <Property key="TextColour" value="#58d86d"/>
-            <Property key="TextAlign" value="Center VCenter"/>
-            <Property key="NeedMouse" value="false"/>
-            <Property key="Visible" value="false"/>
-        </Widget>
         <Widget type="Widget" skin="" name="LeftPane" position="0 0 220 342">
             <UserString key="LeftOffsetWidth" value="24"/>
             <UserString key="LeftPaneRatio" value="0.44"/>

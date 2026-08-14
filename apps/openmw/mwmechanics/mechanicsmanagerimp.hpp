@@ -109,9 +109,6 @@ namespace MWMechanics
             const MWWorld::Ptr& ptr, const MWWorld::Ptr& target, const std::set<MWWorld::Ptr>* targetAllies) override;
 
         void stopCombat(const MWWorld::Ptr& ptr) override;
-        bool lookAt(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
-            ESM::FormId targetId, bool rotateBody) override;
-        void stopLooking(const MWWorld::Ptr& ptr) override;
 
         bool playFalloutDialogueAnimation(
             const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) override;
@@ -198,7 +195,7 @@ namespace MWMechanics
         bool onOpen(const MWWorld::Ptr& ptr) override;
         void onClose(const MWWorld::Ptr& ptr) override;
 
-        size_t countSavedGameRecords() const override;
+        int countSavedGameRecords() const override;
 
         void write(ESM::ESMWriter& writer, Loading::Listener& listener) const override;
 
@@ -243,7 +240,7 @@ namespace MWMechanics
         void setWerewolf(const MWWorld::Ptr& actor, bool werewolf) override;
         void applyWerewolfAcrobatics(const MWWorld::Ptr& actor) override;
 
-        void cleanupSummonedCreature(ESM::RefNum creature) override;
+        void cleanupSummonedCreature(const MWWorld::Ptr& caster, int creatureActorId) override;
 
         void confiscateStolenItemToOwner(
             const MWWorld::Ptr& player, const MWWorld::Ptr& item, const MWWorld::Ptr& victim, int count) override;
@@ -257,7 +254,8 @@ namespace MWMechanics
         int getGreetingTimer(const MWWorld::Ptr& ptr) const override;
         float getAngleToPlayer(const MWWorld::Ptr& ptr) const override;
         GreetingState getGreetingState(const MWWorld::Ptr& ptr) const override;
-        void fastForwardAi() const override;
+        bool isTurningToPlayer(const MWWorld::Ptr& ptr) const override;
+        bool sendFalloutAssaultAlarm(const MWWorld::Ptr& victim, const ESM::RefId& faction) override;
 
     private:
         bool canCommitCrimeAgainst(const MWWorld::Ptr& victim, const MWWorld::Ptr& attacker);

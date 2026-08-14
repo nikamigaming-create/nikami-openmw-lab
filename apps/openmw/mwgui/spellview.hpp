@@ -28,7 +28,7 @@ namespace MWGui
     {
         MYGUI_RTTI_DERIVED(SpellView)
     public:
-        SpellView() {}
+        SpellView();
 
         /// Register needed components with MyGUI's factory manager
         static void registerComponents();
@@ -63,6 +63,8 @@ namespace MWGui
         void onControllerButton(const unsigned char button);
 
     private:
+        MyGUI::ScrollView* mScrollView;
+
         std::unique_ptr<SpellModel> mModel;
 
         /// tracks a row in the spell view
@@ -88,27 +90,28 @@ namespace MWGui
 
         std::vector<LineInfo> mLines;
 
-        /// Keep a list of buttons for controller navigation and their index in the full list.
-        std::vector<std::pair<Gui::SharedStateButton*, int>> mButtons;
-        /// Keep a list of group offsets for controller navigation
-        std::vector<size_t> mGroupIndices;
-        MyGUI::ScrollView* mScrollView = nullptr;
-        size_t mControllerFocus = 0;
-
-        bool mShowCostColumn = true;
-        bool mHighlightSelected = true;
-        bool mControllerActiveWindow = false;
+        bool mShowCostColumn;
+        bool mHighlightSelected;
 
         void layoutWidgets();
         void addGroup(const std::string& label1, const std::string& label2);
         void adjustSpellWidget(const Spell& spell, SpellModel::ModelIndex index, MyGUI::Widget* widget);
 
-        void updateControllerFocus(size_t prevFocus, size_t newFocus);
+        /// Keep a list of buttons for controller navigation and their index in the full list.
+        std::vector<std::pair<Gui::SharedStateButton*, int>> mButtons;
+        /// Keep a list of group offsets for controller navigation
+        std::vector<int> mGroupIndices;
+
+        bool mControllerActiveWindow;
+        int mControllerFocus;
+        void updateControllerFocus(int prevFocus, int newFocus);
 
         void onSpellSelected(MyGUI::Widget* sender);
         void onMouseWheelMoved(MyGUI::Widget* sender, int rel);
 
         SpellModel::ModelIndex getSpellModelIndex(MyGUI::Widget* sender);
+
+        static const char* sSpellModelIndex;
     };
 
 }

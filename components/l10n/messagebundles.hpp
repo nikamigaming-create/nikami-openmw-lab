@@ -3,7 +3,6 @@
 
 #include <functional>
 #include <map>
-#include <shared_mutex>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -15,15 +14,6 @@
 
 namespace L10n
 {
-    struct GmstMessageFormat
-    {
-        std::string mPattern;
-        std::vector<std::vector<std::string>> mVariableNames;
-        bool mReplaceFormat = false;
-    };
-
-    using GmstLoader = std::function<const std::string*(std::string_view)>;
-
     /**
      * @brief A collection of Message Bundles
      *
@@ -55,30 +45,23 @@ namespace L10n
         void load(std::istream& input, const icu::Locale& lang);
         bool isLoaded(const icu::Locale& loc) const
         {
-            std::string_view localeName = loc.getName();
-            if (localeName == "gmst")
-                return mGmstsLoaded;
-            return mBundles.find(localeName) != mBundles.end();
+            return mBundles.find(std::string_view(loc.getName())) != mBundles.end();
         }
         const icu::Locale& getFallbackLocale() const { return mFallbackLocale; }
-        void setGmstLoader(GmstLoader fn) { mGmstLoader = std::move(fn); }
+        void setGmstLoader(std::function<std::string(std::string_view)> fn) { mGmstLoader = std::move(fn); }
 
     private:
         template <class T>
         using StringMap = std::unordered_map<std::string, T, Misc::StringUtils::StringHash, std::equal_to<>>;
         // icu::Locale isn't hashable (or comparable), so we use the string form instead, which is canonicalized
-        mutable StringMap<StringMap<icu::MessageFormat>> mBundles;
-        mutable StringMap<GmstMessageFormat> mGmsts;
-        bool mGmstsLoaded{ false };
-        mutable std::shared_mutex mMutex;
+        StringMap<StringMap<icu::MessageFormat>> mBundles;
         const icu::Locale mFallbackLocale;
         std::vector<std::string> mPreferredLocaleStrings;
         std::vector<icu::Locale> mPreferredLocales;
-        GmstLoader mGmstLoader;
+        std::function<std::string(std::string_view)> mGmstLoader;
         const icu::MessageFormat* findMessage(std::string_view key, std::string_view localeName) const;
     };
 
-    icu::UnicodeString toUnicode(std::string_view value);
 }
 
 #endif // COMPONENTS_L10N_MESSAGEBUNDLES_H

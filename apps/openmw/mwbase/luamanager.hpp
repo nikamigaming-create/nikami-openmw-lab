@@ -9,9 +9,9 @@
 #include <SDL_events.h>
 
 #include "../mwgui/mode.hpp"
-#include "../mwmechanics/attacktype.hpp"
 #include "../mwmechanics/damagesourcetype.hpp"
 #include "../mwrender/animationpriority.hpp"
+#include "../mwworld/ptr.hpp"
 #include <components/sdlutil/events.hpp>
 
 namespace MWWorld
@@ -31,8 +31,6 @@ namespace ESM
     class ESMWriter;
     class RefId;
     struct LuaScripts;
-    struct DialInfo;
-    struct Dialogue;
 }
 
 namespace LuaUtil
@@ -63,8 +61,8 @@ namespace MWBase
     public:
         virtual ~LuaManager() = default;
 
-        virtual void contentFilesLoaded() = 0;
         virtual void newGameStarted() = 0;
+        virtual void prepareGameLoad() = 0;
         virtual void gameLoaded() = 0;
         virtual void gameEnded() = 0;
         virtual void noGame() = 0;
@@ -80,9 +78,6 @@ namespace MWBase
             const MWRender::AnimPriority& priority, int blendMask, bool autodisable, float speedmult,
             std::string_view start, std::string_view stop, float startpoint, uint32_t loops, bool loopfallback)
             = 0;
-        virtual void animationEnded(const MWWorld::Ptr& actor, std::string_view groupname, float time, float completion,
-            std::string_view startKey, std::string_view stopKey)
-            = 0;
         virtual void jailTimeServed(const MWWorld::Ptr& actor, int days) = 0;
         virtual void skillLevelUp(const MWWorld::Ptr& actor, ESM::RefId skillId, std::string_view source) = 0;
         virtual void skillUse(const MWWorld::Ptr& actor, ESM::RefId skillId, int useType, float scale) = 0;
@@ -90,15 +85,15 @@ namespace MWBase
             const MWWorld::Ptr& ammo, int attackType, float attackStrength, float damage, bool isHealth,
             const osg::Vec3f& hitPos, bool successful, MWMechanics::DamageSourceType)
             = 0;
+        virtual void actorStartedCombat(const MWWorld::Ptr&, const MWWorld::Ptr&) {}
+        virtual void actorEndedCombat(const MWWorld::Ptr&) {}
         virtual void exteriorCreated(MWWorld::CellStore& cell) = 0;
         virtual void actorDied(const MWWorld::Ptr& actor) = 0;
-        virtual void onDialogueResponse(
-            const MWWorld::Ptr& actor, const ESM::DialInfo& info, const ESM::Dialogue& record)
-            = 0;
         virtual void questUpdated(const ESM::RefId& questId, int stage) = 0;
         // `arg` is either forwarded from MWGui::pushGuiMode or empty
         virtual void uiModeChanged(const MWWorld::Ptr& arg) = 0;
         virtual void savePermanentStorage(const std::filesystem::path& userConfigPath) = 0;
+        virtual void vrRecentered(bool vertical, bool horizontal) = 0;
 
         // TODO: notify LuaManager about other events
         // virtual void objectOnHit(const MWWorld::Ptr &ptr, float damage, bool ishealth, const MWWorld::Ptr &object,
@@ -139,11 +134,12 @@ namespace MWBase
             bool mJump = false;
             bool mRun = false;
             bool mSneak = false;
+            float mSpeedMultiplier = 1.f;
             float mMovement = 0;
             float mSideMovement = 0;
             float mPitchChange = 0;
             float mYawChange = 0;
-            MWMechanics::AttackType mUse = MWMechanics::AttackType::NoAttack;
+            int mUse = 0;
         };
 
         virtual ActorControls* getActorControls(const MWWorld::Ptr&) const = 0;
@@ -152,7 +148,7 @@ namespace MWBase
         virtual void setupPlayer(const MWWorld::Ptr&) = 0;
 
         // Saving
-        size_t countSavedGameRecords() const { return 1; }
+        int countSavedGameRecords() const { return 1; }
         virtual void write(ESM::ESMWriter& writer, Loading::Listener& progress) = 0;
         virtual void saveLocalScripts(const MWWorld::Ptr& ptr, ESM::LuaScripts& data) = 0;
 

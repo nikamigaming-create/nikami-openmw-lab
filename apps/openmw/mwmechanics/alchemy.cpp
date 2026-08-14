@@ -4,7 +4,6 @@
 #include <cmath>
 
 #include <algorithm>
-#include <format>
 #include <map>
 #include <stdexcept>
 
@@ -31,11 +30,11 @@ namespace
 
     std::optional<MWMechanics::EffectKey> toKey(const ESM::Ingredient& ingredient, size_t i)
     {
-        if (ingredient.mData.mEffectID[i].empty())
+        if (ingredient.mData.mEffectID[i] < 0)
             return {};
-        ESM::RefId arg = ingredient.mData.mSkills[i];
+        ESM::RefId arg = ESM::Skill::indexToRefId(ingredient.mData.mSkills[i]);
         if (arg.empty())
-            arg = ingredient.mData.mAttributes[i];
+            arg = ESM::Attribute::indexToRefId(ingredient.mData.mAttributes[i]);
         return MWMechanics::EffectKey(ingredient.mData.mEffectID[i], arg);
     }
 
@@ -177,7 +176,7 @@ void MWMechanics::Alchemy::updateEffects()
 
         if (magicEffect->mData.mBaseCost <= 0)
         {
-            const std::string os = std::format("invalid base cost for magic effect {}", effectKey.mId.getRefIdString());
+            const std::string os = "invalid base cost for magic effect " + std::to_string(effectKey.mId);
             throw std::runtime_error(os);
         }
 
@@ -220,10 +219,13 @@ void MWMechanics::Alchemy::updateEffects()
             ESM::ENAMstruct effect;
             effect.mEffectID = effectKey.mId;
 
+            effect.mAttribute = -1;
+            effect.mSkill = -1;
+
             if (magicEffect->mData.mFlags & ESM::MagicEffect::TargetSkill)
-                effect.mSkill = effectKey.mArg;
+                effect.mSkill = ESM::Skill::refIdToIndex(effectKey.mArg);
             else if (magicEffect->mData.mFlags & ESM::MagicEffect::TargetAttribute)
-                effect.mAttribute = effectKey.mArg;
+                effect.mAttribute = ESM::Attribute::refIdToIndex(effectKey.mArg);
 
             effect.mRange = 0;
             effect.mArea = 0;
@@ -393,7 +395,8 @@ void MWMechanics::Alchemy::setAlchemist(const MWWorld::Ptr& npc)
 
     MWWorld::ContainerStore& store = npc.getClass().getContainerStore(npc);
 
-    for (auto iter(store.begin(MWWorld::ContainerStore::Type_Apparatus)); iter != store.end(); ++iter)
+    for (MWWorld::ContainerStoreIterator iter(store.begin(MWWorld::ContainerStore::Type_Apparatus));
+         iter != store.end(); ++iter)
     {
         MWWorld::LiveCellRef<ESM::Apparatus>* ref = iter->get<ESM::Apparatus>();
 
@@ -512,7 +515,7 @@ MWMechanics::Alchemy::TEffectsIterator MWMechanics::Alchemy::endEffects() const
     return mEffects.end();
 }
 
-bool MWMechanics::Alchemy::knownEffect(size_t potionEffectIndex, const MWWorld::Ptr& npc)
+bool MWMechanics::Alchemy::knownEffect(unsigned int potionEffectIndex, const MWWorld::Ptr& npc)
 {
     float alchemySkill = npc.getClass().getSkill(npc, ESM::Skill::Alchemy);
     static const float fWortChanceValue
@@ -601,8 +604,7 @@ std::string MWMechanics::Alchemy::suggestPotionName()
     return effects.begin()->toString();
 }
 
-std::vector<std::string> MWMechanics::Alchemy::effectsDescription(
-    const MWWorld::ConstPtr& ptr, const float alchemySkill)
+std::vector<std::string> MWMechanics::Alchemy::effectsDescription(const MWWorld::ConstPtr& ptr, const int alchemySkill)
 {
     std::vector<std::string> effects;
 
@@ -619,10 +621,11 @@ std::vector<std::string> MWMechanics::Alchemy::effectsDescription(
         if (alchemySkill < fWortChanceValue * static_cast<int>(i + 1))
             break;
 
-        if (!effectID.empty())
+        if (effectID != -1)
         {
-            const ESM::Attribute* attribute = store->get<ESM::Attribute>().search(data.mAttributes[i]);
-            const ESM::Skill* skill = store->get<ESM::Skill>().search(data.mSkills[i]);
+            const ESM::Attribute* attribute
+                = store->get<ESM::Attribute>().search(ESM::Attribute::indexToRefId(data.mAttributes[i]));
+            const ESM::Skill* skill = store->get<ESM::Skill>().search(ESM::Skill::indexToRefId(data.mSkills[i]));
             std::string effect = getMagicEffectString(*mgef.find(effectID), attribute, skill);
 
             effects.push_back(std::move(effect));

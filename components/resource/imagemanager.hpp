@@ -36,6 +36,7 @@ namespace Resource
     private:
         osg::ref_ptr<osg::Image> mWarningImage;
         osg::ref_ptr<osgDB::Options> mOptions;
+        osg::ref_ptr<osgDB::Options> mOptionsNoFlip;
 
         ImageManager(const ImageManager&);
         void operator=(const ImageManager&);

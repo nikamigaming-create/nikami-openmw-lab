@@ -12,7 +12,7 @@ namespace LuaUtil
     class ScriptTracker
     {
         using Frame = unsigned int;
-        using TrackedScriptContainer = std::pair<ScriptsContainerWeakPtr, Frame>;
+        using TrackedScriptContainer = std::pair<ScriptsContainer::WeakPtr, Frame>;
         std::queue<TrackedScriptContainer> mLoadedScripts;
         Frame mFrame = 0;
 

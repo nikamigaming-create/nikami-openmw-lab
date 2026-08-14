@@ -74,29 +74,14 @@ void ESM4::ImageSpace::load(Reader& reader)
                 std::vector<std::uint8_t> raw(subHdr.dataSize);
                 if (!raw.empty())
                     reader.get(raw.data(), raw.size());
-                constexpr std::size_t legacyTraitCount = sTraitCount - 1;
-                constexpr std::size_t legacyTraitBytes = legacyTraitCount * sizeof(float);
-                constexpr std::size_t cinematicFlagsOffset = sizeof(mTraits) + 4 * sizeof(std::uint32_t);
-                constexpr std::size_t modernPayloadBytes = cinematicFlagsOffset + sizeof(std::uint32_t);
-                if (reader.formVersion() < 14 && raw.size() >= legacyTraitBytes
-                    && raw.size() < modernPayloadBytes)
-                {
-                    // Older Fallout image spaces omit Skin Dimmer. Migrate their 32 authored traits into the
-                    // 33-slot runtime layout instead of treating the first trailing flag word as Tint Strength.
-                    constexpr std::size_t traitsBeforeSkin = Trait_SkinDimmer;
-                    constexpr std::size_t traitsAfterSkin = sTraitCount - Trait_BloomBlurRadius;
-                    std::memcpy(mTraits.data(), raw.data(), traitsBeforeSkin * sizeof(float));
-                    mTraits[Trait_SkinDimmer] = 1.f;
-                    std::memcpy(mTraits.data() + Trait_BloomBlurRadius, raw.data() + traitsBeforeSkin * sizeof(float),
-                        traitsAfterSkin * sizeof(float));
-                }
-                else if (raw.size() >= sizeof(mTraits))
+                if (raw.size() >= sizeof(mTraits))
                 {
                     // Fallout 3/New Vegas store the base image-space traits in one DNAM.
                     std::memcpy(mTraits.data(), raw.data(), sizeof(mTraits));
                     // Form version 13 added the GECK enable flags after four reserved dwords.
                     // Use the size as the compatibility gate because Reader already handed us
                     // the exact DNAM payload and older records legitimately omit this tail.
+                    constexpr std::size_t cinematicFlagsOffset = sizeof(mTraits) + 4 * sizeof(std::uint32_t);
                     if (raw.size() > cinematicFlagsOffset)
                     {
                         mCinematicFlags = raw[cinematicFlagsOffset];

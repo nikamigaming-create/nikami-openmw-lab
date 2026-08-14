@@ -2,9 +2,7 @@
 #define OPENMW_ESM_CREATURESTATS_H
 
 #include <array>
-#include <cstdint>
 #include <map>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,6 +22,31 @@ namespace ESM
 {
     class ESMReader;
     class ESMWriter;
+
+    enum class FalloutActiveEffectKind : std::uint32_t
+    {
+        HealthDamage = 0,
+        ActorValueModifier = 1,
+        Paralysis = 2,
+    };
+
+    /// Save-game representation of a running native Fallout actor effect. Source records remain authoritative for
+    /// presentation and script execution; this snapshot retains only the time-dependent gameplay state needed to
+    /// resume an effect exactly after loading a save.
+    struct FalloutActiveEffect
+    {
+        RefId mSpell;
+        RefId mBaseEffect;
+        FalloutActiveEffectKind mKind = FalloutActiveEffectKind::HealthDamage;
+        std::uint32_t mFlags = 0;
+        std::int32_t mActorValue = -1;
+        float mMagnitude = 0.f;
+        float mDuration = 0.f;
+        float mTimeLeft = 0.f;
+        std::int32_t mCasterActorId = -1;
+
+        friend bool operator==(const FalloutActiveEffect&, const FalloutActiveEffect&) = default;
+    };
 
     // format 0, saved games only
     struct CreatureStats
@@ -45,7 +68,7 @@ namespace ESM
         std::array<StatState<int>, 4> mAiSettings;
 
         std::map<SummonKey, int> mSummonedCreatureMap;
-        std::multimap<ESM::RefId, RefNum> mSummonedCreatures;
+        std::multimap<int, int> mSummonedCreatures;
         std::vector<int> mSummonGraveyard;
 
         TimeStamp mTradeTime;
@@ -91,30 +114,11 @@ namespace ESM
         int32_t mLevel;
         bool mMissingACDT;
 
-        // Optional FLMB data keeps accumulated native Fallout limb damage across saves.
+        // Accumulated native Fallout limb damage for actor values 25..31. Optional FLMB keeps old saves valid.
         std::array<float, 7> mFalloutLimbDamage{};
 
-        // Per-reference Fallout actor-value and faction changes made by quest scripts. Actor values use their
-        // native numeric AV index. A faction rank of FalloutFactionRemoved records an explicit removal from the
-        // authored base/template faction list; every other value must fit the signed rank byte used by ESM4.
-        static constexpr std::int16_t FalloutFactionRemoved = -129;
-        std::map<std::uint8_t, float> mFalloutActorValueOverrides;
-        std::map<ESM::FormId, std::int16_t> mFalloutFactionOverrides;
-        // Per-reference Fallout flags changed by actor script commands. Equipment overrides preserve the complete
-        // equipped set after the first EquipItem/UnequipItem/RemoveAllItems mutation; the explicit presence bit
-        // distinguishes "authored base equipment" from an intentionally empty equipped set.
-        std::uint32_t mFalloutRuntimeFlags = 0;
-        std::optional<ESM::FormId> mFalloutLookTarget;
-        bool mFalloutLookRotateBody = false;
-        bool mHasFalloutEquipmentOverride = false;
-        std::vector<ESM::FormId> mFalloutEquippedItems;
-        // AddSpell/RemoveSpell mutate the effective ESM4 SPEL list on one placed actor. The presence bit
-        // distinguishes an explicitly empty runtime list from the immutable NPC_/CREA template list.
-        bool mHasFalloutActorEffectOverride = false;
-        std::vector<ESM::FormId> mFalloutActorEffects;
-        // SetActorFullName is likewise per-reference. MESG.FULL is copied here so the save never retains a
-        // pointer into a content store whose winning record may change after load-order remapping.
-        std::optional<std::string> mFalloutFullName;
+        // Optional repeated FAEF groups keep old saves valid and do not reinterpret ESM3 ActiveSpells.
+        std::vector<FalloutActiveEffect> mFalloutActiveEffects;
 
         std::map<ESM::RefId, CorprusStats> mCorprusSpells;
         SpellState mSpells;

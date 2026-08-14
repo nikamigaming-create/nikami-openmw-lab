@@ -200,6 +200,8 @@ namespace MWWorld
 
         bool isCellActive(const CellStore& cell);
 
+        Ptr searchPtrViaActorId(int actorId);
+
         void preload(const std::string& mesh, bool useAnim = false);
 
         void testExteriorCells();

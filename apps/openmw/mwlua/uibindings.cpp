@@ -16,54 +16,25 @@
 #include "luamanagerimp.hpp"
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/inputmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
+#include "../mwvr/vrgui.hpp"
+#include <MyGUI_InputManager.h>
 
 namespace MWLua
 {
     namespace
     {
-        const std::unordered_map<MWGui::GuiMode, std::string_view> modeToName{
-            { MWGui::GM_Inventory, "Interface" },
-            { MWGui::GM_FalloutPipBoy, "FalloutPipBoy" },
-            { MWGui::GM_Container, "Container" },
-            { MWGui::GM_Companion, "Companion" },
-            { MWGui::GM_MainMenu, "MainMenu" },
-            { MWGui::GM_Journal, "Journal" },
-            { MWGui::GM_Scroll, "Scroll" },
-            { MWGui::GM_Book, "Book" },
-            { MWGui::GM_Alchemy, "Alchemy" },
-            { MWGui::GM_Repair, "Repair" },
-            { MWGui::GM_Dialogue, "Dialogue" },
-            { MWGui::GM_Barter, "Barter" },
-            { MWGui::GM_Rest, "Rest" },
-            { MWGui::GM_SpellBuying, "SpellBuying" },
-            { MWGui::GM_Travel, "Travel" },
-            { MWGui::GM_SpellCreation, "SpellCreation" },
-            { MWGui::GM_Enchanting, "Enchanting" },
-            { MWGui::GM_Recharge, "Recharge" },
-            { MWGui::GM_Training, "Training" },
-            { MWGui::GM_MerchantRepair, "MerchantRepair" },
-            { MWGui::GM_Levelup, "LevelUp" },
-            { MWGui::GM_Name, "ChargenName" },
-            { MWGui::GM_Race, "ChargenRace" },
-            { MWGui::GM_Birth, "ChargenBirth" },
-            { MWGui::GM_Class, "ChargenClass" },
-            { MWGui::GM_ClassGenerate, "ChargenClassGenerate" },
-            { MWGui::GM_ClassPick, "ChargenClassPick" },
-            { MWGui::GM_ClassCreate, "ChargenClassCreate" },
-            { MWGui::GM_Review, "ChargenClassReview" },
-            { MWGui::GM_Loading, "Loading" },
-            { MWGui::GM_LoadingWallpaper, "LoadingWallpaper" },
-            { MWGui::GM_Jail, "Jail" },
-            { MWGui::GM_QuickKeysMenu, "QuickKeysMenu" },
-        };
-
-        const auto nameToMode = [] {
-            std::unordered_map<std::string_view, MWGui::GuiMode> res;
-            for (const auto& [mode, name] : modeToName)
-                res[name] = mode;
-            return res;
-        }();
+        const std::unordered_map<std::string_view, MWGui::GuiMode>& nameToMode()
+        {
+            static const auto ntm = [] {
+                std::unordered_map<std::string_view, MWGui::GuiMode> res;
+                for (const auto& [mode, name] : MWBase::Environment::get().getWindowManager()->guiModeToName())
+                    res[name] = mode;
+                return res;
+            }();
+            return ntm;
+        }
     }
 
     sol::table registerUiApi(const Context& context)
@@ -78,7 +49,6 @@ namespace MWLua
             luaManager->addAction([state] { MWBase::Environment::get().getWindowManager()->setHudVisibility(state); });
         };
         api["_isHudVisible"] = []() -> bool { return MWBase::Environment::get().getWindowManager()->isHudVisible(); };
-        api["_getDefaultFontSize"] = []() -> int { return Settings::gui().mFontSize; };
         api["showMessage"]
             = [luaManager = context.mLuaManager](std::string_view message, const sol::optional<sol::table>& options) {
                   MWGui::ShowInDialogueMode mode = MWGui::ShowInDialogueMode_IfPossible;
@@ -127,19 +97,33 @@ namespace MWLua
         };
         api["content"] = LuaUi::loadContentConstructor(context.mLua);
 
-        api["create"]
-            = [luaManager = context.mLuaManager, menu](const sol::table& layout, sol::optional<sol::table> options) {
-                  auto element = LuaUi::Element::make(layout, menu, options);
-                  luaManager->addAction([element] { element->create(); }, "Create UI");
-                  return element;
-              };
+        api["create"] = [luaManager = context.mLuaManager, menu](const sol::table& layout) {
+            auto element = LuaUi::Element::make(layout, menu);
+            luaManager->addAction(
+                [element] {
+                    element->create();
+                    if (VR::getVR())
+                        MWVR::VRGUIManager::instance().registerLuaElement(element.get());
+                },
+                "Create UI");
+            return element;
+        };
 
         api["updateAll"] = [luaManager = context.mLuaManager, menu]() {
             LuaUi::Element::forEach(menu, [](LuaUi::Element* e) {
                 if (e->mState == LuaUi::Element::Created)
                     e->mState = LuaUi::Element::Update;
             });
-            luaManager->addAction([menu]() { LuaUi::Element::forEach(menu, [](LuaUi::Element* e) { e->update(); }); },
+            luaManager->addAction(
+                [menu]() {
+                    LuaUi::Element::forEach(menu, [](LuaUi::Element* e) {
+                        if (VR::getVR())
+                            MWVR::VRGUIManager::instance().deregisterLuaElement(e);
+                        e->update();
+                        if (VR::getVR())
+                            MWVR::VRGUIManager::instance().registerLuaElement(e);
+                    });
+                },
                 "Update all menu UI elements");
         };
         api["_getMenuTransparency"] = []() -> float { return Settings::gui().mMenuTransparency; };
@@ -219,7 +203,7 @@ namespace MWLua
             LuaUi::TextureData data;
             sol::object path = LuaUtil::getFieldOrNil(options, "path");
             if (path.is<std::string>())
-                data.mPath = VFS::Path::Normalized(path.as<std::string>());
+                data.mPath = path.as<std::string>();
             if (data.mPath.empty())
                 throw std::logic_error("Invalid texture path");
             sol::object offset = LuaUtil::getFieldOrNil(options, "offset");
@@ -231,14 +215,11 @@ namespace MWLua
             return luaManager->uiResourceManager()->registerTexture(std::move(data));
         };
 
-        api["screenSize"] = []() {
-            return osg::Vec2f(
-                static_cast<float>(Settings::video().mResolutionX), static_cast<float>(Settings::video().mResolutionY));
-        };
+        api["screenSize"] = []() { return osg::Vec2f(Settings::video().mResolutionX, Settings::video().mResolutionY); };
 
         api["_getAllUiModes"] = [](sol::this_state thisState) {
             sol::table res(thisState, sol::create);
-            for (const auto& [_, name] : modeToName)
+            for (const auto& [_, name] : MWBase::Environment::get().getWindowManager()->guiModeToName())
                 res[name] = name;
             return res;
         };
@@ -246,30 +227,30 @@ namespace MWLua
             sol::table res(thisState, sol::create);
             int i = 1;
             for (MWGui::GuiMode m : windowManager->getGuiModeStack())
-                res[i++] = modeToName.at(m);
+                res[i++] = MWBase::Environment::get().getWindowManager()->guiModeToName().at(m);
             return res;
         };
         api["_setUiModeStack"]
             = [windowManager, luaManager = context.mLuaManager](sol::table modes, sol::optional<LObject> arg) {
                   std::vector<MWGui::GuiMode> newStack(modes.size());
                   for (unsigned i = 0; i < newStack.size(); ++i)
-                      newStack[i] = nameToMode.at(LuaUtil::cast<std::string_view>(modes[LuaUtil::toLuaIndex(i)]));
+                      newStack[i] = nameToMode().at(LuaUtil::cast<std::string_view>(modes[LuaUtil::toLuaIndex(i)]));
                   luaManager->addAction(
                       [windowManager, newStack = std::move(newStack), arg = std::move(arg)]() {
                           MWWorld::Ptr ptr;
                           if (arg.has_value())
                               ptr = arg->ptr();
                           const std::vector<MWGui::GuiMode>& stack = windowManager->getGuiModeStack();
-                          size_t common = 0;
+                          unsigned common = 0;
                           while (common < std::min(stack.size(), newStack.size()) && stack[common] == newStack[common])
                               common++;
                           // TODO: Maybe disallow opening/closing special modes (main menu, settings, loading screen)
                           // from player scripts. Add new Lua context "menu" that can do it.
-                          for (size_t i = stack.size() - common; i > 0; i--)
+                          for (unsigned i = stack.size() - common; i > 0; i--)
                               windowManager->popGuiMode(true);
                           if (common == newStack.size() && !newStack.empty() && arg.has_value())
                               windowManager->pushGuiMode(newStack.back(), ptr);
-                          for (size_t i = common; i < newStack.size(); ++i)
+                          for (unsigned i = common; i < newStack.size(); ++i)
                               windowManager->pushGuiMode(newStack[i], ptr);
                       },
                       "Set UI modes");
@@ -282,7 +263,7 @@ namespace MWLua
         };
         api["_getAllowedWindows"] = [windowManager](sol::this_state thisState, std::string_view mode) {
             sol::table res(thisState, sol::create);
-            for (std::string_view name : windowManager->getAllowedWindowIds(nameToMode.at(mode)))
+            for (std::string_view name : windowManager->getAllowedWindowIds(nameToMode().at(mode)))
                 res[name] = name;
             return res;
         };
@@ -293,6 +274,15 @@ namespace MWLua
               };
         api["_isWindowVisible"]
             = [windowManager](std::string_view window) { return windowManager->isWindowVisible(window); };
+        api["_menuBack"] = [luaManager = context.mLuaManager]() {
+            luaManager->addAction([]() {
+                // Essentially all we need to do here is inject ESC
+                if (MWBase::Environment::get().getWindowManager()->isGuiMode())
+                {
+                    MWBase::Environment::get().getInputManager()->injectEscapeKey();
+                }
+            });
+        };
 
         // TODO
         // api["_showMouseCursor"] = [](bool) {};
@@ -317,14 +307,28 @@ namespace MWLua
             uiElement["update"] = [luaManager = context.mLuaManager](const std::shared_ptr<LuaUi::Element>& element) {
                 if (element->mState != LuaUi::Element::Created)
                     return;
-                luaManager->addAction([element] { element->update(); }, "Update UI");
                 element->mState = LuaUi::Element::Update;
+                luaManager->addAction(
+                    [element] {
+                        if (VR::getVR())
+                            MWVR::VRGUIManager::instance().deregisterLuaElement(element.get());
+                        element->update();
+                        if (VR::getVR())
+                            MWVR::VRGUIManager::instance().registerLuaElement(element.get());
+                    },
+                    "Update UI");
             };
             uiElement["destroy"] = [luaManager = context.mLuaManager](const std::shared_ptr<LuaUi::Element>& element) {
                 if (element->mState == LuaUi::Element::Destroyed)
                     return;
-                luaManager->addAction([element] { LuaUi::Element::erase(element.get()); }, "Destroy UI");
                 element->mState = LuaUi::Element::Destroy;
+                luaManager->addAction(
+                    [element] {
+                        if (VR::getVR())
+                            MWVR::VRGUIManager::instance().deregisterLuaElement(element.get());
+                        LuaUi::Element::erase(element.get());
+                    },
+                    "Destroy UI");
             };
 
             auto uiLayer = context.sol().new_usertype<LuaUi::Layer>("UiLayer");

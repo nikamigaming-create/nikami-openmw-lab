@@ -17,13 +17,10 @@ namespace MWGui
         InventoryTabsOverlay();
 
         int getHeight();
-        void setPipBoyMode(bool enabled);
-        void setTab(size_t index);
+        void setTab(int index);
 
     private:
         std::vector<MyGUI::Button*> mTabs;
-        MyGUI::Widget* mLeftTriggerIcon = nullptr;
-        MyGUI::Widget* mRightTriggerIcon = nullptr;
 
         void onTabPressed(MyGUI::Widget* sender, int left, int top, MyGUI::MouseButton button);
     };

@@ -41,6 +41,14 @@ local KEYWORDS = {
     ['if'] = true, ['elseif'] = true, ['else'] = true, endif = true,
     set = true, to = true, ['return'] = true,
     short = true, int = true, long = true, float = true, ref = true,
+    reference = true, array_var = true, string_var = true,
+    let = true, eval = true, ['while'] = true, loop = true,
+    ['continue'] = true, ['break'] = true, ['function'] = true,
+}
+
+local VAR_TYPES = {
+    short = true, int = true, long = true, float = true, ref = true,
+    reference = true, array_var = true, string_var = true,
 }
 
 ---
@@ -56,6 +64,8 @@ parser.rules = {
     { name = 'WS', pattern = '[ \t]+', skip = true },
     { name = 'FLOAT', pattern = '%d+%.%d*', notFollowedBy = '[%a_]' },
     { name = 'FLOAT', pattern = '%.%d+', notFollowedBy = '[%a_]' },
+    { name = 'INT', pattern = '0[xX][%da-fA-F]+' },
+    { name = 'INT', pattern = '0[bB][01]+' },
     { name = 'NAME', pattern = '%d+[%a_][%w_]*' }, -- digit-led identifier
     { name = 'INT', pattern = '%d+' },
     { name = 'STRING', pattern = '"[^"\n]*"' },
@@ -67,10 +77,18 @@ parser.rules = {
     { name = 'OP', pattern = '!=' },
     { name = 'OP', pattern = '<=' },
     { name = 'OP', pattern = '>=' },
+    { name = 'OP', pattern = '%+=' },
+    { name = 'OP', pattern = '%-=' },
+    { name = 'OP', pattern = '%*=' },
+    { name = 'OP', pattern = '/=' },
+    { name = 'OP', pattern = '%%=' },
     { name = 'OP', pattern = ':=' },
-    { name = 'OP', pattern = '[%(%)%+%-%*/%%,%.<>=]' },
+    { name = 'OP', pattern = '::' },
+    { name = 'OP', pattern = '=>' },
+    { name = 'JUNK', pattern = '!!+', skip = true },
+    { name = 'OP', pattern = '[%(%)%[%]{}%+%-%*/%%,%.<>=&|!%$]' },
     -- prose/decoration characters vanilla ignores
-    { name = 'JUNK', pattern = "[`'!:?@#%$%^&|%[%]{}~\\]+", skip = true },
+    { name = 'JUNK', pattern = "[`':?@#%^~\\]+", skip = true },
     { name = 'NAME', pattern = '[%a_][%w_]*',
       map = function(value)
           local lower = value:lower()
@@ -167,11 +185,11 @@ function Parser:parseScript()
         if t.kind == 'EOF' then
             break
         end
-        if t.kind == 'KEYWORD' and (t.value == 'short' or t.value == 'int'
-                or t.value == 'long' or t.value == 'float' or t.value == 'ref') then
+        if t.kind == 'KEYWORD' and VAR_TYPES[t.value] then
             self:next()
             local varname = self:expect('NAME').value
-            variables[#variables + 1] = node('VarDecl', { type = t.value, name = varname })
+            local varType = t.value == 'reference' and 'ref' or t.value
+            variables[#variables + 1] = node('VarDecl', { type = varType, name = varname })
             self:skipRestOfLine() -- semicolon-less comments after declarations
             self:endOfLine()
         elseif t.kind == 'KEYWORD' and t.value == 'begin' then
@@ -183,6 +201,17 @@ function Parser:parseScript()
     return node('Script', { name = name, variables = variables, blocks = blocks, stray = stray })
 end
 
+function Parser:parseParameterList()
+    self:expect('OP', '{')
+    local parameters = {}
+    while not self:accept('OP', '}') do
+        if not self:accept('OP', ',') then
+            parameters[#parameters + 1] = self:expect('NAME').value
+        end
+    end
+    return parameters
+end
+
 function Parser:parseBlock()
     self:expect('KEYWORD', 'begin')
     local event
@@ -191,13 +220,19 @@ function Parser:parseBlock()
     else
         event = self:expect('KEYWORD').value
     end
-    -- optional block arguments: e.g. "begin OnActivate", "begin MenuMode 1017",
-    -- "begin OnTriggerEnter player"
     local args = {}
-    while self:peek().kind ~= 'NEWLINE' and self:peek().kind ~= 'EOF' do
-        -- commas may separate block arguments: begin OnAlarm 3, player
-        if not self:accept('OP', ',') then
-            args[#args + 1] = self:parseExpression()
+    local parameters = {}
+    if event:lower() == 'function' and self:peek().kind == 'OP'
+            and self:peek().value == '{' then
+        parameters = self:parseParameterList()
+    else
+        -- optional block arguments: e.g. "begin OnActivate", "begin MenuMode 1017",
+        -- "begin OnTriggerEnter player"
+        while self:peek().kind ~= 'NEWLINE' and self:peek().kind ~= 'EOF' do
+            -- commas may separate block arguments: begin OnAlarm 3, player
+            if not self:accept('OP', ',') then
+                args[#args + 1] = self:parseExpression()
+            end
         end
     end
     self:endOfLine()
@@ -205,7 +240,9 @@ function Parser:parseBlock()
     self:expect('KEYWORD', 'end')
     self:skipRestOfLine() -- trailing junk after 'end' is tolerated by vanilla
     self:endOfLine()
-    return node('Block', { event = event, args = args, body = body })
+    return node('Block', {
+        event = event, args = args, parameters = parameters, body = body,
+    })
 end
 
 function Parser:parseStatements(stopKeywords)
@@ -240,27 +277,48 @@ function Parser:parseStatement()
         if t.value == 'if' then
             return self:parseIf()
         end
+        if t.value == 'while' then
+            return self:parseWhile()
+        end
+        if t.value == 'continue' then
+            self:next()
+            self:skipRestOfLine()
+            self:endOfLine()
+            return node('Continue')
+        end
+        if t.value == 'break' then
+            self:next()
+            self:skipRestOfLine()
+            self:endOfLine()
+            return node('Break')
+        end
         if t.value == 'return' then
             self:next()
             self:skipRestOfLine()
             self:endOfLine()
             return node('Return')
         end
-        if t.value == 'short' or t.value == 'int' or t.value == 'long'
-                or t.value == 'float' or t.value == 'ref' then
+        if VAR_TYPES[t.value] then
             -- local declarations can appear mid-block in the wild
             self:next()
             local varname = self:expect('NAME').value
             self:skipRestOfLine()
             self:endOfLine()
-            return node('VarDecl', { type = t.value, name = varname })
+            local varType = t.value == 'reference' and 'ref' or t.value
+            return node('VarDecl', { type = varType, name = varname })
         end
     end
     if t.kind == 'OP' and t.value ~= '(' then
         -- decorative separator lines (=====, -----) the vanilla compiler ignores
-        self:skipRestOfLine()
+        local pureDecoration = false
+        while self:peek().kind ~= 'NEWLINE' and self:peek().kind ~= 'EOF' do
+            local token = self:next()
+            if token.kind == 'OP' and token.value:match('^[!%[%]{}%$]$') then
+                pureDecoration = true
+            end
+        end
         self:endOfLine()
-        return node('JunkLine')
+        return node(pureDecoration and 'IgnoredLine' or 'JunkLine')
     end
     if t.kind == 'NAME'
             and self:peek(1).kind == 'OP' and self:peek(1).value == '.'
@@ -334,6 +392,19 @@ function Parser:parseIf()
     return node('If', { clauses = clauses })
 end
 
+function Parser:parseWhile()
+    self:expect('KEYWORD', 'while')
+    local cond = self:parseExpression()
+    self:endOfLine()
+    local body = self:parseStatements({ loop = true, ['end'] = true })
+    if self:peek().kind == 'KEYWORD' and self:peek().value == 'loop' then
+        self:next()
+        self:skipRestOfLine()
+        self:endOfLine()
+    end
+    return node('While', { cond = cond, body = body })
+end
+
 function Parser:parseCommandLine()
     -- A statement line is a full expression (commands with space-separated
     -- args are handled by parseCallExpr); extra comma-separated arguments
@@ -360,7 +431,31 @@ end
 -- expressions (precedence climbing)
 
 function Parser:parseExpression()
-    return self:parseOr()
+    return self:parseAssignment()
+end
+
+local ASSIGN_OPS = {
+    ['='] = true, [':='] = true, ['+='] = true, ['-='] = true,
+    ['*='] = true, ['/='] = true, ['%='] = true,
+}
+
+function Parser:parseAssignment()
+    -- xNVSE uses `eval` to opt into expression grammar and `let` for
+    -- assignment expressions. The AST already represents expression grammar,
+    -- so both prefixes are semantic no-ops here.
+    self:accept('KEYWORD', 'eval')
+    self:accept('KEYWORD', 'let')
+    local left = self:parseOr()
+    local t = self:peek()
+    if t.kind == 'OP' and ASSIGN_OPS[t.value] then
+        self:next()
+        return node('AssignExpr', {
+            target = left,
+            op = t.value,
+            value = self:parseAssignment(),
+        })
+    end
+    return left
 end
 
 function Parser:parseOr()
@@ -372,9 +467,25 @@ function Parser:parseOr()
 end
 
 function Parser:parseAnd()
-    local left = self:parseCmp()
+    local left = self:parseBitOr()
     while self:accept('OP', '&&') do
-        left = node('BinOp', { op = '&&', left = left, right = self:parseCmp() })
+        left = node('BinOp', { op = '&&', left = left, right = self:parseBitOr() })
+    end
+    return left
+end
+
+function Parser:parseBitOr()
+    local left = self:parseBitAnd()
+    while self:accept('OP', '|') do
+        left = node('BinOp', { op = '|', left = left, right = self:parseBitAnd() })
+    end
+    return left
+end
+
+function Parser:parseBitAnd()
+    local left = self:parseCmp()
+    while self:accept('OP', '&') do
+        left = node('BinOp', { op = '&', left = left, right = self:parseCmp() })
     end
     return left
 end
@@ -434,6 +545,15 @@ function Parser:parseUnary()
     if self:accept('OP', '-') then
         return node('Neg', { operand = self:parseUnary() })
     end
+    if self:accept('OP', '!') then
+        return node('Not', { operand = self:parseUnary() })
+    end
+    if self:accept('OP', '$') then
+        return node('StringCoerce', { operand = self:parseUnary() })
+    end
+    if self:accept('OP', '*') then
+        return node('Deref', { operand = self:parseUnary() })
+    end
     return self:parseCallExpr()
 end
 
@@ -450,6 +570,22 @@ function Parser:parseCallExpr()
         if t.kind == 'OP' and t.value == ',' and #args > 0 then
             -- commas may separate bare arguments: PlaceAtMe Foo 1, 0, 0
             self:next()
+        elseif t.kind == 'OP' and t.value == '::' and #args > 0 then
+            self:next()
+            args[#args] = node('Pair', {
+                key = args[#args],
+                value = self:parseUnary(),
+            })
+        elseif t.kind == 'OP' and t.value == '(' then
+            -- A parenthesized command argument is complete at its closing
+            -- parenthesis. Re-entering parseCallExpr here would greedily
+            -- attach the following space-separated command arguments to the
+            -- value inside the parentheses. JAM relies on the retail form
+            -- `Clamp (expression) 0 89.9`, where 0 and 89.9 are arguments to
+            -- Clamp, not a call on the parenthesized numeric result.
+            args[#args + 1] = self:parsePostfix()
+        elseif t.kind == 'OP' and t.value == '$' then
+            args[#args + 1] = self:parseUnary()
         elseif ARG_KINDS[t.kind] then
             args[#args + 1] = self:parsePostfix()
         else
@@ -464,26 +600,59 @@ end
 
 function Parser:parsePostfix()
     local expr = self:parsePrimary()
-    while self:accept('OP', '.') do
-        local t = self:peek()
-        local member
-        if t.kind == 'KEYWORD' then
-            -- keywords can appear as member names (e.g. `Ref.Set`)
-            self:next()
-            member = node('Name', { value = t.value })
+    while true do
+        if self:accept('OP', '.') then
+            local t = self:peek()
+            local member
+            if t.kind == 'KEYWORD' then
+                -- keywords can appear as member names (e.g. `Ref.Set`)
+                self:next()
+                member = node('Name', { value = t.value })
+            else
+                member = self:parsePrimary()
+            end
+            expr = node('Member', { base = expr, member = member })
+        elseif self:accept('OP', '[') then
+            local index = self:parseExpression()
+            self:expect('OP', ']')
+            expr = node('Index', { base = expr, index = index })
         else
-            member = self:parsePrimary()
+            break
         end
-        expr = node('Member', { base = expr, member = member })
     end
     return expr
+end
+
+function Parser:parseInlineFunction()
+    self:expect('KEYWORD', 'begin')
+    self:expect('KEYWORD', 'function')
+    local parameters = {}
+    if self:peek().kind == 'OP' and self:peek().value == '{' then
+        parameters = self:parseParameterList()
+    end
+    self:endOfLine()
+    local body = self:parseStatements({ ['end'] = true })
+    self:expect('KEYWORD', 'end')
+    if self:peek().kind == 'NEWLINE' then
+        self:endOfLine()
+    end
+    return node('Lambda', { parameters = parameters, body = body })
 end
 
 function Parser:parsePrimary()
     local t = self:peek()
     if t.kind == 'INT' then
         self:next()
-        return node('Int', { value = tonumber(t.value) })
+        local value
+        if t.value:lower():sub(1, 2) == '0b' then
+            value = 0
+            for digit in t.value:sub(3):gmatch('.') do
+                value = value * 2 + tonumber(digit)
+            end
+        else
+            value = tonumber(t.value)
+        end
+        return node('Int', { value = value })
     end
     if t.kind == 'FLOAT' then
         self:next()
@@ -509,6 +678,19 @@ function Parser:parsePrimary()
             inner = node('Call', { callee = inner, args = args })
         end
         return inner
+    end
+    if t.kind == 'OP' and t.value == '{' then
+        local parameters = self:parseParameterList()
+        self:expect('OP', '=>')
+        return node('Lambda', {
+            parameters = parameters,
+            expression = self:parseAssignment(),
+        })
+    end
+    if t.kind == 'KEYWORD' and t.value == 'begin'
+            and self:peek(1).kind == 'KEYWORD'
+            and self:peek(1).value == 'function' then
+        return self:parseInlineFunction()
     end
     if t.kind == 'NAME' then
         self:next()

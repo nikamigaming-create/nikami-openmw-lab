@@ -38,13 +38,7 @@
     </widget>
    </item>
    <item>
-    <widget class="QCheckBox" name="morrowindCheckbox"/>
-   </item>
-   <item>
-    <widget class="QCheckBox" name="tribunalCheckbox"/>
-   </item>
-   <item>
-    <widget class="QCheckBox" name="bloodmoonCheckbox"/>
+    <widget class="ComponentListWidget" name="componentsList"/>
    </item>
    <item>
     <spacer name="verticalSpacer">
@@ -61,6 +55,13 @@
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>ComponentListWidget</class>
+   <extends>QListWidget</extends>
+   <header>apps/wizard/utils/componentlistwidget.hpp</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

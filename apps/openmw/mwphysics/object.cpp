@@ -141,13 +141,13 @@ namespace MWPhysics
             auto nodePathFound = mRecIndexToNodePath.find(recIndex);
             if (nodePathFound == mRecIndexToNodePath.end())
             {
-                NifOsg::FindGroupByRecordIndex visitor(recIndex);
+                NifOsg::FindGroupByRecIndex visitor(recIndex);
                 mPtr.getRefData().getBaseNode()->accept(visitor);
                 if (!visitor.mFound)
                 {
                     if (mMissingAnimatedCollisionNodes.insert(recIndex).second
                         && shouldLogMissingAnimatedCollisionNode(mPtr, recIndex))
-                        Log(Debug::Verbose) << "Warning: animateCollisionShapes can't find node " << recIndex << " for "
+                        Log(Debug::Warning) << "Warning: animateCollisionShapes can't find node " << recIndex << " for "
                                             << mPtr.getCellRef().getRefId() << "; keeping static collision child";
 
                     // Fallout meshes sometimes carry animated collision entries for nodes that are absent from the

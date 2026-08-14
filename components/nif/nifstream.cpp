@@ -1,10 +1,6 @@
 #include "nifstream.hpp"
 
-#include <cerrno>
-#include <format>
 #include <span>
-#include <stdexcept>
-#include <system_error>
 
 #include <components/toutf8/toutf8.hpp>
 
@@ -57,12 +53,10 @@ namespace Nif
 
     std::string NIFStream::getSizedString(size_t length)
     {
-        checkStreamSize(length);
         std::string str(length, '\0');
         mStream->read(str.data(), length);
-        if (mStream->fail())
-            throw std::runtime_error(std::format(
-                "Failed to read sized string of {} chars: {}", length, std::generic_category().message(errno)));
+        if (mStream->bad())
+            throw std::runtime_error("Failed to read sized string of " + std::to_string(length) + " chars");
         size_t end = str.find('\0');
         if (end != std::string::npos)
             str.erase(end);
@@ -73,31 +67,27 @@ namespace Nif
 
     void NIFStream::getSizedStrings(std::vector<std::string>& vec, size_t size)
     {
-        vec.clear();
-        vec.reserve(size);
-        for (size_t i = 0; i < size; i++)
-            vec.push_back(getSizedString());
+        vec.resize(size);
+        for (size_t i = 0; i < vec.size(); i++)
+            vec[i] = getSizedString();
     }
 
     std::string NIFStream::getVersionString()
     {
         std::string result;
         std::getline(*mStream, result);
-        if (mStream->fail())
-            throw std::runtime_error(
-                std::format("Failed to read version string: {}", std::generic_category().message(errno)));
+        if (mStream->bad())
+            throw std::runtime_error("Failed to read version string");
         return result;
     }
 
     std::string NIFStream::getStringPalette()
     {
         size_t size = get<uint32_t>();
-        checkStreamSize(size);
         std::string str(size, '\0');
         mStream->read(str.data(), size);
-        if (mStream->fail())
-            throw std::runtime_error(std::format(
-                "Failed to read string palette of {} chars: {}", size, std::generic_category().message(errno)));
+        if (mStream->bad())
+            throw std::runtime_error("Failed to read string palette of " + std::to_string(size) + " chars");
         return str;
     }
 
@@ -238,7 +228,6 @@ namespace Nif
     {
         if (getVersion() < generateVersion(4, 1, 0, 0))
         {
-            checkStreamSize(size * sizeof(int32_t));
             std::vector<int32_t> buf(size);
             read(buf.data(), size);
             for (size_t i = 0; i < size; ++i)
@@ -246,7 +235,6 @@ namespace Nif
         }
         else
         {
-            checkStreamSize(size * sizeof(int8_t));
             std::vector<int8_t> buf(size);
             read(buf.data(), size);
             for (size_t i = 0; i < size; ++i)
@@ -269,9 +257,4 @@ namespace Nif
         }
     }
 
-    void NIFStream::checkStreamSize(std::size_t size)
-    {
-        if (size > mStreamSize)
-            throw std::runtime_error(std::format("Trying to read more than stream size: {} max={}", size, mStreamSize));
-    }
 }

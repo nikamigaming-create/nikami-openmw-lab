@@ -61,20 +61,14 @@ namespace ESM4
             std::uint8_t priority;
             std::uint16_t unknown;
         };
-#pragma pack(pop)
 
         struct RegionSound
         {
-            ESM::FormId mSound;
-            std::uint32_t mFlags = 0; // bits 0..3: pleasant, cloudy, rainy, snowy
-            std::uint32_t mChance = 0; // percent stored as a fixed-point integer with four decimal places
+            ESM::FormId32 sound;
+            std::uint32_t flags; // 0 pleasant, 1 cloudy, 2 rainy, 3 snowy
+            std::uint32_t chance;
         };
-
-        struct RegionSoundBlock
-        {
-            RegionData mData{};
-            std::vector<RegionSound> mEntries;
-        };
+#pragma pack(pop)
 
         struct RegionWeather
         {
@@ -104,7 +98,6 @@ namespace ESM4
 
         RegionData mData{};
         std::vector<RegionSound> mSounds;
-        std::vector<RegionSoundBlock> mSoundBlocks;
         std::vector<RegionWeatherBlock> mWeather;
 
         void load(ESM4::Reader& reader);

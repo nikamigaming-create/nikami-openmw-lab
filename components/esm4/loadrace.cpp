@@ -27,21 +27,19 @@
 #include "loadrace.hpp"
 
 #include <cstring>
-#include <format>
-#include <optional>
 #include <stdexcept>
 
 #include "reader.hpp"
-//#include "writer.hpp"
+// #include "writer.hpp"
 
-namespace
+ESM4::Race::Data ESM4::Race::decodeFalloutData(std::span<const std::uint8_t> payload)
 {
-    decltype(auto) at(auto& values, std::uint32_t index, std::string_view name, ESM4::Reader& reader)
-    {
-        if (index >= values.size())
-            reader.fail(std::format("{} index is out of range: {} >= {}", name, index, values.size()));
-        return values[index];
-    }
+    if (payload.size() != sizeof(Data))
+        throw std::runtime_error("ESM4::RACE Fallout DATA must be exactly 36 bytes");
+
+    Data result{};
+    std::memcpy(&result, payload.data(), sizeof(result));
+    return result;
 }
 
 void ESM4::Race::load(ESM4::Reader& reader)
@@ -56,7 +54,7 @@ void ESM4::Race::load(ESM4::Reader& reader)
 
     bool isMale = false;
     int currPart = -1; // 0 = head, 1 = body, 2 = egt, 3 = hkx
-    std::optional<std::uint32_t> currentIndex;
+    std::uint32_t currentIndex = 0xffffffff;
 
     while (reader.getSubRecordHeader())
     {
@@ -104,6 +102,22 @@ void ESM4::Race::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("DATA"): // ?? different length for TES5
             {
+                if (isFONV)
+                {
+                    if (mHasFalloutData)
+                        throw std::runtime_error("ESM4::RACE contains duplicate Fallout DATA");
+                    std::array<std::uint8_t, sizeof(Data)> payload{};
+                    if (subHdr.dataSize != payload.size() || !reader.get(payload.data(), payload.size()))
+                        throw std::runtime_error("ESM4::RACE Fallout DATA size/read mismatch");
+                    mFalloutData = decodeFalloutData(payload);
+                    mHeightMale = mFalloutData.mHeightMale;
+                    mHeightFemale = mFalloutData.mHeightFemale;
+                    mWeightMale = mFalloutData.mWeightMale;
+                    mWeightFemale = mFalloutData.mWeightFemale;
+                    mRaceFlags = mFalloutData.mRawFlags;
+                    mHasFalloutData = true;
+                    break;
+                }
 // DATA:size 128
 // 0f 0f ff 00 ff 00 ff 00 ff 00 ff 00 ff 00 00 00
 // 9a 99 99 3f 00 00 80 3f 00 00 80 3f 00 00 80 3f
@@ -310,14 +324,12 @@ void ESM4::Race::load(ESM4::Reader& reader)
                     mHeadPartIdsFemale.resize(5);
                 }
 
-                currentIndex.reset();
+                currentIndex = 0xffffffff;
                 break;
             }
             case ESM::fourCC("INDX"):
             {
-                std::uint32_t value = 0;
-                reader.get(value);
-                currentIndex = value;
+                reader.get(currentIndex);
                 // FIXME: below check is rather useless
                 // if (headpart)
                 //{
@@ -334,26 +346,25 @@ void ESM4::Race::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("MODL"):
             {
-                if (!currentIndex.has_value())
+                if (currentIndex == 0xffffffff)
                 {
                     reader.skipSubRecordData();
                 }
                 else if (currPart == 0) // head part
                 {
                     if (isMale || isTES4)
-                        reader.getZString(at(mHeadParts, *currentIndex, "head parts", reader).mesh);
+                        reader.getZString(mHeadParts[currentIndex].mesh);
                     else
-                        // TODO: check TES4
-                        reader.getZString(at(mHeadPartsFemale, *currentIndex, "head parts female", reader).mesh);
+                        reader.getZString(mHeadPartsFemale[currentIndex].mesh); // TODO: check TES4
 
                     // TES5 keeps head part formid in mHeadPartIdsMale and mHeadPartIdsFemale
                 }
                 else if (currPart == 1) // body part
                 {
                     if (isMale)
-                        reader.getZString(at(mBodyPartsMale, *currentIndex, "body parts male", reader).mesh);
+                        reader.getZString(mBodyPartsMale[currentIndex].mesh);
                     else
-                        reader.getZString(at(mBodyPartsFemale, *currentIndex, "body parts female", reader).mesh);
+                        reader.getZString(mBodyPartsFemale[currentIndex].mesh);
 
                     // TES5 seems to have no body parts at all, instead keep EGT models
                 }
@@ -375,24 +386,23 @@ void ESM4::Race::load(ESM4::Reader& reader)
                 break; // always 0x0000?
             case ESM::fourCC("ICON"):
             {
-                if (!currentIndex.has_value())
+                if (currentIndex == 0xffffffff)
                 {
                     reader.skipSubRecordData();
                 }
                 else if (currPart == 0) // head part
                 {
                     if (isMale || isTES4)
-                        reader.getZString(at(mHeadParts, *currentIndex, "head parts", reader).texture);
+                        reader.getZString(mHeadParts[currentIndex].texture);
                     else
-                        // TODO: check TES4
-                        reader.getZString(at(mHeadPartsFemale, *currentIndex, "head parts female", reader).texture);
+                        reader.getZString(mHeadPartsFemale[currentIndex].texture); // TODO: check TES4
                 }
                 else if (currPart == 1) // body part
                 {
                     if (isMale)
-                        reader.getZString(at(mBodyPartsMale, *currentIndex, "body parts male", reader).texture);
+                        reader.getZString(mBodyPartsMale[currentIndex].texture);
                     else
-                        reader.getZString(at(mBodyPartsFemale, *currentIndex, "body parts female", reader).texture);
+                        reader.getZString(mBodyPartsFemale[currentIndex].texture);
                 }
                 else
                     reader.skipSubRecordData(); // FIXME TES5
@@ -423,7 +433,7 @@ void ESM4::Race::load(ESM4::Reader& reader)
                 if (isTES4)
                     currentIndex = 4; // FIXME: argonian tail mesh without preceeding INDX
                 else
-                    currentIndex.reset();
+                    currentIndex = 0xffffffff;
 
                 break;
             }
@@ -610,20 +620,20 @@ void ESM4::Race::load(ESM4::Reader& reader)
                 ESM::FormId formId;
                 reader.getFormId(formId);
 
-                if (currentIndex.has_value())
+                if (currentIndex != 0xffffffff)
                 {
                     // FIXME: no order? head, mouth, eyes, brow, hair
                     if (isMale)
                     {
                         if (currentIndex >= mHeadPartIdsMale.size())
-                            mHeadPartIdsMale.resize(*currentIndex + 1);
-                        mHeadPartIdsMale[*currentIndex] = formId;
+                            mHeadPartIdsMale.resize(currentIndex + 1);
+                        mHeadPartIdsMale[currentIndex] = formId;
                     }
                     else
                     {
                         if (currentIndex >= mHeadPartIdsFemale.size())
-                            mHeadPartIdsFemale.resize(*currentIndex + 1);
-                        mHeadPartIdsFemale[*currentIndex] = formId;
+                            mHeadPartIdsFemale.resize(currentIndex + 1);
+                        mHeadPartIdsFemale[currentIndex] = formId;
                     }
                 }
 
@@ -680,12 +690,12 @@ void ESM4::Race::load(ESM4::Reader& reader)
 
                 break;
             }
-            case ESM::fourCC("MTNM"): // movement type
-            case ESM::fourCC("ATKD"): // attack data
-            case ESM::fourCC("ATKE"): // attach event
             case ESM::fourCC("GNAM"): // body part data (FO3/FONV)
                 reader.getFormId(mBodyPartData);
                 break;
+            case ESM::fourCC("MTNM"): // movement type
+            case ESM::fourCC("ATKD"): // attack data
+            case ESM::fourCC("ATKE"): // attach event
             case ESM::fourCC("NAM4"): // material type
             case ESM::fourCC("NAM5"): // unarmed impact?
             case ESM::fourCC("LNAM"): // close loot sound

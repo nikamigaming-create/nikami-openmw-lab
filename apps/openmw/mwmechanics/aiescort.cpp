@@ -24,16 +24,15 @@
 
 namespace MWMechanics
 {
-    AiEscort::AiEscort(ESM::RefNum actor, std::string_view cellId, int duration, float x, float y, float z, bool repeat)
+    AiEscort::AiEscort(const ESM::RefId& actorId, int duration, float x, float y, float z, bool repeat)
         : TypedAiPackage<AiEscort>(repeat)
-        , mCellId(cellId)
         , mX(x)
         , mY(y)
         , mZ(z)
-        , mDuration(static_cast<float>(duration))
+        , mDuration(duration)
         , mRemainingDuration(static_cast<float>(duration))
     {
-        mTargetActor = actor;
+        mTargetActorRefId = actorId;
     }
 
     AiEscort::AiEscort(
@@ -43,7 +42,7 @@ namespace MWMechanics
         , mX(x)
         , mY(y)
         , mZ(z)
-        , mDuration(static_cast<float>(duration))
+        , mDuration(duration)
         , mRemainingDuration(static_cast<float>(duration))
     {
         mTargetActorRefId = actorId;
@@ -59,7 +58,7 @@ namespace MWMechanics
         , mRemainingDuration(escort->mRemainingDuration)
     {
         mTargetActorRefId = escort->mTargetId;
-        mTargetActor = escort->mTargetActor;
+        mTargetActorId = escort->mTargetActorId;
     }
 
     bool AiEscort::execute(
@@ -84,7 +83,7 @@ namespace MWMechanics
         actor.getClass().getCreatureStats(actor).setDrawState(DrawState::Nothing);
         actor.getClass().getCreatureStats(actor).setMovementFlag(CreatureStats::Flag_Run, false);
 
-        const MWWorld::Ptr follower = getTarget();
+        const MWWorld::Ptr follower = MWBase::Environment::get().getWorld()->getPtr(mTargetActorRefId, false);
         const osg::Vec3f leaderPos = actor.getRefData().getPosition().asVec3();
         const osg::Vec3f followerPos = follower.getRefData().getPosition().asVec3();
         const osg::Vec3f halfExtents = MWBase::Environment::get().getWorld()->getHalfExtents(actor);
@@ -130,9 +129,9 @@ namespace MWMechanics
         escort->mData.mX = mX;
         escort->mData.mY = mY;
         escort->mData.mZ = mZ;
-        escort->mData.mDuration = static_cast<int16_t>(mDuration);
+        escort->mData.mDuration = mDuration;
         escort->mTargetId = mTargetActorRefId;
-        escort->mTargetActor = mTargetActor;
+        escort->mTargetActorId = mTargetActorId;
         escort->mRemainingDuration = mRemainingDuration;
         escort->mCellId = mCellId;
         escort->mRepeat = getRepeat();

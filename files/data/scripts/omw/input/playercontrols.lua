@@ -10,11 +10,20 @@ local Player = require('openmw.types').Player
 local I = require('openmw.interfaces')
 
 local settings = storage.playerSection('SettingsOMWControls')
+local falloutInputState = storage.playerSection('FNVInputState')
+local falloutNewVegas = core.contentFiles and core.contentFiles.has
+    and core.contentFiles.has('FalloutNV.esm') or false
 
-local function isFalloutContent()
-    return core.contentFiles and core.contentFiles.has
-        and (core.contentFiles.has('FalloutNV.esm') or core.contentFiles.has('Fallout3.esm'))
-end
+-- Existing OpenMW profiles predate FNV support and therefore persist the
+-- Morrowind walk-first default. Migrate each FNV player profile once so its
+-- normal W input matches retail Fallout's run-first control semantics; the
+-- Always Run trigger remains user-toggleable afterward.
+-- This must happen from onFrame, after the menu-context settings registry has
+-- installed defaults. Doing it while the player script loads can be overwritten
+-- later by that registry and silently leaves Fallout in the walk stance.
+local falloutRunDefaultPending = falloutNewVegas
+    and falloutInputState:get('runDefaultInitializedV2') ~= true
+local falloutRunStateAnnounced = false
 
 do
     local rangeActions = {
@@ -92,7 +101,24 @@ local attemptToJump = false
 local function processMovement()
     local movement = input.getRangeActionValue('MoveForward') - input.getRangeActionValue('MoveBackward')
     local sideMovement = input.getRangeActionValue('MoveRight') - input.getRangeActionValue('MoveLeft')
-    local run = input.getBooleanActionValue('Run') ~= settings:get('alwaysRun')
+    local alwaysRun = settings:get('alwaysRun')
+    if falloutRunDefaultPending then
+        settings:set('alwaysRun', true)
+        alwaysRun = true
+        if settings:get('alwaysRun') == true then
+            falloutInputState:set('runDefaultInitializedV2', true)
+            falloutRunDefaultPending = false
+            print('FNV input: run-first profile migration applied alwaysRun=1 phase=frame')
+        end
+    end
+    local runAction = input.getBooleanActionValue('Run')
+    local run = runAction ~= alwaysRun
+    if falloutNewVegas and movement ~= 0 and not falloutRunStateAnnounced then
+        falloutRunStateAnnounced = true
+        print(string.format(
+            'FNV input: locomotion state movement=%.3f runAction=%d alwaysRun=%d run=%d',
+            movement, runAction and 1 or 0, alwaysRun and 1 or 0, run and 1 or 0))
+    end
 
     if movement ~= 0 then
         autoMove = false
@@ -104,6 +130,10 @@ local function processMovement()
     self.controls.sideMovement = sideMovement
     self.controls.run = run
     self.controls.jump = attemptToJump
+
+    if not settings:get('toggleSneak') then
+        self.controls.sneak = input.getBooleanActionValue('Sneak')
+    end
 end
 
 local function controlsAllowed()
@@ -113,14 +143,7 @@ local function controlsAllowed()
 end
 
 local function movementAllowed()
-    return controlsAllowed()
-        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Movement)
-        and not movementControlsOverridden
-end
-
-local function sneakingAllowed()
-    return controlsAllowed()
-        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Sneaking)
+    return controlsAllowed() and not movementControlsOverridden
 end
 
 input.registerTriggerHandler('Jump', async:callback(function()
@@ -129,10 +152,7 @@ input.registerTriggerHandler('Jump', async:callback(function()
 end))
 
 input.registerTriggerHandler('ToggleSneak', async:callback(function()
-    if not sneakingAllowed() then
-        self.controls.sneak = false
-        return
-    end
+    if not movementAllowed() then return end
     if settings:get('toggleSneak') then
         self.controls.sneak = not self.controls.sneak
     end
@@ -155,9 +175,6 @@ local function combatAllowed()
 end
 
 input.registerTriggerHandler('ToggleSpell', async:callback(function()
-    -- In Fallout profiles R is reload. ActionManager owns that native path;
-    -- never also enter Morrowind's spell stance.
-    if isFalloutContent() then return end
     if not combatAllowed() then return end
     if Actor.getStance(self) == Actor.STANCE.Spell then
         Actor.setStance(self, Actor.STANCE.Nothing)
@@ -169,9 +186,6 @@ input.registerTriggerHandler('ToggleSpell', async:callback(function()
 end))
 
 input.registerTriggerHandler('ToggleWeapon', async:callback(function()
-    -- Fallout equips and holsters through its inventory/runtime state, not the
-    -- Morrowind ready-weapon toggle.
-    if isFalloutContent() then return end
     if not combatAllowed() then return end
     if Actor.getStance(self) == Actor.STANCE.Weapon then
         Actor.setStance(self, Actor.STANCE.Nothing)
@@ -185,30 +199,14 @@ input.registerActionHandler('Use', async:callback(function(value)
     if value and combatAllowed() then startUse = true end
 end))
 local function processAttacking()
-    -- Fallout weapons are drawn by the native equipment state. Left mouse must
-    -- drive them immediately; it must not depend on a Morrowind stance toggle.
-    if isFalloutContent() then
-        if Player.getControlSwitch(self, Player.CONTROL_SWITCH.Fighting)
-            and input.getBooleanActionValue('Use') then
-            self.controls.use = self.ATTACK_TYPE.Any
-        else
-            self.controls.use = self.ATTACK_TYPE.NoAttack
-        end
-        startUse = false
-        return
-    end
-
     -- for spell-casting, set controls.use to true for exactly one frame
     -- otherwise spell casting is attempted every frame while Use is true
-    if Actor.getStance(self) == Actor.STANCE.Spell
-        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Magic) then
-        self.controls.use = startUse and self.ATTACK_TYPE.Any or self.ATTACK_TYPE.NoAttack
-    elseif Actor.getStance(self) == Actor.STANCE.Weapon
-        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Fighting)
-        and input.getBooleanActionValue('Use') then
-        self.controls.use = self.ATTACK_TYPE.Any
+    if Actor.getStance(self) == Actor.STANCE.Spell then
+        self.controls.use = startUse and 1 or 0
+    elseif Actor.getStance(self) == Actor.STANCE.Weapon and input.getBooleanActionValue('Use') then
+        self.controls.use = 1
     else
-        self.controls.use = self.ATTACK_TYPE.NoAttack
+        self.controls.use = 0
     end
     startUse = false
 end
@@ -216,20 +214,10 @@ end
 local uiControlsOverridden = false
 
 local function uiAllowed()
-    return Player.getControlSwitch(self, Player.CONTROL_SWITCH.Controls)
-        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Interface)
-        and not uiControlsOverridden
+    return Player.getControlSwitch(self, Player.CONTROL_SWITCH.Controls) and not uiControlsOverridden
 end
 
-local function isFalloutContentLoaded()
-    return core.contentFiles and core.contentFiles.has and core.contentFiles.has('FalloutNV.esm')
-end
-
-local falloutInventoryDiagCount = 0
 input.registerTriggerHandler('Inventory', async:callback(function()
-    -- Tab is the native Fallout Pip-Boy Items action. ActionManager opens the
-    -- selected Pip-Boy pane and keyboardmanager closes it on the next Tab.
-    if isFalloutContent() then return end
     if not uiAllowed() then return end
 
     if I.UI.getMode() == nil then
@@ -237,20 +225,13 @@ input.registerTriggerHandler('Inventory', async:callback(function()
     elseif I.UI.getMode() == I.UI.MODE.Interface or I.UI.getMode() == I.UI.MODE.Container then
         I.UI.removeMode(I.UI.getMode())
     end
-
-    if isFalloutContentLoaded() and falloutInventoryDiagCount < 12 then
-        print(string.format(
-            'Fallout VR diag: Inventory trigger completed afterMode=%s',
-            tostring(I.UI.getMode())))
-    end
 end))
 
 input.registerTriggerHandler('Journal', async:callback(function()
-    if isFalloutContentLoaded() then return end
     if not uiAllowed() then return end
     -- FNV routes this trigger to its DATA / QUESTS pane in ActionManager.
     -- Do not also open the Morrowind book journal after the native handler.
-    if isFalloutContent() then return end
+    if core.contentFiles and core.contentFiles.has and core.contentFiles.has('FalloutNV.esm') then return end
 
     if I.UI.getMode() == I.UI.MODE.Journal then
         I.UI.removeMode(I.UI.MODE.Journal)
@@ -260,9 +241,6 @@ input.registerTriggerHandler('Journal', async:callback(function()
 end))
 
 input.registerTriggerHandler('QuickKeysMenu', async:callback(function()
-    -- I is the explicit OpenMW inventory analogue in Fallout profiles.
-    -- ActionManager opens it so Lua must not also pop the old quick-keys menu.
-    if isFalloutContent() then return end
     if not uiAllowed() then return end
 
     if I.UI.getMode() == I.UI.MODE.QuickKeysMenu then
@@ -279,11 +257,6 @@ local function onFrame(_)
         self.controls.movement = 0
         self.controls.sideMovement = 0
         self.controls.jump = false
-    end
-    if not sneakingAllowed() then
-        self.controls.sneak = false
-    elseif not settings:get('toggleSneak') then
-        self.controls.sneak = input.getBooleanActionValue('Sneak')
     end
     if combatAllowed() then
         processAttacking()

@@ -36,6 +36,11 @@
 #include "physicssystem.hpp"
 #include "projectile.hpp"
 
+//## VR_PATCH BEGIN
+#include <components/vr/session.hpp>
+#include <components/vr/vr.hpp>
+
+//## VR_PATCH END
 namespace MWPhysics
 {
     namespace
@@ -188,6 +193,12 @@ namespace
                 frameData.mOldHeight = frameData.mPosition.z();
                 const auto rotation = actor->getPtr().getRefData().getPosition().asRotationVec3();
                 frameData.mRotation = osg::Vec2f(rotation.x(), rotation.z());
+                if (VR::getVR() && actor->getPtr() == MWMechanics::getPlayer()
+                    && Settings::vr().mHandDirectedMovement)
+                {
+                    frameData.mRotation += VR::Session::instance().movementAngleOffset();
+                }
+
                 frameData.mInertia = actor->getInertialForce();
                 frameData.mStuckFrames = actor->getStuckFrames();
                 frameData.mLastStuckPosition = actor->getLastStuckPosition();
@@ -458,10 +469,10 @@ namespace MWPhysics
             thread.join();
     }
 
-    std::tuple<unsigned, float> PhysicsTaskScheduler::calculateStepConfig(float timeAccum) const
+    std::tuple<int, float> PhysicsTaskScheduler::calculateStepConfig(float timeAccum) const
     {
-        unsigned maxAllowedSteps = 2;
-        unsigned numSteps = static_cast<unsigned>(timeAccum / mDefaultPhysicsDt);
+        int maxAllowedSteps = 2;
+        int numSteps = timeAccum / mDefaultPhysicsDt;
 
         // adjust maximum step count based on whether we're likely physics bottlenecked or not
         // if maxAllowedSteps ends up higher than numSteps, we will not invoke delta time
@@ -478,13 +489,13 @@ namespace MWPhysics
         // ensure sane minimum value
         budgetMeasurement = std::max(0.00001f, budgetMeasurement);
         // we're spending almost or more than realtime per physics frame; limit to a single step
-        if (budgetMeasurement > 0.95f)
+        if (budgetMeasurement > 0.95)
             maxAllowedSteps = 1;
         // physics is fairly cheap; limit based on expense
-        if (budgetMeasurement < 0.5f)
-            maxAllowedSteps = static_cast<unsigned>(std::ceil(1.f / budgetMeasurement));
+        if (budgetMeasurement < 0.5)
+            maxAllowedSteps = std::ceil(1.0 / budgetMeasurement);
         // limit to a reasonable amount
-        maxAllowedSteps = std::min(10u, maxAllowedSteps);
+        maxAllowedSteps = std::min(10, maxAllowedSteps);
 
         // fall back to delta time for this frame if fixed timestep physics would fall behind
         float actualDelta = mDefaultPhysicsDt;
@@ -523,7 +534,7 @@ namespace MWPhysics
 
         MaybeExclusiveLock lock(mSimulationMutex, mLockingPolicy);
 
-        auto timeStart = mTimer->tick();
+        double timeStart = mTimer->tick();
 
         // start by finishing previous background computation
         if (mNumThreads != 0)
@@ -550,7 +561,7 @@ namespace MWPhysics
         mPhysicsDt = newDelta;
         mSimulations = &simulations;
         mAdvanceSimulation = (mRemainingSteps != 0);
-        mNumJobs = static_cast<int>(mSimulations->size());
+        mNumJobs = mSimulations->size();
         mNextLOS.store(0, std::memory_order_relaxed);
         mNextJob.store(0, std::memory_order_release);
 
@@ -699,7 +710,7 @@ namespace MWPhysics
     {
         MaybeSharedLock lock(mLOSCacheMutex, mLockingPolicy);
         int job = 0;
-        int numLOS = static_cast<int>(mLOSCache.size());
+        int numLOS = mLOSCache.size();
         while ((job = mNextLOS.fetch_add(1, std::memory_order_relaxed)) < numLOS)
         {
             auto& req = mLOSCache[job];
@@ -764,9 +775,9 @@ namespace MWPhysics
     bool PhysicsTaskScheduler::hasLineOfSight(const Actor* actor1, const Actor* actor2)
     {
         btVector3 pos1 = Misc::Convert::toBullet(
-            actor1->getCollisionObjectPosition() + osg::Vec3f(0, 0, actor1->getHalfExtents().z() * 0.9f)); // eye level
+            actor1->getCollisionObjectPosition() + osg::Vec3f(0, 0, actor1->getHalfExtents().z() * 0.9)); // eye level
         btVector3 pos2 = Misc::Convert::toBullet(
-            actor2->getCollisionObjectPosition() + osg::Vec3f(0, 0, actor2->getHalfExtents().z() * 0.9f));
+            actor2->getCollisionObjectPosition() + osg::Vec3f(0, 0, actor2->getHalfExtents().z() * 0.9));
 
         btCollisionWorld::ClosestRayResultCallback resultCallback(pos1, pos2);
         resultCallback.m_collisionFilterGroup = CollisionType_AnyPhysical;

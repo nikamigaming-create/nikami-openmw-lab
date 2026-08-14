@@ -22,7 +22,7 @@ namespace DetourNavigator
         std::array<dtPolyRef, 16> path;
         dtRaycastHit hit;
         hit.path = path.data();
-        hit.maxPath = static_cast<int>(path.size());
+        hit.maxPath = path.size();
         if (dtStatus status = navMeshQuery.raycast(ref, start.ptr(), end.ptr(), &queryFilter, options, &hit);
             dtStatusFailed(status) || hit.pathCount == 0)
             return {};

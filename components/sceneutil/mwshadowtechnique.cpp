@@ -532,8 +532,7 @@ void MWShadowTechnique::LightData::setLightData(osg::RefMatrix* lm, const osg::L
 //
 MWShadowTechnique::ShadowData::ShadowData(MWShadowTechnique::ViewDependentData* vdd):
     _viewDependentData(vdd),
-    _textureUnit(0),
-    _sm_i(0)
+    _textureUnit(0)
 {
 
     const ShadowSettings* settings = vdd->getViewDependentShadowMap()->getShadowedScene()->getShadowSettings();
@@ -646,9 +645,6 @@ MWShadowTechnique::Frustum::Frustum(osgUtil::CullVisitor* cv, double minZNear, d
     {
         osg::Matrix::value_type zNear = osg::maximum<osg::Matrix::value_type>(cv->getCalculatedNearPlane(),minZNear);
         osg::Matrix::value_type zFar = osg::minimum<osg::Matrix::value_type>(cv->getCalculatedFarPlane(),maxZFar);
-        if (zFar < 0)
-            zFar = minZNear;
-        zNear = std::min(zNear, zFar);
 
         cv->clampProjectionMatrix(projectionMatrix, zNear, zFar);
 
@@ -1010,11 +1006,10 @@ void SceneUtil::MWShadowTechnique::setCustomFrustumCallback(CustomFrustumCallbac
 
 void SceneUtil::MWShadowTechnique::copyShadowStateSettings(osgUtil::CullVisitor& cv, ViewDependentData* vdd)
 {
-    unsigned int slot = cv.getTraversalNumber() % 2;
     for (const auto& sd : vdd->getShadowDataList())
     {
-        assignValidRegionSettings(cv, sd->_camera, sd->_sm_i, vdd->_uniforms[slot]);
-        assignShadowStateSettings(cv, sd->_camera, sd->_sm_i, vdd->_uniforms[slot]);
+        assignValidRegionSettings(cv, sd->_camera, sd->_sm_i, vdd->_uniforms[cv.getTraversalNumber()%2]);
+        assignShadowStateSettings(cv, sd->_camera, sd->_sm_i, vdd->_uniforms[cv.getTraversalNumber()%2]);
     }
 }
 
@@ -1117,52 +1112,6 @@ void MWShadowTechnique::cull(osgUtil::CullVisitor& cv)
     cullShadowReceivingScene(&cv);
 
     cv.popStateSet();
-
-    // Temporal reuse: skip shadow cascade cull on non-update frames.
-    // Reuse previous frame's shadow textures (FBO-persistent) + uniforms (already in correct slot).
-    // Per-VDD counter: each CullVisitor has its own VDD (two CVs alternate in DrawThreadPerContext),
-    // so we count per-VDD calls rather than using global frame numbers.
-    // Note: we do NOT recompute uniforms here. Each VDD always uses the same uniform slot
-    // (traversalNumber % 2), so the values from the previous UPDATE are still valid.
-    // Recomputing via copyShadowStateSettings would produce wrong validRegionMatrix values
-    // because shadow cameras have post-adjustment projection matrices, but assignValidRegionSettings
-    // needs pre-adjustment projections (the adjustment happens between the two assign calls
-    // in the UPDATE path).
-    // Staleness cap: force a shadow update if the shadow map is too old.
-    // At low FPS the skip gap grows (e.g. 133ms at 15fps with interval=2),
-    // making stale shadows noticeable. Cap at 40ms — this lets the skip
-    // work at 30+ fps where it helps, and backs off when FPS is already low.
-    constexpr double maxShadowStaleness = 0.040;
-    double currentTime = cv.getFrameStamp()->getReferenceTime();
-    bool tooStale = (vdd->_lastShadowCullReferenceTime > 0.0)
-        && (currentTime - vdd->_lastShadowCullReferenceTime) > maxShadowStaleness;
-
-    if (_shadowUpdateInterval > 1
-        && vdd->_framesSinceLastShadowCull > 0
-        && vdd->_framesSinceLastShadowCull < _shadowUpdateInterval
-        && !tooStale)
-    {
-        ++vdd->_framesSinceLastShadowCull;
-
-        // Recompute only shadowSpaceMatrix (SSM) for current camera position.
-        // VRM (validRegionMatrix) stays from previous UPDATE — it was computed with
-        // pre-adjustment projection which we no longer have access to.
-        // SSM needs current inverse(ModelView) so fragments in current eye space
-        // map correctly to the stale shadow textures.
-        {
-            unsigned int slot = cv.getTraversalNumber() % 2;
-            for (const auto& sd : vdd->getShadowDataList())
-                assignShadowStateSettings(cv, sd->_camera, sd->_sm_i, vdd->_uniforms[slot]);
-        }
-
-        if (vdd->numValidShadows() > 0)
-            prepareStateSetForRenderingShadow(*vdd, cv.getTraversalNumber());
-
-        cv.setComputeNearFarMode(cachedNearFarMode);
-        return;
-    }
-    vdd->_framesSinceLastShadowCull = 1;
-    vdd->_lastShadowCullReferenceTime = currentTime;
 
     if (cv.getComputeNearFarMode()!=osg::CullSettings::DO_NOT_COMPUTE_NEAR_FAR)
     {
@@ -1423,11 +1372,6 @@ void MWShadowTechnique::cull(osgUtil::CullVisitor& cv)
                 camera->getViewport()->x() = pos_x;
                 pos_x += static_cast<unsigned int>(camera->getViewport()->width()) + 40;
             }
-
-            if (_useFrontFaceCulling)
-                camera->setCullingMode(camera->getCullingMode() | osg::CullSettings::CLUSTER_CULLING);
-            else
-                camera->setCullingMode(camera->getCullingMode() & ~osg::CullSettings::CLUSTER_CULLING);
 
             // transform polytope in model coords into light spaces eye coords.
             osg::Matrixd invertModelView;
@@ -2716,34 +2660,6 @@ bool MWShadowTechnique::cropShadowCameraToMainFrustum(Frustum& frustum, osg::Cam
     else
         return false;
 
-    // Inflate shadow frustum slightly to provide margin for temporal reuse.
-    // On skip frames, the camera moves but the shadow map is frozen — this
-    // extra margin prevents shadows popping at screen edges.
-    if (_frustumExpansionBase > 0.0 || _frustumExpansionPerSkip > 0.0)
-    {
-        double margin = _frustumExpansionBase
-            + _frustumExpansionPerSkip * osg::maximum(0u, _shadowUpdateInterval - 1);
-        xMin = osg::maximum(-1.0, xMin - margin);
-        xMax = osg::minimum( 1.0, xMax + margin);
-        yMin = osg::maximum(-1.0, yMin - margin);
-        yMax = osg::minimum( 1.0, yMax + margin);
-    }
-
-    // Snap shadow frustum to texel grid for temporal stability.
-    // Range stays fixed, only the origin snaps to discrete texel-sized steps.
-    {
-        const ShadowSettings* settings = getShadowedScene()->getShadowSettings();
-        double shadowMapRes = settings->getTextureSize().x();
-        double xRange = xMax - xMin;
-        double yRange = yMax - yMin;
-        double texelSizeX = xRange / shadowMapRes;
-        double texelSizeY = yRange / shadowMapRes;
-        xMin = floor(xMin / texelSizeX) * texelSizeX;
-        xMax = xMin + xRange;
-        yMin = floor(yMin / texelSizeY) * texelSizeY;
-        yMax = yMin + yRange;
-    }
-
     if (xMin != -1.0 || yMin != -1.0 || zMin != -1.0 ||
         xMax != 1.0 || yMax != 1.0 || zMax != 1.0)
     {
@@ -2829,18 +2745,6 @@ bool MWShadowTechnique::adjustPerspectiveShadowMapCameraSettings(osgUtil::Render
     ConvexHull convexHullUnextended = convexHull;
 
     convexHull.extendTowardsNegativeZ();
-
-    {
-        // extendTowardsNegativeZ is too numerically unstable to do this first
-        convexHull.clip(osg::Plane(-1.0,0.0,0.0,1.0));
-        convexHull.clip(osg::Plane(1.0,0.0,0.0,1.0));
-        convexHull.clip(osg::Plane(0.0,-1.0,0.0,1.0));
-        convexHull.clip(osg::Plane(0.0,1.0,0.0,1.0));
-        convexHullUnextended.clip(osg::Plane(-1.0,0.0,0.0,1.0));
-        convexHullUnextended.clip(osg::Plane(1.0,0.0,0.0,1.0));
-        convexHullUnextended.clip(osg::Plane(0.0,-1.0,0.0,1.0));
-        convexHullUnextended.clip(osg::Plane(0.0,1.0,0.0,1.0));
-    }
 
 #if 0
     convexHull.output(osg::notify(osg::NOTICE));
@@ -3133,31 +3037,6 @@ bool MWShadowTechnique::adjustPerspectiveShadowMapCameraSettings(osgUtil::Render
                                    0.0,  0.0, 1.0/best_z_ratio,  0.0,
                                    0.0,  b,   0.0,  0.0 );
     osg::Matrixd light_persp = light_p * lightView * lightPerspective;
-
-    if (convexHull.valid())
-    {
-        convexHull.transform(lightView * lightPerspective);
-        xMin = osg::maximum(-1.0, convexHull.min(0));
-        xMax = osg::minimum(1.0, convexHull.max(0));
-        yMin = osg::maximum(-1.0, convexHull.min(1));
-        yMax = osg::minimum(1.0, convexHull.max(1));
-
-        if (xMin != -1.0 || yMin != -1.0 || xMax != 1.0 || yMax != 1.0)
-        {
-            osg::Matrix m;
-            m.makeTranslate(osg::Vec3d(-0.5*(xMax+xMin),
-                                       -0.5*(yMax+yMin),
-                                       0.0));
-
-            m.postMultScale(osg::Vec3d(2.0/(xMax-xMin),
-                                       2.0/(yMax-yMin),
-                                       1.0));
-
-            convexHull.transform(m);
-            convexHullUnextended.transform(m);
-            light_persp.postMult(m);
-        }
-    }
 
 #if 0
     OSG_NOTICE<<"light_p = "<<light_p<<std::endl;
@@ -3462,10 +3341,10 @@ void SceneUtil::MWShadowTechnique::DebugHUD::setFrustumVertices(osg::ref_ptr<osg
 
 void SceneUtil::MWShadowTechnique::DebugHUD::addAnotherShadowMap()
 {
-    size_t shadowMapNumber = mDebugCameras.size();
+    unsigned int shadowMapNumber = mDebugCameras.size();
 
     mDebugCameras.push_back(new osg::Camera);
-    mDebugCameras[shadowMapNumber]->setViewport(static_cast<int>(200 * shadowMapNumber), 0, 200, 200);
+    mDebugCameras[shadowMapNumber]->setViewport(200 * shadowMapNumber, 0, 200, 200);
     mDebugCameras[shadowMapNumber]->setRenderOrder(osg::Camera::POST_RENDER);
     mDebugCameras[shadowMapNumber]->setClearColor(osg::Vec4(1.0, 1.0, 0.0, 1.0));
     mDebugCameras[shadowMapNumber]->getOrCreateStateSet()->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);

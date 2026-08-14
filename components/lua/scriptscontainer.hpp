@@ -15,41 +15,6 @@
 namespace LuaUtil
 {
     class ScriptTracker;
-    class ScriptsContainer;
-    using ScriptsContainerLifetime = std::shared_ptr<ScriptsContainer*>;
-
-    // Immutable ScriptsContainerLifetime
-    class ScriptsContainerWeakPtr
-    {
-        ScriptsContainerLifetime mWeakPtr;
-
-    public:
-        ScriptsContainerWeakPtr(const ScriptsContainerWeakPtr&) = default;
-        ScriptsContainerWeakPtr(ScriptsContainerWeakPtr&&) = default;
-
-        explicit ScriptsContainerWeakPtr(ScriptsContainerLifetime ptr)
-            : mWeakPtr(std::move(ptr))
-        {
-        }
-
-        ScriptsContainer* operator*() const noexcept
-        {
-            if (auto ptr = mWeakPtr.get())
-                return *ptr;
-            // this shouldn't happen unless you use it after a move or try to be funny by constructing from nullptr
-            return nullptr;
-        }
-    };
-
-    inline auto operator<=>(const ScriptsContainerWeakPtr& lhs, const ScriptsContainerWeakPtr& rhs)
-    {
-        return *lhs <=> *rhs;
-    }
-
-    inline auto operator<=>(const ScriptsContainerWeakPtr& lhs, ScriptsContainer* rhs)
-    {
-        return *lhs <=> rhs;
-    }
 
     // ScriptsContainer is a base class for all scripts containers (LocalScripts,
     // GlobalScripts, PlayerScripts, etc). Each script runs in a separate sandbox.
@@ -199,8 +164,6 @@ namespace LuaUtil
 
         virtual bool isActive() const { return false; }
 
-        ScriptsContainerWeakPtr getWeakPointer() const;
-
     protected:
         // Call a function on an interface.
         template <typename T, typename... Args>
@@ -329,7 +292,6 @@ namespace LuaUtil
         static void removeHandler(std::vector<Handler>& list, int scriptId);
         void insertInterface(int scriptId, const Script& script);
         void removeInterface(int scriptId, const Script& script);
-        void save(LuaView&, ESM::LuaScripts&);
 
         ScriptIdsWithInitializationData mAutoStartScripts;
         const UserdataSerializer* mSerializer = nullptr;
@@ -361,7 +323,8 @@ namespace LuaUtil
         int64_t mTemporaryCallbackCounter = 0;
 
         std::map<int, int64_t> mRemovedScriptsMemoryUsage;
-        ScriptsContainerLifetime mThis; // used by LuaState to track ownership of memory allocations
+        using WeakPtr = std::shared_ptr<ScriptsContainer*>;
+        WeakPtr mThis; // used by LuaState to track ownership of memory allocations
 
         ScriptTracker* mTracker;
         bool mRequiredLoading = false;

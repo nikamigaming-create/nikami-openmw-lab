@@ -1,8 +1,12 @@
 name: Build and test
 
 on:
-- push
-- pull_request
+  # A pull-request branch receives both a push event and a pull_request synchronize event.  Running both doubles
+  # the Ubuntu, Flat Windows, and VR Windows matrices without testing a different tree.
+  push:
+    branches:
+      - main
+  pull_request:
 
 env:
   BUILD_TYPE: RelWithDebInfo
@@ -12,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v4
 
     - name: Add OpenMW PPA Dependencies
       run: sudo add-apt-repository ppa:openmw/openmw; sudo apt-get update
@@ -66,24 +70,32 @@ jobs:
     #     path: ./build_artifact.7z
     #     name: build_artifact.7z
 
-  MacOS:
-    strategy:
-      fail-fast: true
-      matrix:
-        args:
-          - image: macos-15
-          - image: macos-15-intel
-    uses: ./.github/workflows/macos.yml
-    with:
-      image: ${{ matrix.args.image }}
+  Output-Envs:
+    name: Read .env file and expose it as output
+    runs-on: ubuntu-latest
+    outputs:
+      VCPKG_DEPS_TAG: ${{ env.VCPKG_DEPS_TAG }}
+      BUILD_TYPE: ${{ env.BUILD_TYPE }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cat "${{ github.workspace }}/CI/github.env" >> $GITHUB_ENV
 
   Windows:
+    needs:
+      - Output-Envs
+
     strategy:
       fail-fast: true
       matrix:
         image:
         - "2022"
+        variant:
+        - vr
+        - flat
 
     uses: ./.github/workflows/windows.yml
     with:
       image: ${{ matrix.image }}
+      vcpkg-deps-tag: ${{ needs.Output-Envs.outputs.VCPKG_DEPS_TAG }}
+      build-type: ${{ needs.Output-Envs.outputs.BUILD_TYPE }}
+      variant: ${{ matrix.variant }}

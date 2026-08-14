@@ -4,17 +4,18 @@
 
 #include <MyGUI_EditBox.h>
 
-#include <oics/ICSChannelListener.h>
-#include <oics/ICSInputControlSystem.h>
+#include <extern/oics/ICSChannelListener.h>
+#include <extern/oics/ICSInputControlSystem.h>
 
 #include <components/debug/debuglog.hpp>
 #include <components/files/conversion.hpp>
-#include <components/settings/settings.hpp>
 #include <components/sdlutil/sdlmappings.hpp>
+#include <components/vr/vr.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
+#include "../mwvr/vrinputmanager.hpp"
 
 #include "actions.hpp"
 
@@ -56,6 +57,14 @@ namespace MWInput
         }
     };
 
+//## VR_PATCH BEGIN
+// The VR input manager needs to forward XR inputs to ICS.
+    ICS::InputControlSystem& BindingsManager::ics()
+    {
+        return *mInputBinder;
+    }
+
+//## VR_PATCH END
     class BindingsListener : public ICS::ChannelListener, public ICS::DetectingBindingListener
     {
     public:
@@ -223,7 +232,7 @@ namespace MWInput
     {
         int playerChannels[] = { A_AutoMove, A_AlwaysRun, A_ToggleWeapon, A_ToggleSpell, A_Rest, A_QuickKey1,
             A_QuickKey2, A_QuickKey3, A_QuickKey4, A_QuickKey5, A_QuickKey6, A_QuickKey7, A_QuickKey8, A_QuickKey9,
-            A_QuickKey10, A_Use, A_Inventory, A_Map, A_Journal, A_QuickMenu };
+            A_QuickKey10, A_Use, A_Journal };
 
         for (int pc : playerChannels)
         {
@@ -252,8 +261,6 @@ namespace MWInput
         // across different versions of OpenMW (in the case where another input action is added)
         std::map<int, SDL_Scancode> defaultKeyBindings;
 
-        const bool falloutControls = Settings::Manager::getBool("fallout controls", "OpenNV Compatibility");
-
         // Gets the Keyvalue from the Scancode; gives the button in the same place reguardless of keyboard format
         defaultKeyBindings[A_Activate] = SDL_SCANCODE_SPACE;
         defaultKeyBindings[A_MoveBackward] = SDL_SCANCODE_S;
@@ -275,6 +282,7 @@ namespace MWInput
         defaultKeyBindings[A_Jump] = SDL_SCANCODE_E;
         defaultKeyBindings[A_Journal] = SDL_SCANCODE_J;
         defaultKeyBindings[A_Rest] = SDL_SCANCODE_T;
+        defaultKeyBindings[A_QuickMenu] = SDL_SCANCODE_V;
         defaultKeyBindings[A_GameMenu] = SDL_SCANCODE_ESCAPE;
         defaultKeyBindings[A_Map] = SDL_SCANCODE_M;
         defaultKeyBindings[A_TogglePOV] = SDL_SCANCODE_TAB;
@@ -303,26 +311,6 @@ namespace MWInput
         std::map<int, int> defaultMouseButtonBindings;
         defaultMouseButtonBindings[A_FalloutAim] = SDL_BUTTON_RIGHT;
         defaultMouseButtonBindings[A_Use] = SDL_BUTTON_LEFT;
-
-        if (falloutControls)
-        {
-            // Retail Fallout: New Vegas keyboard/mouse defaults. This stays
-            // profile-controlled so Morrowind and custom bindings stay intact.
-            defaultKeyBindings[A_Activate] = SDL_SCANCODE_E;
-            defaultKeyBindings[A_Jump] = SDL_SCANCODE_SPACE;
-            defaultKeyBindings[A_TogglePOV] = SDL_SCANCODE_F;
-            defaultKeyBindings[A_Inventory] = SDL_SCANCODE_TAB;
-            // I opens the separate OpenMW inventory analogue.  It shares the
-            // player inventory with the Pip-Boy but retains its own layout.
-            defaultKeyBindings[A_QuickKeysMenu] = SDL_SCANCODE_I;
-            defaultKeyBindings[A_QuickMenu] = SDL_SCANCODE_V;
-            defaultKeyBindings[A_Journal] = SDL_SCANCODE_J;
-
-            // R already maps to the native Fallout reload path. Never leave a
-            // Morrowind weapon toggle or inventory action on the mouse.
-            defaultKeyBindings.erase(A_ToggleWeapon);
-            defaultMouseButtonBindings.erase(A_Inventory);
-        }
 
         std::map<int, ICS::InputControlSystem::MouseWheelClick> defaultMouseWheelBindings;
         defaultMouseWheelBindings[A_ZoomIn] = ICS::InputControlSystem::MouseWheelClick::UP;
@@ -729,9 +717,14 @@ namespace MWInput
             else if (action == A_Jump && actionIsActive(A_ToggleSpell))
                 action = A_CycleSpellLeft;
         }
+        auto onPress = previousValue <= 0.6 && currentValue > 0.6;
 
-        if (previousValue <= 0.6 && currentValue > 0.6)
+        if (action == A_GameMenu && VR::getVR())
+            MWVR::VRInputManager::instance().gameMenuAction(onPress);
+        else if (onPress)
+        {
             manager->executeAction(action);
+        }
     }
 
     void BindingsManager::saveBindings()

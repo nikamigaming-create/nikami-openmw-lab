@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
@@ -11,14 +10,12 @@
 #include <vector>
 
 #include <components/esm4/inventory.hpp>
-#include <components/esm4/actor.hpp>
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loaddoor.hpp>
-#include <components/esm4/loadfurn.hpp>
 #include <components/esm4/loadimod.hpp>
 #include <components/esm4/loadingr.hpp>
 #include <components/esm4/loadkeym.hpp>
@@ -35,8 +32,8 @@
 #include "../mwgui/tooltips.hpp"
 
 #include "../mwworld/cellstore.hpp"
-#include "../mwworld/actiondoor.hpp"
 #include "../mwworld/actionequip.hpp"
+#include "../mwworld/actiondoor.hpp"
 #include "../mwworld/actionteleport.hpp"
 #include "../mwworld/failedaction.hpp"
 #include "../mwworld/class.hpp"
@@ -61,32 +58,8 @@ namespace MWClass
         void logWorldViewerSkippedActor(const MWWorld::ConstPtr& ptr, std::string_view actorType);
         MWGui::ToolTipInfo getToolTipInfo(std::string_view name, int count);
 
-        /// Builds the ordinary action used when an ESM4 furniture reference is
-        /// activated.  Keeping this in the class layer ensures player input,
-        /// scripts, and the compatibility route all cross the same boundary.
-        std::unique_ptr<MWWorld::Action> activateEsm4Furniture(
-            const MWWorld::Ptr& furniture, const MWWorld::Ptr& actor);
-
         // We don't handle ESM4 player stats yet, so for resolving levelled object we use an arbitrary number.
         constexpr int sDefaultLevel = 5;
-
-        inline int calculateFnvActorLevel(
-            const ESM4::ACBS_FO3& config, bool playerLevelMultiplier, int playerLevel)
-        {
-            if (!playerLevelMultiplier)
-            {
-                const int fixedLevel = config.levelOrMult < 0 ? -config.levelOrMult : config.levelOrMult;
-                return std::max(1, fixedLevel);
-            }
-
-            const int multiplier = std::max(0, static_cast<int>(config.levelOrMult));
-            int level = std::max(1, (std::max(1, playerLevel) * multiplier) / 1000);
-            if (config.calcMinlevel != 0)
-                level = std::max(level, static_cast<int>(config.calcMinlevel));
-            if (config.calcMaxlevel != 0)
-                level = std::min(level, static_cast<int>(config.calcMaxlevel));
-            return level;
-        }
 
         template <class Record>
         struct InventoryIcon
@@ -180,6 +153,24 @@ namespace MWClass
         struct ItemWeight
         {
             static float get(const Record&) { return 0.f; }
+        };
+
+        template <class Record>
+        struct ItemHealth
+        {
+            static int get(const Record&) { return 0; }
+        };
+
+        template <>
+        struct ItemHealth<ESM4::Armor>
+        {
+            static int get(const ESM4::Armor& record) { return static_cast<int>(record.mData.health); }
+        };
+
+        template <>
+        struct ItemHealth<ESM4::Weapon>
+        {
+            static int get(const ESM4::Weapon& record) { return static_cast<int>(record.mData.health); }
         };
 
 #define OPENMW_ESM4_VALUE_WEIGHT_TRAIT(Type, ValueExpr, WeightExpr)                                                   \
@@ -329,6 +320,16 @@ namespace MWClass
             return ESM4Impl::ItemWeight<Record>::get(*ptr.get<Record>()->mBase);
         }
 
+        int getItemMaxHealth(const MWWorld::ConstPtr& ptr) const override
+        {
+            return ESM4Impl::ItemHealth<Record>::get(*ptr.get<Record>()->mBase);
+        }
+
+        bool hasItemHealth(const MWWorld::ConstPtr& ptr) const override
+        {
+            return getItemMaxHealth(ptr) > 0;
+        }
+
         const ESM::RefId& getUpSoundId(const MWWorld::ConstPtr& ptr) const override
         {
             static const ESM::RefId sEmpty;
@@ -348,17 +349,6 @@ namespace MWClass
             // TODO: There should be a better way to hide markers
             if (ESM4Impl::isMarkerModel(model) || ESM4Impl::isLodModel(model))
                 return {};
-
-            // FalloutNV.esm TestMap01 retains two editor-only model names
-            // whose source files were not shipped in any retail FNV archive.
-            // Keep the authored records and route only those exact stale names
-            // to their corresponding retail meshes.  This is deliberately a
-            // data correction, not a generated placeholder or cross-game
-            // fallback: both targets are in Fallout - Meshes.bsa.
-            if (model == "clutter\\HELIOSOne\\NV_HeliosOne_SolarReflectorMetal_01.NIF")
-                return "architecture\\helios_one\\heliosone_solarreflector.nif";
-            if (model == "architecture\\diner\\dinernosignTEST.nif")
-                return "architecture\\diner\\dinernosign.nif";
 
             return model;
         }
@@ -387,15 +377,6 @@ namespace MWClass
     template <typename Record>
     class ESM4Named : public MWWorld::RegisteredClass<ESM4Named<Record>, ESM4Base<Record>>
     {
-        static constexpr bool IsInventoryItem = std::is_same_v<Record, ESM4::Ammunition>
-            || std::is_same_v<Record, ESM4::Armor> || std::is_same_v<Record, ESM4::Book>
-            || std::is_same_v<Record, ESM4::Clothing> || std::is_same_v<Record, ESM4::Ingredient>
-            || std::is_same_v<Record, ESM4::ItemMod> || std::is_same_v<Record, ESM4::Key>
-            || std::is_same_v<Record, ESM4::Light> || std::is_same_v<Record, ESM4::MiscItem>
-            || std::is_same_v<Record, ESM4::Potion> || std::is_same_v<Record, ESM4::Weapon>;
-        static constexpr bool IsFalloutEquipment = std::is_same_v<Record, ESM4::Armor>
-            || std::is_same_v<Record, ESM4::Clothing> || std::is_same_v<Record, ESM4::Weapon>;
-
     public:
         ESM4Named()
             : MWWorld::RegisteredClass<ESM4Named, ESM4Base<Record>>(Record::sRecordId)
@@ -417,20 +398,34 @@ namespace MWClass
             return ESM4Impl::InventoryIcon<Record>::get(*ptr.get<Record>()->mBase);
         }
 
+        bool showsInInventory(const MWWorld::ConstPtr& ptr) const override
+        {
+            const std::string_view name = getName(ptr);
+            if (Misc::StringUtils::ciEqual(name, "Pip-Boy 3000")
+                || Misc::StringUtils::ciEqual(name, "Pip-Boy Glove"))
+                return false;
+
+            if constexpr (std::is_same_v<Record, ESM4::Armor>)
+            {
+                const ESM4::Armor& armor = *ptr.get<ESM4::Armor>()->mBase;
+                return (armor.mGeneralFlags & ESM4::Armor::FO3_NonPlayable) == 0
+                    && (armor.mArmorFlags & ESM4::Armor::FO3_PipBoy) == 0
+                    && !Misc::StringUtils::ciEqual(armor.mEditorId, "PipBoy")
+                    && !Misc::StringUtils::ciEqual(armor.mEditorId, "PipBoyGlove");
+            }
+            else
+                return ESM4Base<Record>::showsInInventory(ptr);
+        }
+
         std::pair<std::vector<int>, bool> getEquipmentSlots(const MWWorld::ConstPtr& ptr) const override
         {
             if constexpr (std::is_same_v<Record, ESM4::Weapon>)
                 return { { MWWorld::InventoryStore::Slot_CarriedRight }, false };
             else if constexpr (std::is_same_v<Record, ESM4::Ammunition>)
                 return { { MWWorld::InventoryStore::Slot_Ammunition }, true };
-            else if constexpr (std::is_same_v<Record, ESM4::Armor> || std::is_same_v<Record, ESM4::Clothing>)
+            else if constexpr (std::is_same_v<Record, ESM4::Armor>)
             {
-                const std::uint32_t flags = [&] {
-                    if constexpr (std::is_same_v<Record, ESM4::Armor>)
-                        return ptr.get<ESM4::Armor>()->mBase->mArmorFlags;
-                    else
-                        return ptr.get<ESM4::Clothing>()->mBase->mClothingFlags;
-                }();
+                const std::uint32_t flags = ptr.get<ESM4::Armor>()->mBase->mArmorFlags;
                 constexpr std::uint32_t head = ESM4::Armor::FO3_Head | ESM4::Armor::FO3_Hair
                     | ESM4::Armor::FO3_Headband | ESM4::Armor::FO3_Hat | ESM4::Armor::FO3_EyeGlasses
                     | ESM4::Armor::FO3_NoseRing | ESM4::Armor::FO3_Earrings | ESM4::Armor::FO3_Mask
@@ -451,42 +446,23 @@ namespace MWClass
                 return {};
         }
 
-        bool hasItemHealth(const MWWorld::ConstPtr& ptr) const override
+        std::unique_ptr<MWWorld::Action> use(const MWWorld::Ptr& ptr, bool force = false) const override
         {
-            if constexpr (std::is_same_v<Record, ESM4::Weapon> || std::is_same_v<Record, ESM4::Armor>)
-                return ptr.get<Record>()->mBase->mData.health > 0;
-            else
-                return false;
-        }
-
-        int getItemMaxHealth(const MWWorld::ConstPtr& ptr) const override
-        {
-            if constexpr (std::is_same_v<Record, ESM4::Weapon> || std::is_same_v<Record, ESM4::Armor>)
+            if constexpr (std::is_same_v<Record, ESM4::Weapon> || std::is_same_v<Record, ESM4::Ammunition>
+                || std::is_same_v<Record, ESM4::Armor> || std::is_same_v<Record, ESM4::Clothing>)
             {
-                const std::uint32_t health = ptr.get<Record>()->mBase->mData.health;
-                return static_cast<int>(
-                    std::min(health, static_cast<std::uint32_t>(std::numeric_limits<int>::max())));
+                return std::make_unique<MWWorld::ActionEquip>(ptr, force);
             }
             else
-                return ESM4Base<Record>::getItemMaxHealth(ptr);
+                return ESM4Base<Record>::use(ptr, force);
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }
 
-        std::unique_ptr<MWWorld::Action> activate(const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override
+        std::unique_ptr<MWWorld::Action> activate(
+            const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override
         {
-            if constexpr (std::is_same_v<Record, ESM4::Furniture>)
-                return ESM4Impl::activateEsm4Furniture(ptr, actor);
-            else if constexpr (IsInventoryItem)
-                return this->defaultItemActivate(ptr, actor);
-            return ESM4Base<Record>::activate(ptr, actor);
-        }
-
-        std::unique_ptr<MWWorld::Action> use(const MWWorld::Ptr& ptr, bool force) const override
-        {
-            if constexpr (IsFalloutEquipment)
-                return std::make_unique<MWWorld::ActionEquip>(ptr, force);
-            return ESM4Base<Record>::use(ptr, force);
+            return this->defaultItemActivate(ptr, actor);
         }
     };
 

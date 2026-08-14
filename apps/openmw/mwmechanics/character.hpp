@@ -184,7 +184,6 @@ namespace MWMechanics
         std::string mCurrentHit;
 
         UpperBodyState mUpperBodyState{ UpperBodyState::None };
-        bool mResetIdleOnAttackEnd{ false };
 
         JumpingState mJumpState{ JumpState_None };
         std::string mCurrentJump;
@@ -369,12 +368,16 @@ namespace MWMechanics
         bool readyToPrepareAttack() const;
         bool readyToStartAttack() const;
 
+        /// Execute an already queued and resolved VATS ranged hit through the ordinary Fallout weapon path. The
+        /// caller owns chance resolution and supplies the selected body-part target point and damage multiplier.
         bool prepareFalloutVatsRangedAttack();
         bool consumeFalloutVatsRangedAttackRelease();
         bool executeFalloutVatsRangedHit(
             const MWWorld::Ptr& target, const osg::Vec3f& targetPoint,
             const FalloutVatsQueuedAction& action, bool targetHit);
+
         bool reloadFalloutWeapon();
+
         bool executeFalloutProjectileImpact(const MWWorld::Ptr& target, const osg::Vec3f& segmentStart,
             const osg::Vec3f& hitPosition, const FalloutProjectileImpactContract& impact);
         bool executeFalloutExplosion(

@@ -7,9 +7,9 @@
 
 #include <array>
 #include <atomic>
-#include <span>
 #include <string>
 #include <string_view>
+#include <span>
 #include <vector>
 
 namespace SceneUtil
@@ -51,10 +51,14 @@ namespace SceneUtil
             osg::Matrixf mInvBindMatrix;
         };
 
+        using VertexWeight = std::pair<unsigned short, float>;
+        using VertexWeights = std::vector<VertexWeight>;
         using BoneWeight = std::pair<size_t, float>;
         using BoneWeights = std::vector<BoneWeight>;
 
         void setBoneInfo(std::vector<BoneInfo>&& bones);
+        // Convert influences in vertex and weight list per bone format
+        void setInfluences(const std::vector<VertexWeights>& influences);
         // Convert influences in bone and weight list per vertex format
         void setInfluences(const std::vector<BoneWeights>& influences);
 
@@ -81,6 +85,9 @@ namespace SceneUtil
         bool getFalloutFingerVertexWeights(
             std::vector<float>& thumb, std::vector<float>& index, std::vector<float>& grip) const;
         bool getFalloutFingerBoneVertexWeights(std::array<std::vector<float>, 15>& fingerBones) const;
+
+        /// Apply the retail-style VATS wireframe to this skinned body mesh. Vertex colors are derived from the
+        /// authored skin weights, so rigid attachments under target bones are deliberately unaffected.
         bool setFalloutVatsHighlight(
             std::span<const std::string_view> targetBones, std::string_view selectedBone, bool enabled);
 

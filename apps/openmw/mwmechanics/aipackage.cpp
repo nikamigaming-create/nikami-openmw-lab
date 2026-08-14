@@ -16,7 +16,6 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/esmstore.hpp"
-#include "../mwworld/worldmodel.hpp"
 
 #include "../mwphysics/raycasting.hpp"
 
@@ -38,7 +37,7 @@ namespace
 
     float getPointTolerance(float speed, float duration, const osg::Vec3f& halfExtents)
     {
-        const float actorTolerance = 2 * speed * duration + 1.2f * std::max(halfExtents.x(), halfExtents.y());
+        const float actorTolerance = 2 * speed * duration + 1.2 * std::max(halfExtents.x(), halfExtents.y());
         return std::max(MWMechanics::MIN_TOLERANCE, actorTolerance);
     }
 
@@ -52,35 +51,71 @@ MWMechanics::AiPackage::AiPackage(AiPackageTypeId typeId, const Options& options
     : mTypeId(typeId)
     , mOptions(options)
     , mReaction(MWBase::Environment::get().getWorld()->getPrng())
+    , mTargetActorId(-1)
+    , mCachedTarget()
+    , mRotateOnTheRunChecks(0)
+    , mIsShortcutting(false)
+    , mShortcutProhibited(false)
+    , mShortcutFailPos()
 {
 }
 
 MWWorld::Ptr MWMechanics::AiPackage::getTarget() const
 {
-    if (mTargetActor.isSet())
-        return MWBase::Environment::get().getWorldModel()->getPtr(mTargetActor);
-    if (mTargetActorRefId.empty() || mTargetNotFound)
-        return {};
-    MWWorld::Ptr ptr = MWBase::Environment::get().getWorld()->searchPtr(mTargetActorRefId, false);
-    if (ptr.isEmpty())
-        mTargetNotFound = true;
-    else
+    if (!mCachedTarget.isEmpty())
     {
-        MWBase::Environment::get().getWorldModel()->registerPtr(ptr);
-        mTargetActor = ptr.getCellRef().getRefNum();
+        if (mCachedTarget.mRef->isDeleted() || !mCachedTarget.getRefData().isEnabled())
+            mCachedTarget = MWWorld::Ptr();
+        else
+            return mCachedTarget;
     }
-    return ptr;
+
+    if (mTargetActorId == -2)
+        return MWWorld::Ptr();
+
+    if (mTargetActorId == -1)
+    {
+        if (mTargetActorRefId.empty())
+        {
+            mTargetActorId = -2;
+            return MWWorld::Ptr();
+        }
+        mCachedTarget = MWBase::Environment::get().getWorld()->searchPtr(mTargetActorRefId, false);
+        if (mCachedTarget.isEmpty())
+        {
+            mTargetActorId = -2;
+            return mCachedTarget;
+        }
+        else
+            mTargetActorId = mCachedTarget.getClass().getCreatureStats(mCachedTarget).getActorId();
+    }
+
+    if (mTargetActorId != -1)
+        mCachedTarget = MWBase::Environment::get().getWorld()->searchPtrViaActorId(mTargetActorId);
+    else
+        return MWWorld::Ptr();
+
+    return mCachedTarget;
 }
 
 bool MWMechanics::AiPackage::targetIs(const MWWorld::Ptr& ptr) const
 {
-    if (ptr.isEmpty())
-        return getTarget() == ptr;
-    if (mTargetActor.isSet())
-        return ptr.getCellRef().getRefNum() == mTargetActor;
-    if (ptr.getCellRef().getRefId() != mTargetActorRefId)
+    if (mTargetActorId == -2)
+        return ptr.isEmpty();
+    else if (mTargetActorId == -1)
+    {
+        if (mTargetActorRefId.empty())
+        {
+            mTargetActorId = -2;
+            return ptr.isEmpty();
+        }
+        if (!ptr.isEmpty() && ptr.getCellRef().getRefId() == mTargetActorRefId)
+            return getTarget() == ptr;
         return false;
-    return getTarget() == ptr;
+    }
+    if (ptr.isEmpty() || !ptr.getClass().isActor())
+        return false;
+    return ptr.getClass().getCreatureStats(ptr).getActorId() == mTargetActorId;
 }
 
 void MWMechanics::AiPackage::reset()
@@ -90,7 +125,7 @@ void MWMechanics::AiPackage::reset()
     mIsShortcutting = false;
     mShortcutProhibited = false;
     mShortcutFailPos = osg::Vec3f();
-    mTargetNotFound = false;
+    mCachedTarget = MWWorld::Ptr();
 
     mPathFinder.clearPath();
     mObstacleCheck.clear();
@@ -98,7 +133,7 @@ void MWMechanics::AiPackage::reset()
 
 bool MWMechanics::AiPackage::pathTo(const MWWorld::Ptr& actor, const osg::Vec3f& dest, float duration,
     MWWorld::MovementDirectionFlags supportedMovementDirections, float destTolerance, float endTolerance,
-    PathType pathType, bool requireDestinationTolerance)
+    PathType pathType)
 {
     const Misc::TimerStatus timerStatus = mReaction.update(duration);
 
@@ -190,10 +225,7 @@ bool MWMechanics::AiPackage::pathTo(const MWWorld::Ptr& actor, const osg::Vec3f&
     if (timerStatus == Misc::TimerStatus::Elapsed)
         updateFlags |= PathFinder::UpdateFlag_RemoveLoops;
 
-    const float finalPointTolerance
-        = requireDestinationTolerance ? std::max(0.f, destTolerance) : DEFAULT_TOLERANCE;
-    mPathFinder.update(
-        position, pointTolerance, finalPointTolerance, updateFlags, agentBounds, getNavigatorFlags(actor));
+    mPathFinder.update(position, pointTolerance, DEFAULT_TOLERANCE, updateFlags, agentBounds, getNavigatorFlags(actor));
 
     if (isDestReached || mPathFinder.checkPathCompleted()) // if path is finished
     {
