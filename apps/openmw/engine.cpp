@@ -13096,6 +13096,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                  << " purchaseItem=" << fnvR2ChetPurchasedItem << " purchasePlayer=" << playerItemAfter
                                  << " purchaseMerchant=" << merchantItemAfter << " playerCaps=" << playerCapsAfter
                                  << " merchantCaps=" << merchantCapsAfter;
+                if (mWindowManager->containsMode(MWGui::GM_Dialogue))
+                {
+                    mDialogueManager->goodbyeSelected();
+                    mWindowManager->removeGuiMode(MWGui::GM_Dialogue);
+                    Log(Debug::Info) << "FNV R2 persistence save: closed authored Chet dialogue through production goodbye path";
+                }
                 advance(8);
             }
         }
