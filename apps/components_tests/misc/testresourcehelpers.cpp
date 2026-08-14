@@ -92,7 +92,8 @@ namespace
             "textures/interface/icons/pipboyimages/weapons/weapons_10mm_pistol.dds");
         std::unique_ptr<VFS::Manager> vfs = TestingOpenMW::createTestVFS({ { archivePath, nullptr } });
 
-        EXPECT_EQ(correctIconPath(recordPath.value(), vfs.get()), archivePath.value());
+        EXPECT_EQ(correctIconPath(recordPath.value(), vfs.get()),
+            R"(textures\interface\icons\pipboyimages\weapons\weapons_10mm_pistol.dds)");
     }
 
     TEST(CorrectIconPath, morrowind_icon_lookup_is_retained)
@@ -101,7 +102,7 @@ namespace
         constexpr VFS::Path::NormalizedView archivePath("icons/k/health.dds");
         std::unique_ptr<VFS::Manager> vfs = TestingOpenMW::createTestVFS({ { archivePath, nullptr } });
 
-        EXPECT_EQ(correctIconPath(recordPath.value(), vfs.get()), archivePath.value());
+        EXPECT_EQ(correctIconPath(recordPath.value(), vfs.get()), R"(icons\k\health.dds)");
     }
 
     TEST(GetLODMeshName, fallout_new_vegas_versions_use_lod_meshes)
