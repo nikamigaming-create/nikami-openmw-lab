@@ -5,10 +5,12 @@
 
 #include <osg/ref_ptr>
 
+#include <string_view>
+
 namespace osg
 {
     class Image;
-    class Texture2D;
+    class Texture;
     class StateSet;
 }
 
@@ -20,13 +22,22 @@ namespace Resource
 namespace MyGUIPlatform
 {
 
+    /// Create a procedural image for an absent MyGUI resource. Callers must first verify that the requested VFS path
+    /// does not exist; existing or malformed assets must remain on the regular image loader path.
+    osg::ref_ptr<osg::Image> createMissingTextureFallback(std::string_view name);
+
     class OSGTexture final : public MyGUI::ITexture
     {
         std::string mName;
         Resource::ImageManager* mImageManager;
+        bool mUseMissingTextureFallback;
 
         osg::ref_ptr<osg::Image> mLockedImage;
-        osg::ref_ptr<osg::Texture2D> mTexture;
+//## VR_PATCH BEGIN
+// Texture2D -> Texture for multiview compatibility
+// VR-TODO: Again, why am i not using texture views for this? Upstream is and I merged multiview upstream!
+        osg::ref_ptr<osg::Texture> mTexture;
+//## VR_PATCH END
         osg::ref_ptr<osg::StateSet> mInjectState;
         MyGUI::PixelFormat mFormat;
         MyGUI::TextureUsage mUsage;
@@ -36,8 +47,12 @@ namespace MyGUIPlatform
         int mHeight;
 
     public:
-        OSGTexture(const std::string& name, Resource::ImageManager* imageManager);
-        OSGTexture(osg::Texture2D* texture, osg::StateSet* injectState = nullptr);
+        OSGTexture(
+            const std::string& name, Resource::ImageManager* imageManager, bool useMissingTextureFallback = false);
+//## VR_PATCH BEGIN
+// Texture2D -> Texture
+        OSGTexture(osg::Texture* texture, osg::StateSet* injectState = nullptr);
+//## VR_PATCH END
         ~OSGTexture() override;
 
         osg::StateSet* getInjectState() { return mInjectState; }
@@ -66,7 +81,9 @@ namespace MyGUIPlatform
         void setShader(const std::string& shaderName) override;
 
         /*internal:*/
-        osg::Texture2D* getTexture() const { return mTexture.get(); }
+//## VR_PATCH BEGIN
+        osg::Texture* getTexture() const { return mTexture.get(); }
+//## VR_PATCH END
     };
 
 }
