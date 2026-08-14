@@ -13096,13 +13096,17 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                  << " purchaseItem=" << fnvR2ChetPurchasedItem << " purchasePlayer=" << playerItemAfter
                                  << " purchaseMerchant=" << merchantItemAfter << " playerCaps=" << playerCapsAfter
                                  << " merchantCaps=" << merchantCapsAfter;
-                mStateManager->quickSave(std::string(saveName));
-                fnvR2ChetNativeSavePass = true;
-                capture("goodsprings-transaction-native-save-requested");
                 advance(8);
             }
         }
         else if (fnvR2ChetPersistenceSaveRequested && fnvR2ChetPhase == 8 && elapsed >= 60)
+        {
+            mStateManager->quickSave("R2 Goodsprings Persistence");
+            fnvR2ChetNativeSavePass = true;
+            capture("goodsprings-transaction-native-save-requested");
+            advance(10);
+        }
+        else if (fnvR2ChetPersistenceSaveRequested && fnvR2ChetPhase == 10 && elapsed >= 60)
         {
             Log(Debug::Info) << "FNV R2 persistence save: result=pass path=production-state-manager-quick-save cleanQuitRequested=1";
             finish(fnvR2ChetTransactionPass && fnvR2ChetNativeSavePass,
