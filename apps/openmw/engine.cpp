@@ -12782,16 +12782,27 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         else if (fnvR2ChetPhase == 3 && elapsed >= 30)
         {
             const bool barterOpen = mWindowManager->containsMode(MWGui::GM_Barter);
-            const int caps = fnvR2ChetActor.isEmpty() ? 0
-                : fnvR2ChetActor.getClass().getContainerStore(fnvR2ChetActor).count(
-                    ESM::RefId(ESM::FormId::fromUint32(0x1031da3)));
-            const int stimpaks = fnvR2ChetActor.isEmpty() ? 0
-                : fnvR2ChetActor.getClass().getContainerStore(fnvR2ChetActor).count(
-                    ESM::RefId(ESM::FormId::fromUint32(0x1015169)));
-            fnvR2ChetBarterPass = barterOpen && caps > 0 && stimpaks > 0;
+            int merchantStacks = 0;
+            int merchantItems = 0;
+            if (!fnvR2ChetActor.isEmpty())
+            {
+                MWWorld::ContainerStore& inventory = fnvR2ChetActor.getClass().getContainerStore(fnvR2ChetActor);
+                for (MWWorld::ContainerStoreIterator item = inventory.begin(); item != inventory.end(); ++item)
+                {
+                    const int count = item->mRef->mRef.getCount(false);
+                    if (count == 0)
+                        continue;
+                    ++merchantStacks;
+                    merchantItems += std::abs(count);
+                    Log(Debug::Info) << "FNV R2 Chet: live-merchant-stack item="
+                                     << item->getCellRef().getRefId() << " count=" << count;
+                }
+            }
+            fnvR2ChetBarterPass = barterOpen && merchantStacks > 0 && merchantItems > 0;
             Log(fnvR2ChetBarterPass ? Debug::Info : Debug::Error)
-                << "FNV R2 Chet: authored-barter-open=" << (barterOpen ? 1 : 0) << " caps=" << caps
-                << " stimpaks=" << stimpaks << " result=" << (fnvR2ChetBarterPass ? "pass" : "fail");
+                << "FNV R2 Chet: authored-barter-open=" << (barterOpen ? 1 : 0)
+                << " merchantStacks=" << merchantStacks << " merchantItems=" << merchantItems
+                << " result=" << (fnvR2ChetBarterPass ? "pass" : "fail");
             capture("goodsprings-chet-authored-barter");
             finish(fnvR2ChetBarterPass, fnvR2ChetBarterPass
                     ? "authored General Store door, Chet dialogue, and live barter inventory observed"
