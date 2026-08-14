@@ -12744,19 +12744,28 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             {
                 constexpr std::string_view tradePrompt = "Show me what you have for sale.";
                 const std::list<std::string> topics = mDialogueManager->getAvailableTopics();
+                const auto& choices = mDialogueManager->getChoices();
                 bool promptAvailable = false;
                 for (const std::string& topic : topics)
                 {
                     Log(Debug::Info) << "FNV R2 Chet: offered-topic=\"" << topic << "\"";
                     promptAvailable = promptAvailable || Misc::StringUtils::ciEqual(topic, tradePrompt);
                 }
-                if (!promptAvailable)
+                const auto choice = std::find_if(choices.begin(), choices.end(), [&](const auto& item) {
+                    Log(Debug::Info) << "FNV R2 Chet: offered-choice=\"" << item.first
+                                     << "\" answer=" << item.second;
+                    return Misc::StringUtils::ciEqual(item.first, tradePrompt);
+                });
+                if (!promptAvailable && choice == choices.end())
                     finish(false, "Chet trade prompt was not exposed by authored dialogue");
                 else
                 {
                     // This is the same production dialogue-manager selection used by the dialogue UI.
                     // The selected INFO owns the retail ShowBarterMenu result; we never push GM_Barter here.
-                    mDialogueManager->keywordSelected(tradePrompt, nullptr);
+                    if (choice != choices.end())
+                        mDialogueManager->questionAnswered(choice->second, nullptr);
+                    else
+                        mDialogueManager->keywordSelected(tradePrompt, nullptr);
                     fnvR2ChetDialoguePass = true;
                     advance(3);
                 }
