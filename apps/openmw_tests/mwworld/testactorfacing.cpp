@@ -7,10 +7,10 @@
 
 namespace MWWorld
 {
-    TEST(ActorFacingTest, convertsFalloutModelForwardToGameplayForward)
+    TEST(ActorFacingTest, convertsFalloutHumanModelForwardToGameplayForward)
     {
         constexpr float gameplayYaw = 1.25f;
-        EXPECT_FLOAT_EQ(getActorModelYaw(gameplayYaw, false, true), gameplayYaw - osg::PI_2f);
+        EXPECT_FLOAT_EQ(getActorModelYaw(gameplayYaw, false, true), gameplayYaw + osg::PI_2f);
     }
 
     TEST(ActorFacingTest, preservesTes4NpcQuarterTurn)
@@ -23,6 +23,30 @@ namespace MWWorld
     {
         constexpr float gameplayYaw = 1.25f;
         EXPECT_FLOAT_EQ(getActorModelYaw(gameplayYaw, false, false), gameplayYaw);
+    }
+
+    TEST(ActorFacingTest, keepsFalloutAccumulationRootInBindBasis)
+    {
+        const osg::Quat sampled(0.37f, osg::Vec3f(0.f, 0.f, 1.f));
+        const osg::Quat bind(osg::PI_2f, osg::Vec3f(0.f, 0.f, 1.f));
+
+        const osg::Quat actual = getActorAnimationRootRotation(sampled, bind, true);
+        EXPECT_FLOAT_EQ(actual.x(), bind.x());
+        EXPECT_FLOAT_EQ(actual.y(), bind.y());
+        EXPECT_FLOAT_EQ(actual.z(), bind.z());
+        EXPECT_FLOAT_EQ(actual.w(), bind.w());
+    }
+
+    TEST(ActorFacingTest, preservesNonFalloutAnimationRootRotation)
+    {
+        const osg::Quat sampled(0.37f, osg::Vec3f(0.f, 0.f, 1.f));
+        const osg::Quat bind(osg::PI_2f, osg::Vec3f(0.f, 0.f, 1.f));
+
+        const osg::Quat actual = getActorAnimationRootRotation(sampled, bind, false);
+        EXPECT_FLOAT_EQ(actual.x(), sampled.x());
+        EXPECT_FLOAT_EQ(actual.y(), sampled.y());
+        EXPECT_FLOAT_EQ(actual.z(), sampled.z());
+        EXPECT_FLOAT_EQ(actual.w(), sampled.w());
     }
 
     TEST(FalloutMovementTest, usesRetailBaseAndRunMultiplier)

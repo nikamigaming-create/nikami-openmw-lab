@@ -66,6 +66,7 @@ namespace SceneUtil
             : mTextKeys(copy.mTextKeys)
             , mKeyframeControllers(copy.mKeyframeControllers)
             , mFalloutHeadAnimTracks(copy.mFalloutHeadAnimTracks)
+            , mNamedSequences(copy.mNamedSequences)
         {
         }
 
@@ -93,6 +94,13 @@ namespace SceneUtil
         /// Fallout 3/New Vegas KF files store FaceGen/head animation channels as HeadAnims float/bool tracks.
         typedef std::map<std::string, FalloutHeadAnimTrack> FalloutHeadAnimTrackMap;
         FalloutHeadAnimTrackMap mFalloutHeadAnimTracks;
+
+        /// Bethesda object NIFs can keep multiple activation animations in an embedded
+        /// NiControllerManager instead of separate KF files. Each sequence needs its own
+        /// controller map because sequences such as Open and Close commonly target the
+        /// same scene nodes with different tracks.
+        typedef std::map<std::string, osg::ref_ptr<const KeyframeHolder>, std::less<>> NamedSequenceMap;
+        NamedSequenceMap mNamedSequences;
     };
 
 }

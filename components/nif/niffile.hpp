@@ -77,6 +77,12 @@ namespace Nif
         /// Number of roots
         std::size_t numRoots() const { return mFile->mRoots.size(); }
 
+        /// Get a record by index.
+        const Record* getRecord(std::size_t index) const { return mFile->mRecords.at(index).get(); }
+
+        /// Number of records.
+        std::size_t numRecords() const { return mFile->mRecords.size(); }
+
         /// Get the name of the file
         const VFS::Path::Normalized& getFilename() const { return mFile->mPath; }
 

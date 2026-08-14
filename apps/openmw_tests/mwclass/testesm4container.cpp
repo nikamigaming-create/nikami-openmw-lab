@@ -72,6 +72,45 @@ namespace
         EXPECT_EQ(MWClass::ESM4Impl::calculateFnvActorLevel(config, true, 30), 20);
     }
 
+    TEST(FnvTravelStateTest, AuthoredDestinationHeadingRoundTripsAndRemainsOptional)
+    {
+        ESM::AiSequence::AiTravel source{};
+        source.mData = { 10.f, 20.f, 30.f };
+        source.mHidden = false;
+        source.mRepeat = true;
+        source.mDestinationTolerance = 25.f;
+        source.mHasDestinationYaw = true;
+        source.mDestinationYaw = 3.17523f;
+
+        auto stream = std::make_unique<std::stringstream>();
+        {
+            ESM::ESMWriter writer;
+            writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+            writer.save(*stream);
+            writer.startRecord(ESM::fourCC("TST0"));
+            source.save(writer);
+            writer.endRecord(ESM::fourCC("TST0"));
+        }
+
+        ESM::AiSequence::AiTravel restored{};
+        {
+            ESM::ESMReader reader;
+            reader.open(std::move(stream), "fnv-travel-heading-save");
+            ASSERT_TRUE(reader.hasMoreRecs());
+            ASSERT_EQ(reader.getRecName().toInt(), ESM::fourCC("TST0"));
+            reader.getRecHeader();
+            restored.load(reader);
+        }
+
+        EXPECT_FLOAT_EQ(restored.mData.mX, 10.f);
+        EXPECT_FLOAT_EQ(restored.mData.mY, 20.f);
+        EXPECT_FLOAT_EQ(restored.mData.mZ, 30.f);
+        EXPECT_TRUE(restored.mRepeat);
+        EXPECT_FLOAT_EQ(restored.mDestinationTolerance, 25.f);
+        EXPECT_TRUE(restored.mHasDestinationYaw);
+        EXPECT_FLOAT_EQ(restored.mDestinationYaw, 3.17523f);
+    }
+
     constexpr std::uint32_t sSaloonContainerRef = 0x0110873e;
     constexpr std::uint32_t sSaloonContainerBase = 0x01103b17;
     constexpr std::uint32_t sSaloonBottleBase = 0x01103b1e;
@@ -1931,6 +1970,27 @@ namespace
         EXPECT_NE(dynamic_cast<MWWorld::ActionDoor*>(open.get()), nullptr);
         EXPECT_FALSE(ordinaryDoor.getCellRef().isLocked());
         EXPECT_EQ(ordinaryDoor.getCellRef().getLockLevel(), -50);
+    }
+
+    TEST_F(ESM4ContainerTest, PlacedOwnerCanOpenLockedEsm4DoorWithoutChangingItsLock)
+    {
+        ESM4::Npc npc = makeNpc();
+        ESM4::ActorCharacter actorReference = makePlacedNpc();
+        MWWorld::LiveCellRef<ESM4::Npc> actorRef(actorReference, &npc);
+        MWWorld::Ptr actor(&actorRef);
+
+        ESM4::Door door = makeDoor();
+        ESM4::Reference doorReference = makeLockedDoorReference(false);
+        doorReference.mOwner = actorReference.mId;
+        doorReference.mKey = {};
+        doorReference.mLockLevel = -1;
+        MWWorld::LiveCellRef<ESM4::Door> doorRef(doorReference, &door);
+        MWWorld::Ptr ownedDoor(&doorRef);
+
+        std::unique_ptr<MWWorld::Action> open = ownedDoor.getClass().activate(ownedDoor, actor);
+        EXPECT_NE(dynamic_cast<MWWorld::ActionDoor*>(open.get()), nullptr);
+        EXPECT_TRUE(ownedDoor.getCellRef().isLocked());
+        EXPECT_EQ(ownedDoor.getCellRef().getLockLevel(), -1);
     }
 
     TEST_F(ESM4ContainerTest, Esm4DoorRejectsMissingOrWrongAuthoredKey)

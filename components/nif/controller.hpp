@@ -7,6 +7,9 @@
 
 namespace Nif
 {
+    /// NiControllerSequence serializes a compact CycleType enum whose values
+    /// differ from the NiTimeController flag-bit encoding.
+    NiTimeController::ExtrapolationMode decodeControllerSequenceCycleType(std::uint32_t value);
 
     struct ControlledBlock
     {
@@ -51,7 +54,9 @@ namespace Nif
         float mWeight{ 1.f };
         NiTimeController::ExtrapolationMode mExtrapolationMode{ NiTimeController::ExtrapolationMode::Constant };
         float mFrequency{ 1.f };
-        float mPhase{ 1.f };
+        // Modern NiControllerSequence records no longer serialize a phase.
+        // Their controller time starts at zero.
+        float mPhase{ 0.f };
         float mStartTime, mStopTime;
         bool mPlayBackwards{ false };
         NiControllerManagerPtr mManager;

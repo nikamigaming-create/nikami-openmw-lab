@@ -1,6 +1,8 @@
 #ifndef GAME_MWMECHANICS_AITRAVEL_H
 #define GAME_MWMECHANICS_AITRAVEL_H
 
+#include <optional>
+
 #include "typedaipackage.hpp"
 
 namespace ESM
@@ -30,6 +32,11 @@ namespace MWMechanics
         /// This is opt-in so legacy Morrowind travel keeps its generous
         /// "close enough for two seconds" behavior.
         AiTravel(float x, float y, float z, bool repeat, float destinationTolerance);
+
+        /// Use the authored final heading after reaching a data-driven travel
+        /// marker. A negative tolerance preserves legacy completion behavior.
+        AiTravel(float x, float y, float z, bool repeat, float destinationTolerance,
+            std::optional<float> destinationYaw);
 
         explicit AiTravel(const ESM::AiSequence::AiTravel* travel);
 
@@ -62,6 +69,7 @@ namespace MWMechanics
 
         float mDestinationTimer;
         float mDestinationTolerance;
+        std::optional<float> mDestinationYaw;
 
         // Route diagnostics only.  Keep per-package rather than global state so
         // an unattended compatibility trace can establish whether the actual

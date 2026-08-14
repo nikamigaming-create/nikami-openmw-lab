@@ -20,6 +20,8 @@
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/lower.hpp>
+#include <components/resource/keyframemanager.hpp>
+#include <components/resource/resourcesystem.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/sceneutil/unrefqueue.hpp>
 
@@ -391,10 +393,19 @@ namespace MWRender
         std::string animationMesh = mesh;
         if (animated && !mesh.empty())
         {
-            animationMesh = Misc::ResourceHelpers::correctActorModelPath(
-                VFS::Path::toNormalized(mesh), mResourceSystem->getVFS());
-            if (animationMesh == mesh && Misc::StringUtils::ciEndsWith(animationMesh, ".nif"))
-                animated = false;
+            const VFS::Path::Normalized sourceMesh = VFS::Path::toNormalized(mesh);
+            animationMesh = Misc::ResourceHelpers::correctActorModelPath(sourceMesh, mResourceSystem->getVFS());
+            if (animationMesh == sourceMesh.value() && Misc::StringUtils::ciEndsWith(animationMesh, ".nif"))
+            {
+                // Morrowind animated objects normally select an x-prefixed NIF and a
+                // separate KF. Later Bethesda object NIFs instead keep independently
+                // playable Open/Close/etc. sequences in a NiControllerManager inside
+                // the original NIF. Keep animation enabled when the data contains those
+                // sequences; otherwise preserve the legacy static-object fallback.
+                const osg::ref_ptr<const SceneUtil::KeyframeHolder> embedded
+                    = mResourceSystem->getKeyframeManager()->get(sourceMesh);
+                animated = embedded != nullptr && !embedded->mNamedSequences.empty();
+            }
         }
 
         osg::ref_ptr<ObjectAnimation> anim(

@@ -147,6 +147,7 @@
 
 #include <components/settings/shadermanager.hpp>
 #include <components/settings/values.hpp>
+#include <components/shader/shadervisitor.hpp>
 
 #include "mwinput/inputmanagerimp.hpp"
 
@@ -7589,6 +7590,47 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
             else
             {
+                if (proofEnvEnabled("OPENMW_DAO_FACE_SHADER"))
+                {
+                    Resource::SceneManager* sceneManager = mResourceSystem->getSceneManager();
+                    struct FaceDrawableShaderVisitor final : osg::NodeVisitor
+                    {
+                        FaceDrawableShaderVisitor(
+                            Shader::ShaderManager& shaderManager, Resource::ImageManager& imageManager)
+                            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                            , mShaderManager(shaderManager)
+                            , mImageManager(imageManager)
+                        {
+                        }
+
+                        void apply(osg::Geode& geode) override
+                        {
+                            for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
+                            {
+                                osg::Drawable* drawable = geode.getDrawable(index);
+                                osg::StateSet* stateSet = drawable != nullptr ? drawable->getStateSet() : nullptr;
+                                if (stateSet == nullptr)
+                                    continue;
+                                std::string materialName;
+                                if (const auto* material = dynamic_cast<const osg::Material*>(
+                                        stateSet->getAttribute(osg::StateAttribute::MATERIAL)))
+                                    materialName = Misc::StringUtils::lowerCase(material->getName());
+                                if (materialName.find("face") == std::string::npos
+                                    && materialName.find("_hed_") == std::string::npos
+                                    || materialName.ends_with(".001"))
+                                    continue;
+                                Shader::ShaderVisitor shaderVisitor(mShaderManager, mImageManager, "objects");
+                                drawable->accept(shaderVisitor);
+                            }
+                            traverse(geode);
+                        }
+
+                        Shader::ShaderManager& mShaderManager;
+                        Resource::ImageManager& mImageManager;
+                    } faceVisitor(sceneManager->getShaderManager(), *sceneManager->getImageManager());
+                    node->accept(faceVisitor);
+                    Log(Debug::Info) << "World viewer extra scene: applied face-only material shader visitor";
+                }
                 const float scale = readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_SCALE", 1.f);
                 const osg::Vec3f offset(
                     readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_X", 0.f),
@@ -7717,6 +7759,47 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
             else
             {
+                if (proofEnvEnabled("OPENMW_DAO_FACE_SHADER"))
+                {
+                    Resource::SceneManager* sceneManager = mResourceSystem->getSceneManager();
+                    struct ForegroundFaceDrawableShaderVisitor final : osg::NodeVisitor
+                    {
+                        ForegroundFaceDrawableShaderVisitor(
+                            Shader::ShaderManager& shaderManager, Resource::ImageManager& imageManager)
+                            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                            , mShaderManager(shaderManager)
+                            , mImageManager(imageManager)
+                        {
+                        }
+
+                        void apply(osg::Geode& geode) override
+                        {
+                            for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
+                            {
+                                osg::Drawable* drawable = geode.getDrawable(index);
+                                osg::StateSet* stateSet = drawable ? drawable->getStateSet() : nullptr;
+                                if (!stateSet)
+                                    continue;
+                                std::string materialName;
+                                if (const auto* material = dynamic_cast<const osg::Material*>(
+                                        stateSet->getAttribute(osg::StateAttribute::MATERIAL)))
+                                    materialName = Misc::StringUtils::lowerCase(material->getName());
+                                if (materialName.find("face") == std::string::npos
+                                    && materialName.find("_hed_") == std::string::npos
+                                    || materialName.ends_with(".001"))
+                                    continue;
+                                Shader::ShaderVisitor shaderVisitor(mShaderManager, mImageManager, "objects");
+                                drawable->accept(shaderVisitor);
+                            }
+                            traverse(geode);
+                        }
+
+                        Shader::ShaderManager& mShaderManager;
+                        Resource::ImageManager& mImageManager;
+                    } faceVisitor(sceneManager->getShaderManager(), *sceneManager->getImageManager());
+                    foregroundNode->accept(faceVisitor);
+                    Log(Debug::Info) << "World viewer extra foreground scene: applied face-only material shader visitor";
+                }
                 const float sceneScale = readProofFloat("OPENMW_WORLD_VIEWER_EXTRA_SCENE_SCALE", 1.f);
                 const float scale = readProofFloat(
                     "OPENMW_WORLD_VIEWER_EXTRA_FOREGROUND_SCALE", sceneScale);
@@ -7788,7 +7871,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 if (foregroundLight)
                 {
                     osg::ref_ptr<osg::Light> light = new osg::Light;
-                    light->setLightNum(6);
+                    light->setLightNum(7);
                     light->setPosition(osg::Vec4f(-0.35f, -0.55f, 1.f, 0.f));
                     light->setAmbient(osg::Vec4f(0.52f, 0.52f, 0.52f, 1.f));
                     light->setDiffuse(osg::Vec4f(0.88f, 0.86f, 0.82f, 1.f));
@@ -7841,8 +7924,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     if (proofEnvEnabled("OPENMW_PROOF_HIDE_WORLD_OCCLUDERS"))
     {
         static bool proofWorldOccludersHidden = false;
-        uint32_t occluderMask
-            = MWRender::Mask_Static | MWRender::Mask_Object | MWRender::Mask_Groundcover;
+        uint32_t occluderMask = MWRender::Mask_Static | MWRender::Mask_Object | MWRender::Mask_Groundcover
+            | MWRender::Mask_Actor | MWRender::Mask_Player;
         const bool outdoorClear = proofEnvEnabled("OPENMW_WORLD_VIEWER_PROOF_OUTDOOR_CLEAR");
         if (outdoorClear)
             occluderMask |= MWRender::Mask_Terrain;
@@ -7857,6 +7940,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                              << (outdoorClear ? "/terrain" : "")
                              << " occluders while preserving sky, lighting, and actors";
         }
+    }
+
+    // The proof camera may be driven after the foreground camera is created.
+    // Keep the isolated character pass locked to the active portrait view.
+    if (proofExtraForegroundCamera != nullptr && mViewer != nullptr)
+    {
+        proofExtraForegroundCamera->setProjectionMatrix(mViewer->getCamera()->getProjectionMatrix());
+        proofExtraForegroundCamera->setViewMatrix(mViewer->getCamera()->getViewMatrix());
+        proofExtraForegroundCamera->setViewport(mViewer->getCamera()->getViewport());
     }
 
     if (proofEnvEnabled("OPENMW_WORLD_VIEWER_PROOF_OUTDOOR_CLEAR") && mViewer != nullptr

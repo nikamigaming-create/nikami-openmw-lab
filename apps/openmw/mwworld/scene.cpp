@@ -80,21 +80,16 @@ namespace
     {
         const ESM::Position& position = ptr.getRefData().getPosition();
         bool tes4Npc = false;
-        bool falloutActor = false;
+        bool falloutNpc = false;
         if (ptr.getType() == ESM::REC_NPC_4)
         {
             const MWWorld::LiveCellRef<ESM4::Npc>* npc = ptr.get<ESM4::Npc>();
             tes4Npc = npc != nullptr && npc->mBase != nullptr && npc->mBase->mIsTES4;
-            falloutActor = npc != nullptr && npc->mBase != nullptr
+            falloutNpc = npc != nullptr && npc->mBase != nullptr
                 && (npc->mBase->mIsFO3 || npc->mBase->mIsFONV);
         }
-        else if (ptr.getType() == ESM::REC_CREA4)
-        {
-            const MWWorld::LiveCellRef<ESM4::Creature>* creature = ptr.get<ESM4::Creature>();
-            falloutActor = creature != nullptr && creature->mBase != nullptr && creature->mBase->mIsFONV;
-        }
         return osg::Quat(
-            MWWorld::getActorModelYaw(position.rot[2], tes4Npc, falloutActor), osg::Vec3(0, 0, -1));
+            MWWorld::getActorModelYaw(position.rot[2], tes4Npc, falloutNpc), osg::Vec3(0, 0, -1));
     }
 
     osg::Quat makeInversedOrderObjectOsgQuat(const ESM::Position& position)

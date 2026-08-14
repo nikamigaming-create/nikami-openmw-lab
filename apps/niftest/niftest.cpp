@@ -25,7 +25,9 @@
 #include <components/nif/niffile.hpp>
 #include <components/nif/controller.hpp>
 #include <components/nif/data.hpp>
+#include <components/nif/extra.hpp>
 #include <components/nif/particle.hpp>
+#include <components/nif/texture.hpp>
 #include <components/nifosg/matrixtransform.hpp>
 #include <components/nifosg/nifloader.hpp>
 #include <components/sceneutil/keyframe.hpp>
@@ -452,6 +454,7 @@ public:
 
         const bool keep = !node.getName().empty()
             && (Misc::StringUtils::ciStartsWith(node.getName(), "Bip01")
+                || Misc::StringUtils::ciEqual(node.getName(), "Bip")
                 || Misc::StringUtils::ciEqual(node.getName(), "Camera1st"));
         if (keep)
         {
@@ -487,6 +490,7 @@ bool isImportantFNVHumanBone(const std::string& lowerName)
 {
     static const std::set<std::string> sImportant = {
         "camera1st",
+        "bip",
         "bip01",
         "bip01 nonaccum",
         "bip01 pelvis",
@@ -672,9 +676,15 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
 
     std::unique_ptr<Nif::NIFFile> meshFile = readNifFile(meshPath);
     std::vector<FnvGeometryDumpInfo> geometries;
+    int bsxFlags = 0;
     for (const Nif::Record* record : meshFile->mRoots)
         if (const Nif::NiAVObject* root = dynamic_cast<const Nif::NiAVObject*>(record))
+        {
             collectNifGeometryInfos(root, osg::Matrixf::identity(), geometries);
+            for (const auto& extra : root->getExtraList())
+                if (!extra.empty() && extra->recType == Nif::RC_BSXFlags)
+                    bsxFlags = static_cast<const Nif::NiIntegerExtraData*>(extra.getPtr())->mData;
+        }
 
     std::ofstream out(outPath);
     if (!out)
@@ -683,6 +693,7 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
     out << std::setprecision(9);
     out << "{\n";
     out << "  \"mesh\": \"" << jsonEscape(Files::pathToUnicodeString(meshPath)) << "\",\n";
+    out << "  \"bsxFlags\": " << bsxFlags << ",\n";
     out << "  \"geometryCount\": " << geometries.size() << ",\n";
     out << "  \"geometries\": [";
 
@@ -743,6 +754,30 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
         const Nif::BSShaderProperty* shaderProperty = geometry->mShaderProperty.empty()
             ? nullptr
             : geometry->mShaderProperty.getPtr();
+        std::string diffuseTexture;
+        const auto resolveShaderTexture = [&](const Nif::BSShaderProperty* shader) {
+            if (const auto* effect = dynamic_cast<const Nif::BSEffectShaderProperty*>(shader))
+                return effect->mSourceTexture;
+            if (const auto* pp = dynamic_cast<const Nif::BSShaderPPLightingProperty*>(shader))
+            {
+                if (!pp->mTextureSet.empty() && !pp->mTextureSet->mTextures.empty())
+                    return pp->mTextureSet->mTextures.front();
+            }
+            if (const auto* lighting = dynamic_cast<const Nif::BSLightingShaderProperty*>(shader))
+            {
+                if (!lighting->mTextureSet.empty() && !lighting->mTextureSet->mTextures.empty())
+                    return lighting->mTextureSet->mTextures.front();
+            }
+            if (const auto* noLighting = dynamic_cast<const Nif::BSShaderNoLightingProperty*>(shader))
+                return noLighting->mFilename;
+            if (const auto* sky = dynamic_cast<const Nif::SkyShaderProperty*>(shader))
+                return sky->mFilename;
+            if (const auto* grass = dynamic_cast<const Nif::TallGrassShaderProperty*>(shader))
+                return grass->mFilename;
+            if (const auto* tile = dynamic_cast<const Nif::TileShaderProperty*>(shader))
+                return tile->mFilename;
+            return std::string();
+        };
         for (const auto& property : geometry->mProperties)
         {
             if (property.empty())
@@ -750,8 +785,23 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
             if (property->recType == Nif::RC_NiAlphaProperty)
                 alphaProperty = static_cast<const Nif::NiAlphaProperty*>(property.getPtr());
             if (const auto* shader = dynamic_cast<const Nif::BSShaderProperty*>(property.getPtr()))
+            {
                 shaderProperty = shader;
+                if (diffuseTexture.empty())
+                    diffuseTexture = resolveShaderTexture(shader);
+            }
+            if (diffuseTexture.empty())
+            {
+                if (const auto* texturing = dynamic_cast<const Nif::NiTexturingProperty*>(property.getPtr()))
+                {
+                    if (!texturing->mTextures.empty() && texturing->mTextures.front().mEnabled
+                        && !texturing->mTextures.front().mSourceTexture.empty())
+                        diffuseTexture = texturing->mTextures.front().mSourceTexture->mFile;
+                }
+            }
         }
+        if (diffuseTexture.empty())
+            diffuseTexture = resolveShaderTexture(shaderProperty);
 
         out << "\n    {\"name\":\"" << jsonEscape(geometry->mName) << "\""
             << ",\"avFlags\":" << geometry->mFlags
@@ -791,10 +841,13 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
             << (alphaProperty == nullptr ? -1 : alphaProperty->destinationBlendMode())
             << ",\"shaderFlags1\":" << (shaderProperty == nullptr ? 0u : shaderProperty->mShaderFlags1)
             << ",\"shaderFlags2\":" << (shaderProperty == nullptr ? 0u : shaderProperty->mShaderFlags2)
+            << ",\"shaderRecord\":\""
+            << jsonEscape(shaderProperty == nullptr ? std::string() : shaderProperty->recName) << "\""
             << ",\"shaderDepthTest\":"
             << (shaderProperty != nullptr && shaderProperty->depthTest() ? "true" : "false")
             << ",\"shaderDepthWrite\":"
             << (shaderProperty != nullptr && shaderProperty->depthWrite() ? "true" : "false")
+            << ",\"diffuseTexture\":\"" << jsonEscape(diffuseTexture) << "\""
             << ",\"extent\":" << formatVec3Json(fnvAuditExtent(box))
             << ",\"worldExtent\":" << formatVec3Json(fnvAuditExtent(worldBox))
             << ",\"localTransform\":" << formatMatrixJson(geometry->mTransform.toMatrix())
@@ -853,6 +906,16 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
                     firstIndex = false;
                     out << index;
                 }
+        }
+        out << "],\"stripLengths\":[";
+        if (triStrips != nullptr)
+        {
+            for (std::size_t i = 0; i < triStrips->mStrips.size(); ++i)
+            {
+                if (i != 0)
+                    out << ',';
+                out << triStrips->mStrips[i].size();
+            }
         }
         out << "]";
 
@@ -1850,6 +1913,10 @@ int runFnvTransformDump(
         out << "      \"keyTranslation\": " << formatVec3Json(keyTranslation) << ",\n";
         out << "      \"keyRotationQuat\": " << formatQuatJson(keyRotation) << ",\n";
         out << "      \"rawWorldOrigin\": " << formatVec3Json(rawWorld.getTrans()) << ",\n";
+        out << "      \"rawWorldQuat\": " << formatQuatJson(rawWorld.getRotate()) << ",\n";
+        out << "      \"rawWorldForwardY\": "
+            << formatVec3Json(rawWorld.getRotate() * osg::Vec3f(0.f, 1.f, 0.f)) << ",\n";
+        out << "      \"rawWorldMatrix\": " << formatMatrixJson(rawWorld) << ",\n";
         out << "      \"bindThenKeyWorldOrigin\": " << formatVec3Json(bindThenKeyWorld.getTrans()) << ",\n";
         out << "      \"keyThenBindWorldOrigin\": " << formatVec3Json(keyThenBindWorld.getTrans()) << ",\n";
         out << "      \"modeWorldOrigins\": {";
@@ -2035,6 +2102,75 @@ Allowed options)");
 
 int main(int argc, char** argv)
 {
+    if (argc == 3 && std::string_view(argv[1]) == "--embedded-sequence-dump")
+    {
+        try
+        {
+            Nif::Reader::setLoadUnsupportedFiles(true);
+            const std::unique_ptr<Nif::NIFFile> file = readNifFile(argv[2]);
+            const Nif::FileView fileView(*file);
+            SceneUtil::KeyframeHolder sequences;
+            NifOsg::Loader::loadEmbeddedKfSequences(fileView, sequences);
+            for (const auto& [name, sequence] : sequences.mNamedSequences)
+            {
+                const Nif::NiControllerSequence* nativeSequence = nullptr;
+                for (std::size_t recordIndex = 0; recordIndex < fileView.numRecords(); ++recordIndex)
+                {
+                    const auto* candidate
+                        = dynamic_cast<const Nif::NiControllerSequence*>(fileView.getRecord(recordIndex));
+                    if (candidate != nullptr && candidate->mName == name)
+                    {
+                        nativeSequence = candidate;
+                        break;
+                    }
+                }
+
+                std::cout << name;
+                if (nativeSequence != nullptr)
+                {
+                    std::cout << " start=" << nativeSequence->mStartTime
+                              << " stop=" << nativeSequence->mStopTime
+                              << " frequency=" << nativeSequence->mFrequency
+                              << " phase=" << nativeSequence->mPhase
+                              << " extrapolation=" << static_cast<unsigned int>(nativeSequence->mExtrapolationMode);
+                }
+                std::cout << " controllers="
+                          << (sequence != nullptr ? sequence->mKeyframeControllers.size() : 0)
+                          << " controllerNames=";
+                if (sequence != nullptr)
+                {
+                    bool first = true;
+                    for (const auto& [controllerName, controller] : sequence->mKeyframeControllers)
+                    {
+                        if (!first)
+                            std::cout << ',';
+                        std::cout << controllerName;
+                        first = false;
+                    }
+                }
+                std::cout << " groups=";
+                if (sequence != nullptr)
+                {
+                    bool first = true;
+                    for (const std::string& group : sequence->mTextKeys.getGroups())
+                    {
+                        if (!first)
+                            std::cout << ',';
+                        std::cout << group;
+                        first = false;
+                    }
+                }
+                std::cout << '\n';
+            }
+            return sequences.mNamedSequences.empty() ? 3 : 0;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Embedded sequence dump failed: " << e.what() << std::endl;
+            return 2;
+        }
+    }
+
     if (argc == 4 && std::string_view(argv[1]) == "--fnv-particle-dump")
     {
         try

@@ -336,7 +336,8 @@ namespace MWRender
         virtual void addAnimSource(std::string_view model, const std::string& baseModel);
         std::shared_ptr<AnimSource> addSingleAnimSource(const std::string& model, const std::string& baseModel,
             bool falloutProcedureIdle = false, std::string_view controllerOverlayKf = {},
-            std::string_view falloutSemanticGroup = {}, bool forceFalloutActorContext = false);
+            std::string_view falloutSemanticGroup = {}, bool forceFalloutActorContext = false,
+            osg::ref_ptr<const SceneUtil::KeyframeHolder> keyframes = nullptr);
 
         /// Fallout cinematic KFs can own a Camera1st controller even though the shared body skeleton deliberately
         /// has no permanent camera transform.  Materialise that authored target on the visual only when a scripted

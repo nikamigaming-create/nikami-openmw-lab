@@ -199,6 +199,7 @@ namespace MWClass
         std::vector<const ESM4::Clothing*> mEquippedClothing;
         const ESM4::Weapon* mEquippedWeapon = nullptr;
         bool mFnvAiSequenceInitialised = false;
+        ESM::FormId mFnvSelectedIdleOnlyPackage;
         ESM::FormId mFnvPackageCompletionPackage;
         bool mFnvPackageCompletionPending = false;
         // An explicit GECK EvaluatePackage/evp request is allowed to release
@@ -244,6 +245,7 @@ namespace MWClass
         , mEquippedClothing(other.mEquippedClothing)
         , mEquippedWeapon(other.mEquippedWeapon)
         , mFnvAiSequenceInitialised(other.mFnvAiSequenceInitialised)
+        , mFnvSelectedIdleOnlyPackage(other.mFnvSelectedIdleOnlyPackage)
         , mFnvPackageCompletionPackage(other.mFnvPackageCompletionPackage)
         , mFnvPackageCompletionPending(other.mFnvPackageCompletionPending)
         , mFnvPackageEvaluationRequested(other.mFnvPackageEvaluationRequested)
@@ -601,6 +603,34 @@ namespace MWClass
         if (package.mTarget.type == 0)
             return store.get<ESM4::Reference>().search(ESM::FormId::fromUint32(package.mTarget.target));
         return nullptr;
+    }
+
+    bool isFalloutIdleOnlyPackage(const ESM4::AIPackage& package)
+    {
+        // Fallout cinematic tracks are commonly authored as Travel packages with a near-reference location.
+        // That location is the animation anchor, not evidence that the package lacks an IDLE procedure. Keep
+        // explicit targets and multi-location/target procedures in the native movement pipeline.
+        return !package.mIdleAnim.empty() && (package.mLocation.type == 0xff || package.mLocation.type == 0)
+            && package.mTarget.type == 0xff && package.mExtraLocations.empty() && package.mExtraTargets.empty();
+    }
+
+    static bool isFalloutIdlePackageAtAnchor(
+        const MWWorld::Ptr& ptr, const MWWorld::ESMStore& store, const ESM4::AIPackage& package)
+    {
+        if (package.mLocation.type == 0xff)
+            return true;
+
+        const ESM4::Reference* const anchor = resolveFnvPackageReference(store, package);
+        if (anchor == nullptr || ptr.getCell() == nullptr || ptr.getCell()->getCell() == nullptr
+            || anchor->mParent != ptr.getCell()->getCell()->getId())
+            return false;
+
+        const ESM::Position& actorPos = ptr.getRefData().getPosition();
+        const float dx = actorPos.pos[0] - anchor->mPos.pos[0];
+        const float dy = actorPos.pos[1] - anchor->mPos.pos[1];
+        const float dz = actorPos.pos[2] - anchor->mPos.pos[2];
+        const float radius = std::max(8.f, static_cast<float>(std::max(0, package.mLocation.radius)));
+        return dx * dx + dy * dy + dz * dz <= radius * radius;
     }
 
     static const char* getFnvPackageTypeName(int type)
@@ -1089,6 +1119,32 @@ namespace MWClass
         // proof the package ID, target, and completion semantics it actually
         // exercised without requiring foreground inspection.
         const bool routeTrace = std::getenv("OPENMW_COMPAT_ROUTE_PATH") != nullptr;
+        const ESM4::Npc* traits = data.mTraits;
+
+        // Conditional scene tracks are base AI packages, not explicit script-package stack entries. Re-select them
+        // while one is active so quest-stage condition changes can switch all participants on the same simulation
+        // boundary. The world-side setter is idempotent, so ordinary CreatureStats reads do not restart a clip.
+        if (!data.mFnvSelectedIdleOnlyPackage.isZeroOrUnset() && traits != nullptr && traits->mIsFONV
+            && !packageIds.empty())
+        {
+            bool usedHourOverride = false;
+            const float hour = getFnvPackageHour(usedHourOverride);
+            const ESM4::AIPackage* selected = selectFnvPackage(packageIds, hour);
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            if (selected != nullptr && isFalloutIdleOnlyPackage(*selected) && world != nullptr
+                && world->setESM4SelectedIdlePackage(ptr, selected->mId))
+            {
+                data.mFnvSelectedIdleOnlyPackage = selected->mId;
+                data.mFnvAiSequenceInitialised = true;
+                return;
+            }
+
+            if (world != nullptr)
+                world->setESM4SelectedIdlePackage(ptr, ESM::FormId{});
+            data.mFnvSelectedIdleOnlyPackage = ESM::FormId{};
+            data.mFnvAiSequenceInitialised = false;
+        }
+
         if (data.mFnvAiSequenceInitialised)
             return;
 
@@ -1106,7 +1162,6 @@ namespace MWClass
         data.mFnvPackageCompletionPackage = ESM::FormId{};
         data.mFnvPackageCompletionPending = false;
 
-        const ESM4::Npc* traits = data.mTraits;
         if (std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
         {
             if (traits != nullptr && traits->mIsFONV)
@@ -1156,12 +1211,29 @@ namespace MWClass
         if (store == nullptr)
             return;
 
+        if (isFalloutIdleOnlyPackage(*package) && isFalloutIdlePackageAtAnchor(ptr, *store, *package))
+        {
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            if (world == nullptr || !world->setESM4SelectedIdlePackage(ptr, package->mId))
+                return;
+
+            data.mFnvSelectedIdleOnlyPackage = package->mId;
+            data.mFnvAiSequenceInitialised = true;
+            if (routeTrace)
+                Log(Debug::Info) << "FNV/ESM4 route AI: authored idle-only package queued actor="
+                                 << ptr.getCellRef().getRefId() << " package=" << package->mEditorId
+                                 << " idleCount=" << package->mIdleAnim.size();
+            return;
+        }
+
         const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
         if (isFnvPackageTravelLike(package->mData.type))
         {
             MWBase::World* const world = MWBase::Environment::get().getWorld();
-            const bool notifyCompletion = world != nullptr
-                && world->getESM4QuestRuntime().packageCompletionHasAuthoredHandler(ptr, package->mId);
+            const bool continueWithAnchoredIdle = isFalloutIdleOnlyPackage(*package);
+            const bool notifyCompletion = continueWithAnchoredIdle
+                || (world != nullptr
+                    && world->getESM4QuestRuntime().packageCompletionHasAuthoredHandler(ptr, package->mId));
             const ESM4::Reference* target = resolveFnvPackageReference(*store, *package);
             if (target == nullptr || target->mParent != currentCellId)
             {
@@ -1232,13 +1304,13 @@ namespace MWClass
             if (arrivalDistance)
             {
                 MWMechanics::AiTravel travel(target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2],
-                    !notifyCompletion, *arrivalDistance);
+                    !notifyCompletion, *arrivalDistance, target->mPos.rot[2]);
                 sequence.stack(travel, ptr, true);
             }
             else
             {
-                MWMechanics::AiTravel travel(
-                    target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], !notifyCompletion);
+                MWMechanics::AiTravel travel(target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2],
+                    !notifyCompletion, -1.f, target->mPos.rot[2]);
                 sequence.stack(travel, ptr, true);
             }
             data.mFnvAiSequenceInitialised = true;
@@ -1250,6 +1322,7 @@ namespace MWClass
                                  << " notifyCompletion=" << notifyCompletion << " delta=(" << dx << ',' << dy
                                  << ',' << dz << ") completionRadius="
                                  << (arrivalDistance ? *arrivalDistance : -1.f)
+                                 << " destinationYaw=" << target->mPos.rot[2]
                                  << " completionMode=" << (arrivalDistance ? "authored-radius" : "reachable-endpoint");
             Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native AI travel from FNV package " << package->mEditorId
                              << " type=" << getFnvPackageTypeName(package->mData.type) << " hour=" << hour

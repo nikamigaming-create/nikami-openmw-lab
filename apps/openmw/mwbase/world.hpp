@@ -169,6 +169,10 @@ namespace MWBase
         /// package interpretation stays in the world implementation where content records and rendering are present.
         virtual bool addESM4ScriptPackage(const MWWorld::Ptr& actor, ESM::FormId package) = 0;
         virtual bool removeESM4ScriptPackages(const MWWorld::Ptr& actor) = 0;
+        /// Publish the currently selected base-AI package when its only actionable procedure is an authored idle.
+        /// This is distinct from the explicit AddScriptPackage stack: script packages temporarily override it, and
+        /// RemoveScriptPackage reveals it again.
+        virtual bool setESM4SelectedIdlePackage(const MWWorld::Ptr& actor, ESM::FormId package) = 0;
 
         virtual MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() = 0;
         virtual const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const = 0;

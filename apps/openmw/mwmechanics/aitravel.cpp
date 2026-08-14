@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <limits>
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm3/aisequence.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
+#include "../mwbase/rotationflags.hpp"
 #include "../mwbase/world.hpp"
 
 #include "../mwworld/class.hpp"
@@ -43,6 +45,7 @@ namespace MWMechanics
         , mHidden(false)
         , mDestinationTimer(TRAVEL_FINISH_TIME)
         , mDestinationTolerance(-1.f)
+        , mDestinationYaw(std::nullopt)
     {
     }
 
@@ -54,6 +57,7 @@ namespace MWMechanics
         , mHidden(true)
         , mDestinationTimer(TRAVEL_FINISH_TIME)
         , mDestinationTolerance(-1.f)
+        , mDestinationYaw(std::nullopt)
     {
     }
 
@@ -68,6 +72,14 @@ namespace MWMechanics
         mDestinationTolerance = std::max(0.f, destinationTolerance);
     }
 
+    AiTravel::AiTravel(float x, float y, float z, bool repeat, float destinationTolerance,
+        std::optional<float> destinationYaw)
+        : AiTravel(x, y, z, repeat, this)
+    {
+        mDestinationTolerance = destinationTolerance >= 0.f ? std::max(0.f, destinationTolerance) : -1.f;
+        mDestinationYaw = destinationYaw;
+    }
+
     AiTravel::AiTravel(const ESM::AiSequence::AiTravel* travel)
         : TypedAiPackage<AiTravel>(travel->mRepeat)
         , mX(travel->mData.mX)
@@ -76,6 +88,8 @@ namespace MWMechanics
         , mHidden(false)
         , mDestinationTimer(TRAVEL_FINISH_TIME)
         , mDestinationTolerance(travel->mDestinationTolerance)
+        , mDestinationYaw(
+              travel->mHasDestinationYaw ? std::optional<float>{ travel->mDestinationYaw } : std::nullopt)
     {
         // Hidden ESM::AiSequence::AiTravel package should be converted into MWMechanics::AiInternalTravel type
         assert(!travel->mHidden);
@@ -120,7 +134,9 @@ namespace MWMechanics
                              << " distance=" << (targetPos - actorPos).length()
                              << " horizontalDistance=" << distanceIgnoreZ(actorPos, targetPos)
                              << " pathPoints=" << mPathFinder.getPathSize() << " reached=" << reached
-                             << " destinationTolerance=" << mDestinationTolerance;
+                             << " destinationTolerance=" << mDestinationTolerance
+                             << " destinationYaw="
+                             << (mDestinationYaw ? *mDestinationYaw : std::numeric_limits<float>::quiet_NaN());
         }
         if (reached)
             mRouteTraceCompletionLogged = true;
@@ -137,12 +153,25 @@ namespace MWMechanics
                                  << ") distance=" << (targetPos - actorPos).length()
                                  << " horizontalDistance=" << distanceIgnoreZ(actorPos, targetPos)
                                  << " pathPoints=" << mPathFinder.getPathSize() << " reached=" << reached
-                                 << " destinationTolerance=" << mDestinationTolerance;
+                                 << " destinationTolerance=" << mDestinationTolerance
+                                 << " destinationYaw="
+                                 << (mDestinationYaw ? *mDestinationYaw
+                                                     : std::numeric_limits<float>::quiet_NaN());
             }
         }
         if (reached)
         {
-            actor.getClass().getMovementSettings(actor).mPosition[1] = 0;
+            Movement& movement = actor.getClass().getMovementSettings(actor);
+            movement.mPosition[1] = 0;
+            if (mDestinationYaw)
+            {
+                movement.mRotation[0] = 0.f;
+                movement.mRotation[1] = 0.f;
+                movement.mRotation[2] = 0.f;
+                const ESM::Position& position = actor.getRefData().getPosition();
+                MWBase::Environment::get().getWorld()->rotateObject(actor,
+                    osg::Vec3f(position.rot[0], position.rot[1], *mDestinationYaw), MWBase::RotationFlag_none);
+            }
             return true;
         }
 
@@ -188,6 +217,16 @@ namespace MWMechanics
         // that is the user's responsibility
         MWBase::Environment::get().getWorld()->moveObject(actor, pos);
         actor.getClass().adjustPosition(actor, false);
+        if (mDestinationYaw)
+        {
+            Movement& movement = actor.getClass().getMovementSettings(actor);
+            movement.mRotation[0] = 0.f;
+            movement.mRotation[1] = 0.f;
+            movement.mRotation[2] = 0.f;
+            const ESM::Position& position = actor.getRefData().getPosition();
+            MWBase::Environment::get().getWorld()->rotateObject(actor,
+                osg::Vec3f(position.rot[0], position.rot[1], *mDestinationYaw), MWBase::RotationFlag_none);
+        }
         reset();
     }
 
@@ -200,6 +239,8 @@ namespace MWMechanics
         travel->mHidden = mHidden;
         travel->mRepeat = getRepeat();
         travel->mDestinationTolerance = mDestinationTolerance;
+        travel->mHasDestinationYaw = mDestinationYaw.has_value();
+        travel->mDestinationYaw = mDestinationYaw.value_or(0.f);
 
         ESM::AiSequence::AiPackageContainer package;
         package.mType = ESM::AiSequence::Ai_Travel;

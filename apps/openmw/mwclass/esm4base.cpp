@@ -157,6 +157,12 @@ namespace MWClass
         physics.addObject(ptr, VFS::Path::toNormalized(model), rotation, MWPhysics::CollisionType_World);
     }
 
+    void ESM4Impl::insertDoorPhysics(
+        const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation, MWPhysics::PhysicsSystem& physics)
+    {
+        physics.addObject(ptr, VFS::Path::toNormalized(model), rotation, MWPhysics::CollisionType_Door);
+    }
+
     MWGui::ToolTipInfo ESM4Impl::getToolTipInfo(std::string_view name, int count)
     {
         MWGui::ToolTipInfo info;

@@ -4212,6 +4212,31 @@ namespace MWWorld
             }
             else
             {
+                if (it->first.getType() == ESM::REC_DOOR4)
+                {
+                    MWRender::Animation* animation = getAnimation(it->first);
+                    const std::string_view group
+                        = it->second == MWWorld::DoorState::Opening ? "Open" : "Close";
+                    float completion = 0.f;
+                    if (animation != nullptr && animation->getInfo(group, &completion))
+                    {
+                        if (!animation->isPlaying(group) || completion >= 1.f)
+                        {
+                            // ESM3 persists an open door through its rotated reference. Embedded
+                            // ESM4 doors keep their authored final pose instead, so Opening is the
+                            // stable open state and Idle is the stable closed state.
+                            it->first.getClass().setDoorState(it->first,
+                                it->second == MWWorld::DoorState::Opening
+                                    ? MWWorld::DoorState::Opening
+                                    : MWWorld::DoorState::Idle);
+                            mDoorStates.erase(it++);
+                        }
+                        else
+                            ++it;
+                        continue;
+                    }
+                }
+
                 bool reached = rotateDoor(it->first, it->second, duration);
 
                 if (reached)
@@ -4224,6 +4249,40 @@ namespace MWWorld
                     ++it;
             }
         }
+    }
+
+    bool World::activateAnimatedESM4Door(const Ptr& door, MWWorld::DoorState state)
+    {
+        if (door.getType() != ESM::REC_DOOR4 || state == MWWorld::DoorState::Idle)
+            return false;
+
+        MWRender::Animation* animation = getAnimation(door);
+        const std::string_view group = state == MWWorld::DoorState::Opening ? "Open" : "Close";
+        const std::string_view oppositeGroup = state == MWWorld::DoorState::Opening ? "Close" : "Open";
+        if (animation == nullptr || !animation->hasAnimation(group))
+            return false;
+
+        float oppositeCompletion = 0.f;
+        const bool reversing = animation->getInfo(oppositeGroup, &oppositeCompletion);
+        const float startPoint = reversing ? std::clamp(1.f - oppositeCompletion, 0.f, 1.f) : 0.f;
+        animation->disable(oppositeGroup);
+        animation->disable(group);
+        animation->play(group, MWRender::AnimPriority(1), MWRender::BlendMask_All, false, 1.f, "start", "stop",
+            startPoint, 0, false);
+
+        if (!animation->isPlaying(group) && startPoint < 1.f)
+            return false;
+
+        // Keep the render node and its native animated collision in place. PhysicsSystem
+        // already updates animated NIF collision children every frame, which lets sliding,
+        // lifting, and rotating Bethesda doors use their authored geometry.
+        door.getClass().setDoorState(door, state);
+        mDoorStates[door] = state;
+
+        Log(Debug::Info) << "FNV/ESM4 proof: playing embedded door group '" << group
+                         << "' reference=" << door.getCellRef().getRefId()
+                         << " reversing=" << reversing << " startPoint=" << startPoint;
+        return true;
     }
 
     void World::setActorCollisionMode(const MWWorld::Ptr& ptr, bool internal, bool external)
@@ -5131,6 +5190,8 @@ namespace MWWorld
         const auto found = mESM4ScriptPackages.find(actorId);
         if (found == mESM4ScriptPackages.end())
             return true;
+        if (found->second.mPackages.empty())
+            return true;
 
         if (MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager())
             mechanics->clearAnimationQueue(actor, true);
@@ -5143,7 +5204,71 @@ namespace MWWorld
         mRendering->setESM4ScriptPackageCamera(actor, false);
         Log(Debug::Info) << "FNV/ESM4 scripted package: removed actor=" << actorId
                          << " stackDepth=" << found->second.mPackages.size();
-        mESM4ScriptPackages.erase(found);
+        found->second.mPackages.clear();
+        found->second.mAppliedPackage = ESM::FormId{};
+        found->second.mAppliedFromScript = false;
+        found->second.mPlaybackObserved = false;
+        if (found->second.mSelectedPackage.isZeroOrUnset())
+            mESM4ScriptPackages.erase(found);
+        else
+            found->second.mDirty = true;
+        return true;
+    }
+
+    bool World::setESM4SelectedIdlePackage(const MWWorld::Ptr& actor, ESM::FormId packageId)
+    {
+        if (actor.isEmpty() || !actor.getClass().isActor())
+            return false;
+
+        const ESM::RefId actorId = actor.getCellRef().getRefId();
+        const ESM4::AIPackage* package = packageId.isZeroOrUnset()
+            ? nullptr
+            : mStore.get<ESM4::AIPackage>().search(packageId);
+        if (actorId.empty() || (!packageId.isZeroOrUnset() && package == nullptr))
+        {
+            Log(Debug::Warning) << "FNV/ESM4 selected idle package: unresolved actor/package actor=" << actorId
+                                << " package=" << ESM::RefId(packageId);
+            return false;
+        }
+
+        const auto found = mESM4ScriptPackages.find(actorId);
+        if (packageId.isZeroOrUnset())
+        {
+            if (found == mESM4ScriptPackages.end() || found->second.mSelectedPackage.isZeroOrUnset())
+                return true;
+
+            ESM4ScriptPackageState& state = found->second;
+            const ESM::FormId previous = state.mSelectedPackage;
+            state.mSelectedPackage = ESM::FormId{};
+            if (state.mPackages.empty())
+            {
+                if (state.mAppliedAnimation != nullptr)
+                {
+                    state.mAppliedAnimation->setPlayScriptedOnly(false);
+                    state.mAppliedAnimation->disable(FalloutScriptPackageIdleGroup);
+                }
+                mRendering->setESM4ScriptPackageCamera(actor, false);
+                mESM4ScriptPackages.erase(found);
+            }
+            Log(Debug::Info) << "FNV/ESM4 selected idle package: cleared actor=" << actorId
+                             << " package=" << ESM::RefId(previous);
+            return true;
+        }
+
+        ESM4ScriptPackageState& state = mESM4ScriptPackages[actorId];
+        if (state.mSelectedPackage == packageId)
+            return true;
+
+        const ESM::FormId previous = state.mSelectedPackage;
+        state.mSelectedPackage = packageId;
+        if (state.mPackages.empty())
+        {
+            state.mDirty = true;
+            state.mPlaybackObserved = false;
+        }
+        Log(Debug::Info) << "FNV/ESM4 selected idle package: selected actor=" << actorId
+                         << " package=" << package->mEditorId << " form=" << ESM::RefId(packageId)
+                         << " previous=" << ESM::RefId(previous);
         return true;
     }
 
@@ -5155,7 +5280,10 @@ namespace MWWorld
 
         for (auto& [actorId, state] : mESM4ScriptPackages)
         {
-            if (state.mPackages.empty())
+            const bool fromScript = !state.mPackages.empty();
+            const ESM::FormId desiredPackage
+                = fromScript ? state.mPackages.back() : state.mSelectedPackage;
+            if (desiredPackage.isZeroOrUnset())
                 continue;
 
             MWWorld::Ptr actor = searchPtr(actorId, true, false);
@@ -5190,13 +5318,21 @@ namespace MWWorld
                 // may add a successor package through the same normal world
                 // API, so the stack is left in a coherent state first.
                 const ESM::FormId completedPackage = state.mAppliedPackage;
+                const bool completedScriptPackage = state.mAppliedFromScript;
                 animation->disable(FalloutScriptPackageIdleGroup);
-                const auto package = std::find(state.mPackages.begin(), state.mPackages.end(), completedPackage);
-                if (package != state.mPackages.end())
-                    state.mPackages.erase(package);
+                if (completedScriptPackage)
+                {
+                    const auto package = std::find(state.mPackages.begin(), state.mPackages.end(), completedPackage);
+                    if (package != state.mPackages.end())
+                        state.mPackages.erase(package);
+                }
                 state.mAppliedPackage = ESM::FormId{};
+                state.mAppliedFromScript = false;
                 state.mPlaybackObserved = false;
-                state.mDirty = true;
+                // A selected base idle is one-shot until conditions select a different record. Explicit stack
+                // completion, on the other hand, reveals the next script package or selected base package.
+                state.mDirty = completedScriptPackage
+                    && (!state.mPackages.empty() || !state.mSelectedPackage.isZeroOrUnset());
                 mRendering->setESM4ScriptPackageCamera(actor, false);
                 mESM4QuestRuntime.onActorScriptPackageDone(actor, completedPackage);
                 Log(Debug::Info) << "FNV/ESM4 scripted package: completed actor=" << actorId
@@ -5204,7 +5340,7 @@ namespace MWWorld
                 continue;
             }
 
-            const ESM::FormId packageId = state.mPackages.back();
+            const ESM::FormId packageId = desiredPackage;
             const ESM4::AIPackage* package = mStore.get<ESM4::AIPackage>().search(packageId);
             if (package == nullptr)
             {
@@ -5215,7 +5351,8 @@ namespace MWWorld
                 continue;
             }
 
-            const bool packageChanged = state.mAppliedPackage != packageId;
+            const bool packageChanged
+                = state.mAppliedPackage != packageId || state.mAppliedFromScript != fromScript;
             if (state.mAppliedAnimation != nullptr && (packageChanged || state.mDirty))
             {
                 // Package KFs share a semantic group so they can participate in the normal animation scheduler.
@@ -5248,6 +5385,7 @@ namespace MWWorld
                 }
                 state.mAppliedAnimation = animation;
                 state.mAppliedPackage = packageId;
+                state.mAppliedFromScript = fromScript;
             }
 
             // Native Fallout body proxies are intentionally distinct from OpenMW's legacy player camera rig. Play
@@ -5293,48 +5431,8 @@ namespace MWWorld
                 break;
         }
 
-        if (door.getType() == ESM::REC_DOOR4)
-        {
-            MWRender::Animation* animation = getAnimation(door);
-            const std::string_view group = state == MWWorld::DoorState::Opening ? "Open" : "Close";
-            const std::string_view oppositeGroup = state == MWWorld::DoorState::Opening ? "Close" : "Open";
-
-            if (animation && animation->hasAnimation(group))
-            {
-                animation->disable(oppositeGroup);
-                animation->play(group, MWRender::AnimPriority(1), MWRender::BlendMask_All, true, 1.f, "start", "stop",
-                    0.f, 1, true);
-
-                if (state == MWWorld::DoorState::Opening)
-                {
-                    mPhysics->markAsNonSolid(door);
-                    mPhysics->remove(door);
-                    if (osg::Node* node = door.getRefData().getBaseNode())
-                        node->setNodeMask(0);
-                }
-
-                door.getClass().setDoorState(door, MWWorld::DoorState::Idle);
-                mDoorStates.erase(door);
-
-                Log(Debug::Info) << "FNV/ESM4 proof: played animated door group '" << group
-                                 << "' instead of rotating door " << door.getCellRef().getRefId();
-                return;
-            }
-
-            if (state == MWWorld::DoorState::Opening)
-            {
-                mPhysics->markAsNonSolid(door);
-                mPhysics->remove(door);
-                if (osg::Node* node = door.getRefData().getBaseNode())
-                    node->setNodeMask(0);
-                door.getClass().setDoorState(door, MWWorld::DoorState::Idle);
-                mDoorStates.erase(door);
-
-                Log(Debug::Warning) << "FNV/ESM4 proof: removed animated ESM4 door collision and hidden fallback gate "
-                                    << door.getCellRef().getRefId();
-                return;
-            }
-        }
+        if (activateAnimatedESM4Door(door, state))
+            return;
 
         door.getClass().setDoorState(door, state);
         mDoorStates[door] = state;
@@ -5342,6 +5440,9 @@ namespace MWWorld
 
     void World::activateDoor(const Ptr& door, MWWorld::DoorState state)
     {
+        if (state != MWWorld::DoorState::Idle && activateAnimatedESM4Door(door, state))
+            return;
+
         door.getClass().setDoorState(door, state);
         mDoorStates[door] = state;
         if (state == MWWorld::DoorState::Idle)

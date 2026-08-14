@@ -32,6 +32,12 @@ namespace MWMechanics
     /// membership.
     bool isOwnershipAllowed(const Ownership& ownership, const ESM::RefId& actorBase,
         ESM::FormId actorReference, const std::map<ESM::RefId, int>* actorFactions);
+
+    /// Return whether an actor is explicitly authorized by a reference's
+    /// personal or faction ownership. An unowned reference does not grant
+    /// special access.
+    bool hasOwnershipAccess(
+        const MWWorld::Ptr& actor, const MWWorld::Ptr& target, const MWWorld::ESMStore& store);
 }
 
 #endif

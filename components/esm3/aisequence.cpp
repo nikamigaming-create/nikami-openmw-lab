@@ -79,6 +79,8 @@ namespace ESM
             esm.getHNOT(mRepeat, "REPT");
             mDestinationTolerance = -1.f;
             esm.getHNOT(mDestinationTolerance, "DTOL");
+            mDestinationYaw = 0.f;
+            mHasDestinationYaw = esm.getHNOT("DYAW", mDestinationYaw);
         }
 
         void AiTravel::save(ESMWriter& esm) const
@@ -89,6 +91,8 @@ namespace ESM
                 esm.writeHNT("REPT", mRepeat);
             if (mDestinationTolerance >= 0.f)
                 esm.writeHNT("DTOL", mDestinationTolerance);
+            if (mHasDestinationYaw)
+                esm.writeHNT("DYAW", mDestinationYaw);
         }
 
         void AiEscort::load(ESMReader& esm)

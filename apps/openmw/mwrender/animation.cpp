@@ -84,6 +84,7 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/actorfacing.hpp"
 
 #include "../mwmechanics/character.hpp" // FIXME: for MWMechanics::Priority
 #include "../mwmechanics/weapontype.hpp"
@@ -3138,8 +3139,27 @@ namespace MWRender
             osg::Matrix mat = transform->getMatrix();
             osg::Vec3f position = mat.getTrans();
             position = mResetAllTranslation ? osg::Vec3f() : osg::componentMultiply(mResetAxes, position);
-            mat.setTrans(position);
-            transform->setMatrix(mat);
+            const osg::Quat rotation
+                = MWWorld::getActorAnimationRootRotation(mat.getRotate(), mBindRotation, mResetFalloutRotation);
+            if (mResetFalloutRotation)
+            {
+                if (auto* nifTransform = dynamic_cast<NifOsg::MatrixTransform*>(transform))
+                {
+                    nifTransform->setTranslation(position);
+                    nifTransform->setRotation(rotation);
+                }
+                else
+                {
+                    mat = osg::Matrix::scale(mat.getScale()) * osg::Matrix::rotate(rotation)
+                        * osg::Matrix::translate(position);
+                    transform->setMatrix(mat);
+                }
+            }
+            else
+            {
+                mat.setTrans(position);
+                transform->setMatrix(mat);
+            }
 
             traverse(transform, nv);
         }
@@ -3157,9 +3177,17 @@ namespace MWRender
             mResetAllTranslation = resetAll;
         }
 
+        void setFalloutBindRotation(const osg::Quat& rotation)
+        {
+            mBindRotation = rotation;
+            mResetFalloutRotation = true;
+        }
+
     private:
         osg::Vec3f mResetAxes;
+        osg::Quat mBindRotation;
         bool mResetAllTranslation = false;
+        bool mResetFalloutRotation = false;
     };
 
     Animation::Animation(
@@ -3288,7 +3316,25 @@ namespace MWRender
         VFS::Path::Normalized kfname(model);
 
         if (kfname.extension() == nif)
+        {
+            if (mResourceSystem->getVFS()->exists(kfname))
+            {
+                const osg::ref_ptr<const SceneUtil::KeyframeHolder> embedded
+                    = mResourceSystem->getKeyframeManager()->get(kfname);
+                if (embedded != nullptr)
+                {
+                    for (const auto& [sequenceName, sequence] : embedded->mNamedSequences)
+                    {
+                        if (sequence == nullptr)
+                            continue;
+                        addSingleAnimSource(kfname.value(), baseModel, false, {}, {}, false, sequence);
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: added embedded object animation sequence '"
+                                            << sequenceName << "' from " << kfname;
+                    }
+                }
+            }
             kfname.changeExtension(kf);
+        }
 
         addSingleAnimSource(kfname, baseModel);
 
@@ -4590,13 +4636,16 @@ namespace MWRender
 
     std::shared_ptr<Animation::AnimSource> Animation::addSingleAnimSource(const std::string& kfname,
         const std::string& baseModel, bool falloutProcedureIdle, std::string_view controllerOverlayKf,
-        std::string_view falloutSemanticGroup, bool forceFalloutActorContext)
+        std::string_view falloutSemanticGroup, bool forceFalloutActorContext,
+        osg::ref_ptr<const SceneUtil::KeyframeHolder> keyframes)
     {
-        if (!mResourceSystem->getVFS()->exists(kfname))
+        if (keyframes == nullptr && !mResourceSystem->getVFS()->exists(kfname))
             return nullptr;
 
         auto animsrc = std::make_shared<AnimSource>();
-        animsrc->mKeyframes = mResourceSystem->getKeyframeManager()->get(VFS::Path::toNormalized(kfname));
+        animsrc->mKeyframes = keyframes != nullptr
+            ? std::move(keyframes)
+            : mResourceSystem->getKeyframeManager()->get(VFS::Path::toNormalized(kfname));
         animsrc->mSourceName = kfname;
 
         if (!controllerOverlayKf.empty())
@@ -5255,9 +5304,9 @@ namespace MWRender
 
         // The shipped Fallout first-person skeleton owns Camera1st beneath its
         // Bip01 hierarchy. Import that complete authored hierarchy. Cinematic
-        // KFs animate `Bip` (the short dialect alias for Bip01), NonAccum, neck,
-        // and Camera1st together; cloning only the lower branch drops the root
-        // track and points the camera away from the authored subject.
+        // KFs animate the real `Bip` body node under Bip01 Rotate as well as
+        // NonAccum, neck, and the separate Camera1st branch; cloning only the
+        // lower camera branch splits one authored controller set across rigs.
         (void)getNodeMap();
 
         if (mResourceSystem == nullptr)
@@ -5307,6 +5356,7 @@ namespace MWRender
             SceneUtil::NodeMapVisitor cameraNodeVisitor(mFalloutScriptPackageCameraNodes);
             cameraRoot->accept(cameraNodeVisitor);
             if (mFalloutScriptPackageCameraNodes.find("Bip01") == mFalloutScriptPackageCameraNodes.end()
+                || mFalloutScriptPackageCameraNodes.find("Bip") == mFalloutScriptPackageCameraNodes.end()
                 || mFalloutScriptPackageCameraNodes.find("Bip01 NonAccum")
                     == mFalloutScriptPackageCameraNodes.end()
                 || mFalloutScriptPackageCameraNodes.find("Camera1st")
@@ -6148,6 +6198,14 @@ namespace MWRender
                         {
                             mResetAccumRootCallback = new ResetAccumRootCallback;
                             mResetAccumRootCallback->setAccumulate(mAccumulate);
+                            if (falloutNpc)
+                            {
+                                const auto* accumTransform
+                                    = dynamic_cast<const osg::MatrixTransform*>(mAccumRoot.get());
+                                if (accumTransform != nullptr)
+                                    mResetAccumRootCallback->setFalloutBindRotation(
+                                        accumTransform->getMatrix().getRotate());
+                            }
                         }
                         mResetAccumRootCallback->setResetAllTranslation(falloutNpc);
                         // Keep the reset last in the callback chain so it sees the sampled controller value.
@@ -6168,6 +6226,9 @@ namespace MWRender
             {
                 mResetAccumRootCallback = new ResetAccumRootCallback;
                 mResetAccumRootCallback->setAccumulate(mAccumulate);
+                const auto* accumTransform = dynamic_cast<const osg::MatrixTransform*>(mAccumRoot.get());
+                if (accumTransform != nullptr)
+                    mResetAccumRootCallback->setFalloutBindRotation(accumTransform->getMatrix().getRotate());
             }
             mResetAccumRootCallback->setResetAllTranslation(true);
             mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
@@ -7394,6 +7455,7 @@ namespace MWRender
         mFalloutScriptPackageCameraTarget = false;
         mAccumRoot = nullptr;
         mAccumCtrl = nullptr;
+        mResetAccumRootCallback = nullptr;
 
         std::string defaultSkeleton;
         bool inject = false;

@@ -37,6 +37,9 @@ namespace NifOsg
         /// Load keyframe controllers from the given kf file.
         static void loadKf(Nif::FileView kf, SceneUtil::KeyframeHolder& target);
 
+        /// Load independently playable sequences embedded in NiControllerManager records.
+        static void loadEmbeddedKfSequences(Nif::FileView nif, SceneUtil::KeyframeHolder& target);
+
         /// Set whether or not nodes marked as "MRK" should be shown.
         /// These should be hidden ingame, but visible in the editor.
         /// Default: false.

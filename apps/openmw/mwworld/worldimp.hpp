@@ -143,8 +143,10 @@ namespace MWWorld
         struct ESM4ScriptPackageState
         {
             std::vector<ESM::FormId> mPackages;
+            ESM::FormId mSelectedPackage;
             MWRender::Animation* mAppliedAnimation = nullptr;
             ESM::FormId mAppliedPackage;
+            bool mAppliedFromScript = false;
             bool mDirty = true;
             // A package can legitimately have no playable animation. Only
             // emit OnPackageDone after this exact authored package was seen
@@ -193,6 +195,7 @@ namespace MWWorld
         void PCDropped(const Ptr& item);
 
         bool rotateDoor(const Ptr door, DoorState state, float duration);
+        bool activateAnimatedESM4Door(const Ptr& door, DoorState state);
 
         void processDoors(float duration);
         ///< Run physics simulation and modify \a world accordingly.
@@ -308,6 +311,7 @@ namespace MWWorld
 
         bool addESM4ScriptPackage(const MWWorld::Ptr& actor, ESM::FormId package) override;
         bool removeESM4ScriptPackages(const MWWorld::Ptr& actor) override;
+        bool setESM4SelectedIdlePackage(const MWWorld::Ptr& actor, ESM::FormId package) override;
 
         MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() override
         {

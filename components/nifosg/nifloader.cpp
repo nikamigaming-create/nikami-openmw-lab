@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <osg/Array>
 #include <osg/Geometry>
@@ -2118,6 +2119,62 @@ namespace NifOsg
         std::unordered_map<std::string, osg::Node*> mNodesByName;
         std::unordered_map<std::string, unsigned int> mBethesdaBoneLodGroups;
         std::vector<const Nif::NiControllerManager*> mControllerManagers;
+        std::unordered_set<const Nif::NiAVObject*> mEmbeddedControllerTargets;
+        std::unordered_set<std::string> mEmbeddedControllerTargetNames;
+
+        void collectEmbeddedControllerTargets(Nif::FileView nif)
+        {
+            const auto addTarget = [&](const Nif::NiAVObject* target) {
+                if (target == nullptr)
+                    return;
+                mEmbeddedControllerTargets.insert(target);
+                if (!target->mName.empty())
+                    mEmbeddedControllerTargetNames.insert(Misc::StringUtils::lowerCase(target->mName));
+            };
+
+            for (std::size_t recordIndex = 0; recordIndex < nif.numRecords(); ++recordIndex)
+            {
+                const auto* manager = dynamic_cast<const Nif::NiControllerManager*>(nif.getRecord(recordIndex));
+                if (manager == nullptr)
+                    continue;
+
+                for (const auto& sequencePtr : manager->mSequences)
+                {
+                    if (sequencePtr.empty())
+                        continue;
+                    const Nif::NiControllerSequence* sequence = sequencePtr.getPtr();
+                    for (const Nif::ControlledBlock& block : sequence->mControlledBlocks)
+                    {
+                        const std::string targetName = resolveControlledBlockTargetName(sequence, block);
+                        if (!targetName.empty())
+                        {
+                            mEmbeddedControllerTargetNames.insert(Misc::StringUtils::lowerCase(targetName));
+                            if (!manager->mObjectPalette.empty())
+                            {
+                                const auto& objects = manager->mObjectPalette->mObjects;
+                                const auto exact = objects.find(targetName);
+                                if (exact != objects.end() && !exact->second.empty())
+                                    addTarget(exact->second.getPtr());
+                                else
+                                {
+                                    for (const auto& [name, target] : objects)
+                                    {
+                                        if (Misc::StringUtils::ciEqual(name, targetName) && !target.empty())
+                                        {
+                                            addTarget(target.getPtr());
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!block.mController.empty() && !block.mController->mTarget.empty())
+                            addTarget(dynamic_cast<const Nif::NiAVObject*>(block.mController->mTarget.getPtr()));
+                    }
+                }
+            }
+        }
 
         void collectBethesdaBoneLodGroups(const Nif::NiAVObject* object)
         {
@@ -2568,6 +2625,54 @@ namespace NifOsg
             }
         }
 
+        void loadEmbeddedKfSequences(Nif::FileView nif, SceneUtil::KeyframeHolder& target) const
+        {
+            std::set<const Nif::NiControllerSequence*> loadedSequences;
+            for (std::size_t recordIndex = 0; recordIndex < nif.numRecords(); ++recordIndex)
+            {
+                const auto* manager = dynamic_cast<const Nif::NiControllerManager*>(nif.getRecord(recordIndex));
+                if (manager == nullptr)
+                    continue;
+
+                for (const auto& sequencePtr : manager->mSequences)
+                {
+                    if (sequencePtr.empty())
+                        continue;
+
+                    const Nif::NiControllerSequence* sequence = sequencePtr.getPtr();
+                    if (sequence->mName.empty() || !loadedSequences.emplace(sequence).second)
+                        continue;
+
+                    osg::ref_ptr<SceneUtil::KeyframeHolder> sequenceHolder = new SceneUtil::KeyframeHolder;
+                    loadControllerSequenceKf(
+                        sequence, *sequenceHolder, std::filesystem::path(nif.getFilename().generic_string()));
+                    if (sequenceHolder->mKeyframeControllers.empty())
+                        continue;
+
+                    // Embedded object sequences often author unqualified sound/event keys. OpenMW's
+                    // animation dispatcher also needs group-qualified bounds, so expose the manager's
+                    // exact sequence name while retaining every authored key.
+                    if (!sequenceHolder->mTextKeys.hasGroupStart(sequence->mName))
+                    {
+                        sequenceHolder->mTextKeys.emplace(sequence->mStartTime, sequence->mName + ": start");
+                        sequenceHolder->mTextKeys.emplace(sequence->mStopTime, sequence->mName + ": stop");
+                    }
+
+                    if (!target.mNamedSequences.emplace(sequence->mName, sequenceHolder).second)
+                    {
+                        Log(Debug::Warning) << "Duplicate embedded NiControllerSequence '" << sequence->mName
+                                            << "' in " << nif.getFilename() << "; keeping first sequence";
+                    }
+                }
+            }
+
+            if (!target.mNamedSequences.empty())
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: exposed " << target.mNamedSequences.size()
+                                    << " embedded NiControllerManager sequence(s) from " << nif.getFilename();
+            }
+        }
+
         struct HandleNodeArgs
         {
             unsigned int mNifVersion;
@@ -2598,6 +2703,7 @@ namespace NifOsg
 
             for (const Nif::NiAVObject* root : roots)
                 collectBethesdaBoneLodGroups(root);
+            collectEmbeddedControllerTargets(nif);
 
             osg::ref_ptr<SceneUtil::TextKeyMapHolder> textkeys(new SceneUtil::TextKeyMapHolder);
 
@@ -3011,7 +3117,8 @@ namespace NifOsg
         }
 
         // Get a default dataVariance for this node to be used as a hint by optimization (post)routines
-        static osg::ref_ptr<osg::Group> createNode(const Nif::NiAVObject* nifNode)
+        static osg::ref_ptr<osg::Group> createNode(
+            const Nif::NiAVObject* nifNode, bool embeddedControllerTarget)
         {
             osg::ref_ptr<osg::Group> node;
             osg::Object::DataVariance dataVariance = osg::Object::UNSPECIFIED;
@@ -3045,14 +3152,18 @@ namespace NifOsg
                     // attached to the declared actor bone, so it must stay transformable
                     // and visible to NodeMapVisitor.
                     if (nifNode->mParents.empty() && nifNode->mController.empty() && nifNode->mTransform.isIdentity()
-                        && !hasAuthoredParent)
+                        && !hasAuthoredParent && !embeddedControllerTarget)
                         node = new osg::Group;
 
                     // FO3/FNV animate the empty Weapon node under Bip01 R Hand.
                     // Keeping the authored node dynamic prevents the optimizer
                     // from folding it away and removes the need for a synthetic
-                    // replacement transform in actor assembly.
-                    dataVariance = nifNode->mIsBone || hasAuthoredParent || authoredAttachmentTarget
+                    // replacement transform in actor assembly. Nodes addressed by
+                    // embedded controller sequences need the same treatment: the
+                    // sequence may be dormant until gameplay requests Open/Close,
+                    // but its authored transform target must survive optimization.
+                    dataVariance
+                        = nifNode->mIsBone || hasAuthoredParent || authoredAttachmentTarget || embeddedControllerTarget
                         ? osg::Object::DYNAMIC
                         : osg::Object::STATIC;
 
@@ -3103,7 +3214,10 @@ namespace NifOsg
                     Log(Debug::Verbose) << "FNV/ESM4 diag: forced ambient controller autoplay for " << mFilename;
             }
 
-            osg::ref_ptr<osg::Group> node = createNode(nifNode);
+            const bool embeddedControllerTarget = mEmbeddedControllerTargets.contains(nifNode)
+                || (!nifNode->mName.empty()
+                    && mEmbeddedControllerTargetNames.contains(Misc::StringUtils::lowerCase(nifNode->mName)));
+            osg::ref_ptr<osg::Group> node = createNode(nifNode, embeddedControllerTarget);
 
             const bool preserveFalloutHairSurfaceTransform
                 = mVersion == Nif::NIFFile::NIFVersion::VER_BGS && mUserVersion == 11
@@ -7381,6 +7495,12 @@ namespace NifOsg
     {
         LoaderImpl impl(kf.getFilename(), kf.getVersion(), kf.getUserVersion(), kf.getBethVersion());
         impl.loadKf(kf, target);
+    }
+
+    void Loader::loadEmbeddedKfSequences(Nif::FileView nif, SceneUtil::KeyframeHolder& target)
+    {
+        LoaderImpl impl(nif.getFilename(), nif.getVersion(), nif.getUserVersion(), nif.getBethVersion());
+        impl.loadEmbeddedKfSequences(nif, target);
     }
 
 }

@@ -42,6 +42,20 @@ namespace Nif
         }
     }
 
+    NiTimeController::ExtrapolationMode decodeControllerSequenceCycleType(std::uint32_t value)
+    {
+        switch (value)
+        {
+            case 0:
+                return NiTimeController::ExtrapolationMode::Cycle;
+            case 1:
+                return NiTimeController::ExtrapolationMode::Reverse;
+            case 2:
+            default:
+                return NiTimeController::ExtrapolationMode::Constant;
+        }
+    }
+
     void NiTimeController::read(NIFStream* nif)
     {
         mNext.read(nif);
@@ -143,7 +157,12 @@ namespace Nif
 
         nif->read(mWeight);
         mTextKeys.read(nif);
-        mExtrapolationMode = static_cast<NiTimeController::ExtrapolationMode>(nif->get<uint32_t>());
+        // NiControllerSequence stores a CycleType (loop=0, reverse=1,
+        // clamp=2), while NiTimeController encodes the equivalent behavior
+        // as flag bits (cycle=0, reverse=2, constant=4).  Casting the raw
+        // sequence value makes clamp play backwards after reaching its stop
+        // time, which is especially visible on embedded door animations.
+        mExtrapolationMode = decodeControllerSequenceCycleType(nif->get<uint32_t>());
         nif->read(mFrequency);
         if (nif->getVersion() <= NIFStream::generateVersion(10, 4, 0, 1))
             nif->read(mPhase);

@@ -216,12 +216,20 @@ namespace Resource
 
         osg::ref_ptr<SceneUtil::KeyframeHolder> loaded(new SceneUtil::KeyframeHolder);
         constexpr VFS::Path::ExtensionView kf("kf");
+        constexpr VFS::Path::ExtensionView nif("nif");
         if (name.extension() == kf)
         {
             auto file = std::make_shared<Nif::NIFFile>(name);
             Nif::Reader reader(*file, mEncoder);
             reader.parse(mVFS->get(name));
             NifOsg::Loader::loadKf(*file, *loaded.get());
+        }
+        else if (name.extension() == nif)
+        {
+            auto file = std::make_shared<Nif::NIFFile>(name);
+            Nif::Reader reader(*file, mEncoder);
+            reader.parse(mVFS->get(name));
+            NifOsg::Loader::loadEmbeddedKfSequences(*file, *loaded.get());
         }
         else
         {

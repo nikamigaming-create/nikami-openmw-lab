@@ -187,6 +187,23 @@ namespace
         EXPECT_FLOAT_EQ(*transform.mScale, interpolator.mDefaultValue.mScale);
     }
 
+    TEST(NifOsgControllerTest, shouldDecodeControllerSequenceCycleTypeWithoutFlagBitAliasing)
+    {
+        EXPECT_EQ(Nif::decodeControllerSequenceCycleType(0), Nif::NiTimeController::ExtrapolationMode::Cycle);
+        EXPECT_EQ(Nif::decodeControllerSequenceCycleType(1), Nif::NiTimeController::ExtrapolationMode::Reverse);
+        EXPECT_EQ(Nif::decodeControllerSequenceCycleType(2), Nif::NiTimeController::ExtrapolationMode::Constant);
+        EXPECT_EQ(Nif::decodeControllerSequenceCycleType(99), Nif::NiTimeController::ExtrapolationMode::Constant);
+
+        // Bethesda-era sequences omit the legacy phase field.
+        EXPECT_FLOAT_EQ(Nif::NiControllerSequence{}.mPhase, 0.f);
+
+        const NifOsg::ControllerFunction clamped(1.f, 0.f, 0.f, 1.f,
+            Nif::decodeControllerSequenceCycleType(2));
+        EXPECT_FLOAT_EQ(clamped.calculate(0.f), 0.f);
+        EXPECT_FLOAT_EQ(clamped.calculate(0.5f), 0.5f);
+        EXPECT_FLOAT_EQ(clamped.calculate(2.f), 1.f);
+    }
+
     TEST(NifOsgControllerTest, shouldApplySerializedBlendBoolVisibility)
     {
         Nif::NiBlendBoolInterpolator interpolator;

@@ -92,6 +92,11 @@ namespace ESM
             // Optional exact completion radius for data-driven travel.
             // A negative value preserves legacy Morrowind arrival behavior.
             float mDestinationTolerance = -1.f;
+            // Fallout near-reference packages also author a final marker
+            // heading. Keep it optional so ordinary Morrowind travel retains
+            // its destination-facing behavior.
+            bool mHasDestinationYaw = false;
+            float mDestinationYaw = 0.f;
 
             void load(ESMReader& esm);
             void save(ESMWriter& esm) const;

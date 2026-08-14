@@ -4,6 +4,7 @@
 #include <components/detournavigator/navigator.hpp>
 #include <components/esm3/loadcell.hpp>
 #include <components/esm3/loadland.hpp>
+#include <components/esm4/loaddoor.hpp>
 #include <components/misc/coordinateconverter.hpp>
 #include <components/settings/values.hpp>
 
@@ -23,6 +24,7 @@
 #include "actorutil.hpp"
 #include "creaturestats.hpp"
 #include "movement.hpp"
+#include "ownership.hpp"
 #include "pathgrid.hpp"
 #include "steering.hpp"
 
@@ -127,9 +129,6 @@ bool MWMechanics::AiPackage::pathTo(const MWWorld::Ptr& actor, const osg::Vec3f&
 
     if (!isDestReached && timerStatus == Misc::TimerStatus::Elapsed)
     {
-        if (canOpenDoors(actor))
-            openDoors(actor);
-
         const bool wasShortcutting = mIsShortcutting;
         bool destInLOS = false;
 
@@ -194,6 +193,13 @@ bool MWMechanics::AiPackage::pathTo(const MWWorld::Ptr& actor, const osg::Vec3f&
         = requireDestinationTolerance ? std::max(0.f, destTolerance) : DEFAULT_TOLERANCE;
     mPathFinder.update(
         position, pointTolerance, finalPointTolerance, updateFlags, agentBounds, getNavigatorFlags(actor));
+
+    // Door checks must use the current next point. On a newly started package
+    // the path is still empty before the rebuild above, and before update() its
+    // front can still be a point the actor has already reached. Checking here
+    // lets an actor open an authored gate before beginning movement through it.
+    if (!isDestReached && timerStatus == Misc::TimerStatus::Elapsed && canOpenDoors(actor))
+        openDoors(actor);
 
     if (isDestReached || mPathFinder.checkPathCompleted()) // if path is finished
     {
@@ -302,7 +308,10 @@ void MWMechanics::AiPackage::openDoors(const MWWorld::Ptr& actor)
         if (!isDoorOnTheWay(actor, door, mPathFinder.getPath().front()))
             return;
 
-        if (door.getCellRef().getTrap().empty() && !door.getCellRef().isLocked())
+        const MWWorld::ESMStore* const store = MWBase::Environment::get().getESMStore();
+        const bool ownerAccess = store != nullptr && door.getType() == ESM4::Door::sRecordId
+            && MWMechanics::hasOwnershipAccess(actor, door, *store);
+        if (door.getCellRef().getTrap().empty() && (!door.getCellRef().isLocked() || ownerAccess))
         {
             MWBase::Environment::get().getLuaManager()->objectActivated(door, actor);
             return;

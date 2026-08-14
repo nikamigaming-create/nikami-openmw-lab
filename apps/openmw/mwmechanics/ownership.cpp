@@ -5,8 +5,11 @@
 #include <components/esm4/loadnpc.hpp>
 
 #include "../mwworld/cellstore.hpp"
+#include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/ptr.hpp"
+
+#include "npcstats.hpp"
 
 namespace MWMechanics
 {
@@ -68,5 +71,23 @@ namespace MWMechanics
         const auto found = actorFactions->find(ownership.mFaction);
         return found != actorFactions->end()
             && (ownership.mRequiredFactionRank < 0 || found->second >= ownership.mRequiredFactionRank);
+    }
+
+    bool hasOwnershipAccess(
+        const MWWorld::Ptr& actor, const MWWorld::Ptr& target, const MWWorld::ESMStore& store)
+    {
+        if (actor.isEmpty() || target.isEmpty())
+            return false;
+
+        const Ownership ownership = resolveOwnership(target, store);
+        if (ownership.mOwner.empty() && ownership.mFaction.empty())
+            return false;
+
+        const std::map<ESM::RefId, int>* factions = nullptr;
+        if (!ownership.mFaction.empty() && actor.getClass().isNpc())
+            factions = &actor.getClass().getNpcStats(actor).getFactionRanks();
+
+        return isOwnershipAllowed(
+            ownership, actor.getCellRef().getRefId(), actor.getCellRef().getRefNum(), factions);
     }
 }

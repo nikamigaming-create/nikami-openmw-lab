@@ -7,6 +7,7 @@
 
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/vfs/pathutil.hpp>
 
@@ -26,6 +27,10 @@
 
 namespace MWClass
 {
+    /// Fallout packages such as synchronized scene tracks can retain the historical Travel procedure type while
+    /// declaring no target at all. In that shape the IDLA list is the complete authored behavior.
+    bool isFalloutIdleOnlyPackage(const ESM4::AIPackage& package);
+
     enum class FalloutFurnitureState
     {
         None,

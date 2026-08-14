@@ -34,6 +34,8 @@
 
 #include "../mwgui/tooltips.hpp"
 
+#include "../mwmechanics/ownership.hpp"
+
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/actiondoor.hpp"
 #include "../mwworld/actionteleport.hpp"
@@ -54,6 +56,8 @@ namespace MWClass
         void insertObjectRendering(
             const MWWorld::Ptr& ptr, const std::string& model, MWRender::RenderingInterface& renderingInterface);
         void insertObjectPhysics(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
+            MWPhysics::PhysicsSystem& physics);
+        void insertDoorPhysics(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
             MWPhysics::PhysicsSystem& physics);
         bool worldViewerDisableEsm4Actors();
         bool worldViewerUseEsm4ActorProxies();
@@ -489,6 +493,12 @@ namespace MWClass
             }
         }
 
+        void insertObjectPhysics(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
+            MWPhysics::PhysicsSystem& physics) const override
+        {
+            ESM4Impl::insertDoorPhysics(ptr, model, rotation, physics);
+        }
+
         bool isDoor() const override { return true; }
 
         bool useAnim() const override { return true; }
@@ -515,9 +525,12 @@ namespace MWClass
                 const ESM::RefId keyId = ptr.getCellRef().getKey();
                 const bool hasKey = !actor.isEmpty() && !keyId.empty()
                     && !actor.getClass().getContainerStore(actor).search(keyId).isEmpty();
+                const MWWorld::ESMStore* const store = MWBase::Environment::get().getESMStore();
+                const bool ownerAccess
+                    = store != nullptr && MWMechanics::hasOwnershipAccess(actor, ptr, *store);
                 if (hasKey)
                     ptr.getCellRef().unlock();
-                else
+                else if (!ownerAccess)
                 {
                     std::unique_ptr<MWWorld::Action> action
                         = std::make_unique<MWWorld::FailedAction>(std::string_view{}, ptr);
