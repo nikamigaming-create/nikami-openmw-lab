@@ -606,10 +606,13 @@ void MWState::StateManager::saveGame(std::string_view description, const Slot* s
 
 void MWState::StateManager::quickSave(std::string name)
 {
-    if (!(mState == State_Running
-            && MWBase::Environment::get().getWorld()->getGlobalInt(MWWorld::Globals::sCharGenState) == -1 // char gen
-            && MWBase::Environment::get().getWindowManager()->isSavingAllowed()))
+    const bool running = mState == State_Running;
+    const int charGenState = MWBase::Environment::get().getWorld()->getGlobalInt(MWWorld::Globals::sCharGenState);
+    const bool savingAllowed = MWBase::Environment::get().getWindowManager()->isSavingAllowed();
+    if (!(running && charGenState == -1 && savingAllowed))
     {
+        Log(Debug::Warning) << "StateManager quickSave denied name=\"" << name << "\" running=" << running
+                            << " charGenState=" << charGenState << " savingAllowed=" << savingAllowed;
         // You can not save your game right now
         MWBase::Environment::get().getWindowManager()->messageBox("#{OMWEngine:SaveGameDenied}");
         return;
