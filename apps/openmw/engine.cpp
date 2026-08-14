@@ -12762,10 +12762,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 {
                     // This is the same production dialogue-manager selection used by the dialogue UI.
                     // The selected INFO owns the retail ShowBarterMenu result; we never push GM_Barter here.
+                    struct ChetBarterResponseCallback final : MWBase::DialogueManager::ResponseCallback
+                    {
+                        void addResponse(std::string_view title, std::string_view text) override
+                        {
+                            Log(Debug::Info) << "FNV R2 Chet: trade-response title=\"" << title
+                                             << "\" text=\"" << text << "\"";
+                        }
+                    } callback;
                     if (choice != choices.end())
-                        mDialogueManager->questionAnswered(choice->second, nullptr);
+                        mDialogueManager->questionAnswered(choice->second, &callback);
                     else
-                        mDialogueManager->keywordSelected(tradePrompt, nullptr);
+                        mDialogueManager->keywordSelected(tradePrompt, &callback);
                     fnvR2ChetDialoguePass = true;
                     advance(3);
                 }
