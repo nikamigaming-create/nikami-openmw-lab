@@ -1768,7 +1768,7 @@ namespace NifOsg
     {
         if (!ctrl->mInterpolator.empty())
         {
-            if (ctrl->mInterpolator->mRecordType == Nif::RC_NiPoint3Interpolator)
+            if (ctrl->mInterpolator->recType == Nif::RC_NiPoint3Interpolator)
             {
                 const auto* interpolator
                     = static_cast<const Nif::NiPoint3Interpolator*>(ctrl->mInterpolator.getPtr());
