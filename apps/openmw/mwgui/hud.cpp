@@ -44,6 +44,11 @@ namespace MWGui
 {
     namespace
     {
+        bool compatibilityUiTelemetryEnabled()
+        {
+            return std::getenv("OPENMW_COMPAT_UI_TELEMETRY") != nullptr;
+        }
+
         bool hasFalloutContent()
         {
             if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
@@ -877,7 +882,7 @@ namespace MWGui
     {
         // Keep visibility with the gameplay/UI state. A cinematic or
         // character-generation sequence must not leak the minimap.
-        const bool flatFalloutCompass = !isVr && hasFalloutContent() && mFalloutCompassBar != nullptr;
+        const bool flatFalloutCompass = !VR::getVR() && hasFalloutContent() && mFalloutCompassBar != nullptr;
         mMinimapBox->setVisible(flatFalloutCompass ? false : visible);
         if (mFalloutCompassBar != nullptr)
             mFalloutCompassBar->setVisible(visible);

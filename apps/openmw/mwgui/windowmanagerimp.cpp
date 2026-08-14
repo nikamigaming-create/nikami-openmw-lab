@@ -1907,7 +1907,8 @@ namespace MWGui
         if (!mMap)
             return; // UI not created yet
 
-        mHud->setVisible(mHudEnabled && !loading && !mLegacyHudSuppressed);
+        const bool gameplayOverlayVisible = mHudEnabled && !loading && !mLegacyHudSuppressed;
+        mHud->setVisible(gameplayOverlayVisible);
         mToolTips->setVisible(mHudEnabled && !loading);
 
         bool gameMode = !isGuiMode();
@@ -2039,6 +2040,7 @@ namespace MWGui
             {
                 const MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
                 const int margin = 24;
+                const bool isVr = VR::getVR();
                 const int top = isVr ? std::min(std::max(88, viewSize.height / 8), 128) : 52;
                 const int bottom = isVr ? 36 : 16;
                 const int gap = 8;
