@@ -22,6 +22,8 @@
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
 namespace
 {
     bool isFlatFalloutItemType(unsigned int type)
@@ -44,6 +46,14 @@ namespace MWGui
             return false;
         const MWWorld::LiveCellRef<ESM4::Npc>* reference = merchant.get<ESM4::Npc>();
         return reference != nullptr && reference->mBase != nullptr && reference->mBase->mIsFONV;
+    }
+
+    bool isFlatFalloutMerchant(const MWWorld::Ptr& merchant)
+    {
+        if (merchant.isEmpty() || merchant.getType() != ESM4::Npc::sRecordId)
+            return false;
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(merchant);
+        return traits != nullptr && traits->mIsFONV;
     }
 
     bool isItemAcceptedForBarter(

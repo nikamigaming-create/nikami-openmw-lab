@@ -14,6 +14,7 @@ namespace MWGui
     class ItemModel;
 
     bool isFlatFalloutMerchant(const MWWorld::ConstPtr& merchant);
+    bool isFlatFalloutMerchant(const MWWorld::Ptr& merchant);
     bool isItemAcceptedForBarter(
         const MWWorld::ConstPtr& item, const MWWorld::ConstPtr& merchant, int merchantServices);
     ESM::RefId findFlatFalloutCurrency(const MWWorld::ESMStore& store);
