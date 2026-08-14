@@ -18,6 +18,7 @@
 #include <functional>
 #include <iomanip>
 #include <limits>
+#include <list>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -5213,6 +5214,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool fnvFirstSmokeInventoryPass = false;
     static bool fnvFirstSmokeMapPass = false;
     static bool fnvFirstSmokeStatusPass = false;
+    static int fnvR2ChetPhase = 0;
+    static unsigned int fnvR2ChetPhaseFrame = 0;
+    static bool fnvR2ChetDoorPass = false;
+    static bool fnvR2ChetDialoguePass = false;
+    static bool fnvR2ChetBarterPass = false;
+    static MWWorld::Ptr fnvR2ChetActor;
     static int fnvInteractionPhase = 0;
     static unsigned int fnvInteractionPhaseFrame = 0;
     static osg::Timer_t fnvInteractionPhaseStartTime = 0;
@@ -12612,6 +12619,166 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 && fnvFirstSmokeInventoryPass && fnvFirstSmokeMapPass && fnvFirstSmokeStatusPass;
             finish(pass, pass ? "visible Goodsprings move-door-container-inventory-map-status smoke complete"
                               : "one or more first-smoke gates failed");
+        }
+    }
+
+    // This is a player-facing R2 feature slice, not a synthetic barter harness. It takes the
+    // authored Goodsprings General Store door, activates the placed Chet reference through the
+    // regular world action path, and chooses the trade prompt through the live dialogue manager.
+    // No actor inventory/caps are manufactured or mutated here; R2.0 only observes Chet's actual
+    // merchant state once the authored ShowBarterMenu result has opened the production UI.
+    const bool fnvR2ChetRequested = proofEnvEnabled("OPENMW_FNV_R2_CHET_OBSERVATION");
+    if (fnvR2ChetRequested && fnvR2ChetPhase >= 0 && proofRunning && proofWorldReady && mWorld != nullptr
+        && mWindowManager != nullptr && mDialogueManager != nullptr)
+    {
+        mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+        const auto findActiveRef = [&](std::uint32_t rawFormId) {
+            const ESM::FormId formId = ESM::FormId::fromUint32(rawFormId);
+            MWWorld::Ptr found;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                    {
+                        found = ptr;
+                        return false;
+                    }
+                    return true;
+                });
+                if (!found.isEmpty())
+                    break;
+            }
+            return found;
+        };
+        const auto playerCellId = [&]() {
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            if (player.isEmpty() || player.getCell() == nullptr || player.getCell()->getCell() == nullptr)
+                return ESM::RefId();
+            return player.getCell()->getCell()->getId();
+        };
+        const auto activate = [&](const MWWorld::Ptr& target, std::string_view label) {
+            if (target.isEmpty())
+                return false;
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            std::unique_ptr<MWWorld::Action> action = target.getClass().activate(target, player);
+            const bool actionable = action != nullptr && !action->isNullAction();
+            Log(actionable ? Debug::Info : Debug::Error) << "FNV R2 Chet: activate label=" << label
+                                                        << " target=" << target.toString()
+                                                        << " actionable=" << (actionable ? 1 : 0);
+            if (actionable)
+                action->execute(player);
+            return actionable;
+        };
+        const auto capture = [&](std::string_view label) {
+            Log(Debug::Info) << "FNV R2 Chet: native-capture label=" << label << " frame=" << frameNumber;
+            if (mScreenCaptureHandler != nullptr)
+            {
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+            }
+        };
+        const auto advance = [&](int phase) {
+            fnvR2ChetPhase = phase;
+            fnvR2ChetPhaseFrame = frameNumber;
+            Log(Debug::Info) << "FNV R2 Chet: phase=" << phase << " frame=" << frameNumber;
+        };
+        const auto finish = [&](bool pass, std::string_view reason) {
+            Log(pass ? Debug::Info : Debug::Error)
+                << "FNV R2 Chet: result=" << (pass ? "pass" : "fail") << " reason=\"" << reason
+                << "\" door=" << (fnvR2ChetDoorPass ? 1 : 0)
+                << " dialogue=" << (fnvR2ChetDialoguePass ? 1 : 0)
+                << " barter=" << (fnvR2ChetBarterPass ? 1 : 0)
+                << " cell=" << playerCellId().toDebugString() << " frame=" << frameNumber;
+            fnvR2ChetPhase = -1;
+            mStateManager->requestQuit();
+        };
+
+        const unsigned int elapsed = frameNumber - fnvR2ChetPhaseFrame;
+        if (fnvR2ChetPhase == 0 && proofWorldReadyFrames >= 300)
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWWorld::Ptr door = findActiveRef(0x1106373);
+            const ESM::RefId expectedInterior(ESM::FormId::fromUint32(0x11057f1));
+            const bool authoredPair = !player.isEmpty() && player.getCell() != nullptr && player.getCell()->isExterior()
+                && !door.isEmpty() && door.getClass().isDoor() && door.getCellRef().getTeleport()
+                && door.getCellRef().getDestCell() == expectedInterior;
+            fnvR2ChetDoorPass = authoredPair && activate(door, "goodsprings-general-store-exterior-door");
+            if (!fnvR2ChetDoorPass)
+                finish(false, "authored Goodsprings General Store door activation failed");
+            else
+            {
+                capture("goodsprings-general-store-exterior-door");
+                advance(1);
+            }
+        }
+        else if (fnvR2ChetPhase == 1)
+        {
+            const ESM::RefId expectedInterior(ESM::FormId::fromUint32(0x11057f1));
+            if (playerCellId() == expectedInterior && elapsed >= 180)
+            {
+                fnvR2ChetActor = findActiveRef(0x1104c79);
+                if (fnvR2ChetActor.isEmpty())
+                    finish(false, "placed Chet reference is not active in Goodsprings General Store");
+                else
+                {
+                    capture("goodsprings-general-store-chet");
+                    if (!activate(fnvR2ChetActor, "chet-dialogue"))
+                        finish(false, "Chet activation returned a null action");
+                    else
+                        advance(2);
+                }
+            }
+            else if (elapsed > 900)
+                finish(false, "Goodsprings General Store interior did not become active");
+        }
+        else if (fnvR2ChetPhase == 2 && elapsed >= 8)
+        {
+            if (!mWindowManager->containsMode(MWGui::GM_Dialogue))
+            {
+                if (elapsed > 900)
+                    finish(false, "Chet dialogue did not open");
+            }
+            else
+            {
+                constexpr std::string_view tradePrompt = "Show me what you have for sale.";
+                const std::list<std::string> topics = mDialogueManager->getAvailableTopics();
+                bool promptAvailable = false;
+                for (const std::string& topic : topics)
+                {
+                    Log(Debug::Info) << "FNV R2 Chet: offered-topic=\"" << topic << "\"";
+                    promptAvailable = promptAvailable || Misc::StringUtils::ciEqual(topic, tradePrompt);
+                }
+                if (!promptAvailable)
+                    finish(false, "Chet trade prompt was not exposed by authored dialogue");
+                else
+                {
+                    // This is the same production dialogue-manager selection used by the dialogue UI.
+                    // The selected INFO owns the retail ShowBarterMenu result; we never push GM_Barter here.
+                    mDialogueManager->keywordSelected(tradePrompt, nullptr);
+                    fnvR2ChetDialoguePass = true;
+                    advance(3);
+                }
+            }
+        }
+        else if (fnvR2ChetPhase == 3 && elapsed >= 30)
+        {
+            const bool barterOpen = mWindowManager->containsMode(MWGui::GM_Barter);
+            const int caps = fnvR2ChetActor.isEmpty() ? 0
+                : fnvR2ChetActor.getClass().getContainerStore(fnvR2ChetActor).count(
+                    ESM::RefId(ESM::FormId::fromUint32(0x11031da3)));
+            const int stimpaks = fnvR2ChetActor.isEmpty() ? 0
+                : fnvR2ChetActor.getClass().getContainerStore(fnvR2ChetActor).count(
+                    ESM::RefId(ESM::FormId::fromUint32(0x11015169)));
+            fnvR2ChetBarterPass = barterOpen && caps > 0 && stimpaks > 0;
+            Log(fnvR2ChetBarterPass ? Debug::Info : Debug::Error)
+                << "FNV R2 Chet: authored-barter-open=" << (barterOpen ? 1 : 0) << " caps=" << caps
+                << " stimpaks=" << stimpaks << " result=" << (fnvR2ChetBarterPass ? "pass" : "fail");
+            capture("goodsprings-chet-authored-barter");
+            finish(fnvR2ChetBarterPass, fnvR2ChetBarterPass
+                    ? "authored General Store door, Chet dialogue, and live barter inventory observed"
+                    : "authored barter did not expose Chet's live inventory");
         }
     }
 
