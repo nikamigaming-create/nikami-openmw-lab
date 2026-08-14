@@ -1926,13 +1926,25 @@ namespace MWGui
 
         const bool falloutContent = isFalloutContentLoaded();
 
-        // Fallout uses Pip-Boy surfaces, not OpenMW's minimized Morrowind window icons.
+        // Fallout's modal inventory/map live on the Pip-Boy surface, but the
+        // ordinary gameplay HUD must remain visible while no GUI owns the
+        // screen. Hiding these here reduced native FNV gameplay to a crosshair.
         if (falloutContent)
         {
-            setMinimapVisibility(false);
-            setWeaponVisibility(false);
+            const bool falloutGameplayHudVisible = gameplayOverlayVisible && gameMode;
+            setMinimapVisibility(falloutGameplayHudVisible);
+            setWeaponVisibility(falloutGameplayHudVisible);
             setSpellVisibility(false);
-            setHMSVisibility(false);
+            setHMSVisibility(falloutGameplayHudVisible);
+
+            static std::optional<bool> loggedFalloutGameplayHudVisible;
+            if (!loggedFalloutGameplayHudVisible.has_value()
+                || *loggedFalloutGameplayHudVisible != falloutGameplayHudVisible)
+            {
+                Log(Debug::Info) << "FNV visual assertion: gameplay HUD visible="
+                                 << falloutGameplayHudVisible << " hp=1 ap=1 compass=1 weapon=1";
+                loggedFalloutGameplayHudVisible = falloutGameplayHudVisible;
+            }
         }
         else
         {
@@ -2022,6 +2034,93 @@ namespace MWGui
                     MyGUI::LayerManager::getInstance().upLayerItem(mInventoryWindow->mMainWidget);
                 Log(Debug::Info) << "FNV/ESM4 proof: flat paper doll profiler fullscreen rect=0,0,"
                                  << viewSize.width << "," << viewSize.height;
+            }
+            else if (falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            {
+                const MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
+                const int margin = 24;
+                const int top = isVr ? std::min(std::max(88, viewSize.height / 8), 128) : 52;
+                const int bottom = isVr ? 36 : 16;
+                const int gap = 8;
+                const int activeIndex = std::clamp(static_cast<int>(mActiveControllerWindows[GM_Inventory]), 0, 3);
+                const int shelfWidth = std::min(std::max(viewSize.width / 6, 180), 260);
+                const int availableWidth = viewSize.width - margin * 2;
+                const int availableHeight = viewSize.height - top - bottom;
+                const int activeWidth = std::max(640, availableWidth);
+                const int activeHeight = std::max(360, availableHeight);
+                int loggedActiveWidth = activeWidth;
+                int loggedActiveHeight = activeHeight;
+                int loggedActiveLeft = margin;
+                int loggedActiveTop = top;
+                const int shelfLeft = viewSize.width - margin - shelfWidth;
+                const int shelfHeight = std::max(110, (activeHeight - gap * 2) / 3);
+
+                WindowBase* windows[4] = { mMap, mInventoryWindow, mSpellWindow, mStatsWindow };
+                if (isVr)
+                {
+                    const int mapActiveWidth = std::clamp(availableWidth, 860, 1080);
+                    const int mapActiveHeight = std::clamp(availableHeight, 520, 680);
+                    const int inactiveWidth = std::clamp(activeWidth / 2, 320, 440);
+                    const int inactiveHeight = std::clamp(activeHeight / 2, 240, 340);
+                    const int inactiveLeft = margin + std::max(0, (std::max(activeWidth, mapActiveWidth) - inactiveWidth) / 2);
+                    const int inactiveTop = top + std::max(0, (std::max(activeHeight, mapActiveHeight) - inactiveHeight) / 2);
+
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        if (i == activeIndex)
+                        {
+                            const int paneWidth = i == 0 ? mapActiveWidth : activeWidth;
+                            const int paneHeight = i == 0 ? mapActiveHeight : activeHeight;
+                            const int paneLeft = std::max(margin, (viewSize.width - paneWidth) / 2);
+                            const int paneTop = std::max(top, (viewSize.height - paneHeight) / 2);
+                            loggedActiveLeft = paneLeft;
+                            loggedActiveTop = paneTop;
+                            loggedActiveWidth = paneWidth;
+                            loggedActiveHeight = paneHeight;
+                            setWindowCoord(windows[i], MyGUI::IntCoord(paneLeft, paneTop, paneWidth, paneHeight));
+                        }
+                        else
+                            setWindowCoord(
+                                windows[i], MyGUI::IntCoord(inactiveLeft, inactiveTop, inactiveWidth, inactiveHeight));
+                    }
+                }
+                else
+                {
+                    int shelfSlot = 0;
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        if (i == activeIndex)
+                        {
+                            const int paneWidth = i == 0 ? std::max(activeWidth, 920) : activeWidth;
+                            const int paneHeight = i == 0 ? std::max(activeHeight, 560) : activeHeight;
+                            loggedActiveWidth = paneWidth;
+                            loggedActiveHeight = paneHeight;
+                            setWindowCoord(windows[i], MyGUI::IntCoord(margin, top, paneWidth, paneHeight));
+                            if (i == 1 && mInventoryWindow != nullptr
+                                && !mInventoryWindow->refreshFalloutPaneLayout())
+                                Log(Debug::Error) << "FNV/ESM4 proof: active inventory item pane failed layout validation";
+                            continue;
+                        }
+
+                        const int shelfTop = top + shelfSlot * (shelfHeight + gap);
+                        setWindowCoord(windows[i], MyGUI::IntCoord(shelfLeft, shelfTop, shelfWidth, shelfHeight));
+                        ++shelfSlot;
+                    }
+                }
+
+                if (activeIndex == 0 && mMap != nullptr)
+                    mMap->fitFalloutWorldMapOnce();
+
+                if (WindowBase* activeWindow = windows[activeIndex])
+                {
+                    if (activeWindow->mMainWidget != nullptr)
+                        MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
+                }
+                Log(Debug::Info) << "FNV/ESM4 proof: Fallout pause panes laid out active="
+                                 << activeIndex << " activeRect=" << loggedActiveLeft << "," << loggedActiveTop
+                                 << "," << loggedActiveWidth << "," << loggedActiveHeight << " vrFullPanels="
+                                 << isVr
+                                 << " shelfWidth=" << shelfWidth;
             }
         }
 

@@ -1,4 +1,4 @@
-﻿#include "npc.hpp"
+#include "npc.hpp"
 
 #include <MyGUI_TextIterator.h>
 #include <MyGUI_UString.h>
@@ -54,7 +54,8 @@
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/failedaction.hpp"
-#include "../mwworld/fnvplayerruntimestate.hpp"
+#include "../mwworld/fnvmovement.hpp"
+#include "../mwworld/fnvplayerstate.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/localscripts.hpp"
 #include "../mwworld/ptr.hpp"
@@ -88,7 +89,17 @@ namespace
 
     const NpcParts npcParts;
 
-    int is_even(double d)
+    const MWWorld::FalloutPlayerState* getFalloutPlayerProxyState(const MWWorld::Ptr& ptr)
+    {
+        MWBase::World* const world = MWBase::Environment::tryGetWorld();
+        if (world == nullptr || world->getPlayerPtr().isEmpty() || ptr != world->getPlayerPtr())
+            return nullptr;
+        const std::optional<MWWorld::FalloutPlayerState>& state
+            = MWBase::Environment::get().getESMStore()->getFalloutPlayerState();
+        return state ? &*state : nullptr;
+    }
+
+    bool isEven(double d)
     {
         double intPart;
         modf(d / 2.0, &intPart);
@@ -1116,13 +1127,8 @@ namespace MWClass
 
     float Npc::getCapacity(const MWWorld::Ptr& ptr) const
     {
-        MWBase::World* world = MWBase::Environment::tryGetWorld();
-        if (world != nullptr && ptr == world->getPlayerPtr())
-        {
-            if (const std::optional<float> capacity = world->getFalloutPlayerRuntimeState().getCarryCapacity())
-                return *capacity;
-        }
-
+        if (const MWWorld::FalloutPlayerState* state = getFalloutPlayerProxyState(ptr))
+            return 150.f + 10.f * state->getSpecial(MWWorld::FalloutSpecial::Strength);
         const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
         static const float fEncumbranceStrMult = MWBase::Environment::get()
                                                      .getESMStore()
@@ -1490,6 +1496,17 @@ namespace MWClass
 
     float Npc::getWalkSpeed(const MWWorld::Ptr& ptr) const
     {
+        if (const MWWorld::FalloutPlayerState* state = getFalloutPlayerProxyState(ptr))
+        {
+            const ESM::GameSetting* setting = MWBase::Environment::get()
+                                                  .getESMStore()
+                                                  ->get<ESM::GameSetting>()
+                                                  .search(ESM::RefId::stringRefId("fMoveBaseSpeed"));
+            const float baseSpeed
+                = setting != nullptr ? setting->mValue.getFloat() : MWWorld::sFalloutMoveBaseSpeed;
+            const float multiplier = std::max<int>(state->mStatsConfig.speedMultiplier, 1) / 100.f;
+            return MWWorld::getFalloutWalkSpeed(multiplier, baseSpeed) * MWWorld::getFalloutPlayerSpeedScale();
+        }
         const GMST& gmst = getGmst();
         const MWMechanics::NpcStats& stats = getNpcStats(ptr);
         const float normalizedEncumbrance = getNormalizedEncumbrance(ptr);

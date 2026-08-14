@@ -510,6 +510,7 @@ namespace NifOsg
 
     private:
         Vec3Interpolator mData;
+        bool mHasValue{ false };
         Nif::NiMaterialColorController::TargetColor mTargetColor{
             Nif::NiMaterialColorController::TargetColor::Ambient
         };

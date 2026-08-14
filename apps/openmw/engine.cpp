@@ -5204,6 +5204,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static float playableSessionActorStartDistance = std::numeric_limits<float>::quiet_NaN();
     static MWWorld::Ptr playableSessionActor;
     static int playableSessionActorCombatSuppressions = 0;
+    static int fnvFirstSmokePhase = 0;
+    static unsigned int fnvFirstSmokePhaseFrame = 0;
+    static osg::Vec3f fnvFirstSmokeMovementStart;
+    static bool fnvFirstSmokeMovementPass = false;
+    static bool fnvFirstSmokeDoorPass = false;
+    static bool fnvFirstSmokeContainerPass = false;
+    static bool fnvFirstSmokeInventoryPass = false;
+    static bool fnvFirstSmokeMapPass = false;
+    static bool fnvFirstSmokeStatusPass = false;
     static int fnvInteractionPhase = 0;
     static unsigned int fnvInteractionPhaseFrame = 0;
     static osg::Timer_t fnvInteractionPhaseStartTime = 0;
@@ -6067,6 +6076,36 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             const unsigned tourPhaseElapsed = frameNumber - proofFalloutTourPhaseFrame;
             const float forward
                 = proofFalloutTourPhase == 6 && tourPhaseElapsed < tourWalkFrames ? 0.65f : 0.f;
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
+            movement.mPosition[0] = 0.f;
+            movement.mPosition[1] = forward;
+            movement.mPosition[2] = 0.f;
+            player.getClass().getCreatureStats(player).setMovementFlag(
+                MWMechanics::CreatureStats::Flag_Run, false);
+            if (mLuaManager != nullptr)
+            {
+                if (MWBase::LuaManager::ActorControls* controls = mLuaManager->getActorControls(player))
+                {
+                    controls->mDisableAI = false;
+                    controls->mMovement = forward;
+                    controls->mSideMovement = 0.f;
+                    controls->mJump = false;
+                    controls->mRun = false;
+                    controls->mSneak = false;
+                    controls->mChanged = true;
+                }
+            }
+        }
+
+        // Feed the first-smoke movement through the ordinary controls before the
+        // mechanics tick consumes them. The late smoke observer only measures
+        // the resulting native player displacement.
+        if (proofEnvEnabled("OPENMW_FNV_FIRST_SMOKE") && fnvFirstSmokePhase == 1 && mWorld != nullptr
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            const unsigned elapsed = frameNumber - fnvFirstSmokePhaseFrame;
+            const float forward = elapsed < 150 ? 0.65f : 0.f;
             const MWWorld::Ptr player = mWorld->getPlayerPtr();
             MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
             movement.mPosition[0] = 0.f;
@@ -12332,6 +12371,250 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
     }
 
+    const bool fnvFirstSmokeRequested = proofEnvEnabled("OPENMW_FNV_FIRST_SMOKE");
+    if (fnvFirstSmokeRequested && fnvFirstSmokePhase >= 0 && proofRunning && proofWorldReady
+        && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+        const auto setPlayerMovement = [&](float forward) {
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
+            movement.mPosition[0] = 0.f;
+            movement.mPosition[1] = forward;
+            movement.mPosition[2] = 0.f;
+            player.getClass().getCreatureStats(player).setMovementFlag(
+                MWMechanics::CreatureStats::Flag_Run, false);
+            if (mLuaManager != nullptr)
+            {
+                if (MWBase::LuaManager::ActorControls* controls = mLuaManager->getActorControls(player))
+                {
+                    controls->mDisableAI = false;
+                    controls->mMovement = forward;
+                    controls->mSideMovement = 0.f;
+                    controls->mJump = false;
+                    controls->mRun = false;
+                    controls->mSneak = false;
+                    controls->mChanged = true;
+                }
+            }
+        };
+        const auto findActiveRef = [&](std::uint32_t rawFormId) {
+            const ESM::FormId formId = ESM::FormId::fromUint32(rawFormId);
+            MWWorld::Ptr found;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                    {
+                        found = ptr;
+                        return false;
+                    }
+                    return true;
+                });
+                if (!found.isEmpty())
+                    break;
+            }
+            return found;
+        };
+        const auto playerCellId = [&]() {
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            if (player.isEmpty() || player.getCell() == nullptr || player.getCell()->getCell() == nullptr)
+                return ESM::RefId();
+            return player.getCell()->getCell()->getId();
+        };
+        const auto capture = [&](std::string_view label) {
+            Log(Debug::Info) << "FNV first smoke: native-capture label=" << label << " frame=" << frameNumber;
+            if (mScreenCaptureHandler != nullptr)
+            {
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+            }
+        };
+        const auto advance = [&](int phase) {
+            fnvFirstSmokePhase = phase;
+            fnvFirstSmokePhaseFrame = frameNumber;
+            Log(Debug::Info) << "FNV first smoke: phase=" << phase << " frame=" << frameNumber;
+        };
+        const auto finish = [&](bool pass, std::string_view reason) {
+            setPlayerMovement(0.f);
+            Log(pass ? Debug::Info : Debug::Error)
+                << "FNV first smoke: result=" << (pass ? "pass" : "fail")
+                << " reason=\"" << reason << "\" movement=" << (fnvFirstSmokeMovementPass ? 1 : 0)
+                << " door=" << (fnvFirstSmokeDoorPass ? 1 : 0)
+                << " container=" << (fnvFirstSmokeContainerPass ? 1 : 0)
+                << " inventory=" << (fnvFirstSmokeInventoryPass ? 1 : 0)
+                << " map=" << (fnvFirstSmokeMapPass ? 1 : 0)
+                << " status=" << (fnvFirstSmokeStatusPass ? 1 : 0)
+                << " cell=" << playerCellId().toDebugString() << " frame=" << frameNumber;
+            fnvFirstSmokePhase = -1;
+            mStateManager->requestQuit();
+        };
+
+        const unsigned int elapsed = frameNumber - fnvFirstSmokePhaseFrame;
+        if (fnvFirstSmokePhase == 0 && proofWorldReadyFrames >= 300)
+        {
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const MWWorld::Ptr door = findActiveRef(0x110636f);
+            if (player.isEmpty() || player.getCell() == nullptr || !player.getCell()->isExterior())
+                finish(false, "loaded session is not ordinary exterior gameplay");
+            else if (door.isEmpty())
+                finish(false, "Prospector Saloon exterior door is not active");
+            else
+            {
+                fnvFirstSmokeMovementStart = player.getRefData().getPosition().asVec3();
+                Log(Debug::Info) << "FNV first smoke: exterior-ready cell=" << playerCellId().toDebugString()
+                                 << " playerPos=(" << fnvFirstSmokeMovementStart.x() << ","
+                                 << fnvFirstSmokeMovementStart.y() << "," << fnvFirstSmokeMovementStart.z()
+                                 << ") doorLocked=" << (door.getCellRef().isLocked() ? 1 : 0)
+                                 << " walkSpeed=" << player.getClass().getWalkSpeed(player)
+                                 << " maxSpeed=" << player.getClass().getMaxSpeed(player)
+                                 << " capacity=" << player.getClass().getCapacity(player)
+                                 << " encumbrance=" << player.getClass().getEncumbrance(player);
+                capture("goodsprings-exterior-before-movement");
+                advance(1);
+            }
+        }
+        else if (fnvFirstSmokePhase == 1)
+        {
+            setPlayerMovement(elapsed < 150 ? 0.65f : 0.f);
+            if (elapsed >= 180)
+            {
+                const osg::Vec3f position = mWorld->getPlayerPtr().getRefData().getPosition().asVec3();
+                const float distance = (position - fnvFirstSmokeMovementStart).length();
+                fnvFirstSmokeMovementPass = distance >= 32.f;
+                Log(fnvFirstSmokeMovementPass ? Debug::Info : Debug::Error)
+                    << "FNV first smoke: exterior-movement distance=" << distance
+                    << " result=" << (fnvFirstSmokeMovementPass ? "pass" : "fail");
+                capture("goodsprings-exterior-after-movement");
+                if (!fnvFirstSmokeMovementPass)
+                    finish(false, "engine-owned ordinary movement did not translate the player");
+                else
+                    advance(2);
+            }
+        }
+        else if (fnvFirstSmokePhase == 2 && elapsed >= 8)
+        {
+            const MWWorld::Ptr door = findActiveRef(0x110636f);
+            const ESM::RefId expectedInterior(ESM::FormId::fromUint32(0x1106185));
+            const bool authoredPair = !door.isEmpty() && door.getClass().isDoor()
+                && door.getCellRef().getTeleport() && door.getCellRef().getDestCell() == expectedInterior;
+            std::unique_ptr<MWWorld::Action> action
+                = authoredPair ? door.getClass().activate(door, mWorld->getPlayerPtr()) : nullptr;
+            fnvFirstSmokeDoorPass = action != nullptr && !action->isNullAction();
+            Log(fnvFirstSmokeDoorPass ? Debug::Info : Debug::Error)
+                << "FNV first smoke: door-activation ref=FormId:0x110636f authoredPair="
+                << (authoredPair ? 1 : 0) << " locked=" << (!door.isEmpty() && door.getCellRef().isLocked() ? 1 : 0)
+                << " actionable=" << (fnvFirstSmokeDoorPass ? 1 : 0);
+            if (!fnvFirstSmokeDoorPass)
+                finish(false, "ordinary Prospector Saloon door activation failed");
+            else
+            {
+                action->execute(mWorld->getPlayerPtr());
+                advance(3);
+            }
+        }
+        else if (fnvFirstSmokePhase == 3)
+        {
+            const ESM::RefId expectedInterior(ESM::FormId::fromUint32(0x1106185));
+            if (playerCellId() == expectedInterior && elapsed >= 180)
+            {
+                capture("prospector-saloon-interior");
+                const MWWorld::Ptr container = findActiveRef(0x110873e);
+                const bool unlocked = !container.isEmpty() && !container.getCellRef().isLocked();
+                std::unique_ptr<MWWorld::Action> action = unlocked
+                    ? container.getClass().activate(container, mWorld->getPlayerPtr())
+                    : nullptr;
+                const bool actionable = action != nullptr && !action->isNullAction();
+                Log(actionable ? Debug::Info : Debug::Error)
+                    << "FNV first smoke: container-activation ref=FormId:0x110873e active="
+                    << (!container.isEmpty() ? 1 : 0) << " unlocked=" << (unlocked ? 1 : 0)
+                    << " actionable=" << (actionable ? 1 : 0);
+                if (!actionable)
+                    finish(false, "unlocked Prospector Saloon container activation failed");
+                else
+                {
+                    action->execute(mWorld->getPlayerPtr());
+                    advance(4);
+                }
+            }
+            else if (elapsed > 900)
+                finish(false, "Prospector Saloon interior did not become active");
+        }
+        else if (fnvFirstSmokePhase == 4 && elapsed >= 30)
+        {
+            fnvFirstSmokeContainerPass = mWindowManager->containsMode(MWGui::GM_Container);
+            Log(fnvFirstSmokeContainerPass ? Debug::Info : Debug::Error)
+                << "FNV first smoke: container-window-open=" << (fnvFirstSmokeContainerPass ? 1 : 0);
+            capture("prospector-saloon-container-open");
+            advance(5);
+        }
+        else if (fnvFirstSmokePhase == 5 && elapsed >= 30)
+        {
+            mWindowManager->removeGuiMode(MWGui::GM_Container);
+            mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+            mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 1);
+            advance(6);
+        }
+        else if (fnvFirstSmokePhase == 6 && elapsed >= 90)
+        {
+            fnvFirstSmokeInventoryPass = mWindowManager->containsMode(MWGui::GM_Inventory);
+            Log(fnvFirstSmokeInventoryPass ? Debug::Info : Debug::Error)
+                << "FNV first smoke: native inventory pane visible=" << (fnvFirstSmokeInventoryPass ? 1 : 0);
+            if (!fnvFirstSmokeInventoryPass)
+                finish(false, "native inventory pane did not render");
+            else
+            {
+                capture("pipboy-inventory-native-save");
+                advance(7);
+            }
+        }
+        else if (fnvFirstSmokePhase == 7 && elapsed >= 5)
+        {
+            mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+            advance(8);
+        }
+        else if (fnvFirstSmokePhase == 8 && elapsed >= 90)
+        {
+            fnvFirstSmokeMapPass = mWindowManager->containsMode(MWGui::GM_Inventory);
+            Log(fnvFirstSmokeMapPass ? Debug::Info : Debug::Error)
+                << "FNV first smoke: native map pane visible=" << (fnvFirstSmokeMapPass ? 1 : 0);
+            if (!fnvFirstSmokeMapPass)
+                finish(false, "native map pane did not render");
+            else
+            {
+                capture("pipboy-map-native-save");
+                advance(9);
+            }
+        }
+        else if (fnvFirstSmokePhase == 9 && elapsed >= 5)
+        {
+            mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 3);
+            advance(10);
+        }
+        else if (fnvFirstSmokePhase == 10 && elapsed >= 90)
+        {
+            fnvFirstSmokeStatusPass = mWindowManager->containsMode(MWGui::GM_Inventory);
+            Log(fnvFirstSmokeStatusPass ? Debug::Info : Debug::Error)
+                << "FNV first smoke: native status pane visible=" << (fnvFirstSmokeStatusPass ? 1 : 0);
+            if (!fnvFirstSmokeStatusPass)
+                finish(false, "native status pane did not render");
+            else
+            {
+                capture("pipboy-status-native-save");
+                advance(11);
+            }
+        }
+        else if (fnvFirstSmokePhase == 11 && elapsed >= 60)
+        {
+            const bool pass = fnvFirstSmokeMovementPass && fnvFirstSmokeDoorPass && fnvFirstSmokeContainerPass
+                && fnvFirstSmokeInventoryPass && fnvFirstSmokeMapPass && fnvFirstSmokeStatusPass;
+            finish(pass, pass ? "visible Goodsprings move-door-container-inventory-map-status smoke complete"
+                              : "one or more first-smoke gates failed");
+        }
+    }
+
     const bool fnvInteractionRequested = proofEnvEnabled("OPENMW_FNV_INTERACTION_AUDIT");
     const bool fnvInteractionDoorOnly = proofEnvEnabled("OPENMW_FNV_INTERACTION_DOOR_ONLY");
     if (fnvInteractionRequested && fnvInteractionPhase >= 0 && proofRunning
@@ -14860,6 +15143,17 @@ void OMW::Engine::prepareEngine()
     }
 
     listener->loadingOn();
+    if (proofEnvEnabled("OPENMW_FNV_FIRST_SMOKE"))
+    {
+        if (mScreenCaptureHandler == nullptr)
+            Log(Debug::Error) << "FNV first smoke: loading-screen native capture handler unavailable";
+        else
+        {
+            mScreenCaptureHandler->setFramesToCapture(1);
+            mScreenCaptureHandler->captureNextFrame(*mViewer);
+            Log(Debug::Info) << "FNV first smoke: queued native loading-screen capture";
+        }
+    }
     {
         using namespace std::chrono_literals;
         while (dataLoading.wait_for(50ms) != std::future_status::ready)

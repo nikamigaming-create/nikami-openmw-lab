@@ -95,6 +95,7 @@ namespace MWGui
         MyGUI::TextBox* mCellNameBox;
         MyGUI::TextBox* mWeaponSpellBox;
         MyGUI::TextBox* mCompassHeading;
+        MyGUI::Widget* mFalloutCompassBar = nullptr;
         MyGUI::Widget* mFalloutVatsOverlay = nullptr;
         MyGUI::TextBox* mFalloutVatsTarget = nullptr;
         MyGUI::TextBox* mFalloutVatsActionPoints = nullptr;

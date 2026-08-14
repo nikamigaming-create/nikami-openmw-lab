@@ -6948,11 +6948,7 @@ namespace NifOsg
             int bsLightingType = -1;
             int bsShaderType = -1;
             bool hasNoLightingShader = false;
-            bool ppLightingUsesDiffuseAlpha = false;
-            bool ppLightingSpecular = false;
-            bool ppLightingRemappableTextures = false;
-            bool ppLightingUsesFalloutSlsPointLights = false;
-            bool hasAlphaTestWithoutBlending = false;
+            bool falloutVertexAlphaOnly = false;
             std::string shaderMaterialName;
             int shaderMaterialType = -1;
 
@@ -7053,13 +7049,7 @@ namespace NifOsg
                         auto shaderprop = static_cast<const Nif::BSShaderPPLightingProperty*>(property);
                         bsShaderType = static_cast<int>(shaderprop->mType);
                         specEnabled = shaderprop->specular();
-                        ppLightingSpecular = ppLightingSpecular || shaderprop->specular();
-                        ppLightingRemappableTextures
-                            = ppLightingRemappableTextures || shaderprop->remappableTextures();
-                        ppLightingUsesFalloutSlsPointLights
-                            = ppLightingUsesFalloutSlsPointLights || shaderprop->falloutSlsPointLighting();
-                        ppLightingUsesDiffuseAlpha = ppLightingUsesDiffuseAlpha || shaderprop->alphaTexture()
-                            || shaderprop->refraction() || shaderprop->fireRefraction();
+                        falloutVertexAlphaOnly = shaderprop->vertexAlpha() && hasVertexColors;
                         break;
                     }
                     case Nif::RC_BSShaderNoLightingProperty:
@@ -7175,6 +7165,16 @@ namespace NifOsg
                 osg::StateSet* stateSet = node->getOrCreateStateSet();
                 stateSet->addUniform(new osg::Uniform("useNoLightingEmission", true));
                 stateSet->addUniform(new osg::Uniform("useNoLightingVertexColor", hasVertexColors));
+            }
+
+            if (falloutVertexAlphaOnly)
+            {
+                // FO3/FNV's SLS vertex-alpha toggle consumes only the vertex
+                // alpha channel. Some authored meshes deliberately store
+                // black RGB alongside their fade alpha (the Goodsprings
+                // hanging saloon sign is one); treating that as ordinary
+                // AMBIENT_AND_DIFFUSE vertex colour turns the surface black.
+                node->getOrCreateStateSet()->addUniform(new osg::Uniform("falloutVertexAlphaOnly", true));
             }
 
             if (bsShaderType == static_cast<int>(Nif::BSShaderType::ShaderType_Skin))
