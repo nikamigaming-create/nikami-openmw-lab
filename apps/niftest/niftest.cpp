@@ -454,16 +454,19 @@ int runFnvAnimationDump(const std::filesystem::path& kfPath, const std::filesyst
     NifOsg::Loader::loadKf(*kfFile, keyframes);
     if (keyframes.mKeyframeControllers.empty())
         throw std::runtime_error("KF contains no transform controllers");
-    float duration = requestedDuration;
-    if (!(duration > 0.f))
+    float duration = requestedDuration > 0.f && std::isfinite(requestedDuration) ? requestedDuration : 0.f;
+    for (const auto& [name, controller] : keyframes.mKeyframeControllers)
     {
-        duration = 0.f;
-        for (const auto& [time, text] : keyframes.mTextKeys)
-        {
-            (void)text;
-            if (std::isfinite(time))
-                duration = std::max(duration, time);
-        }
+        (void)name;
+        const auto function = controller->getFunction();
+        if (function && std::isfinite(function->getMaximum()))
+            duration = std::max(duration, function->getMaximum());
+    }
+    for (const auto& [time, text] : keyframes.mTextKeys)
+    {
+        (void)text;
+        if (std::isfinite(time))
+            duration = std::max(duration, time);
     }
     if (!(duration > 0.f))
         duration = 4.f;

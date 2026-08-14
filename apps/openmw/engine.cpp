@@ -30,6 +30,7 @@
 #include <type_traits>
 #include <typeinfo>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -2255,6 +2256,14 @@ namespace
         osg::Matrixf mSkeleton;
     };
 
+    struct OpenNvAuxiliaryNode
+    {
+        std::string mName;
+        std::string mParentName;
+        osg::Matrixf mLocal;
+        osg::Matrixf mActor;
+    };
+
     class OpenNvSkeletonCandidateVisitor final : public osg::NodeVisitor
     {
     public:
@@ -2416,6 +2425,167 @@ namespace
         std::vector<OpenNvCanonicalBone> mBones;
     };
 
+    // Preserve named transform targets outside the selected skin skeleton.
+    // Retail creature KFs legitimately drive particle emitters, screens,
+    // needles and other static visual helpers through these nodes.
+    class OpenNvAuxiliaryNodeVisitor final : public osg::NodeVisitor
+    {
+    public:
+        OpenNvAuxiliaryNodeVisitor(const osg::NodePath& actorPath, const osg::Matrixd& worldToActor,
+            const std::vector<OpenNvCanonicalBone>& canonicalBones, const SceneUtil::Skeleton* selectedSkeleton)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            , mActorPath(actorPath)
+            , mWorldToActor(worldToActor)
+            , mCanonicalBones(canonicalBones)
+        {
+            setTraversalMask(~0u);
+            setNodeMaskOverride(~0u);
+            for (const OpenNvCanonicalBone& bone : canonicalBones)
+                mCanonicalByName.emplace(Misc::StringUtils::lowerCase(bone.mName), &bone);
+            collectAncestors(selectedSkeleton);
+        }
+
+        void apply(osg::Group& group) override
+        {
+            // The complete selected skeleton is already serialized as bones;
+            // per-surface skeleton copies must not become auxiliary duplicates.
+            if (dynamic_cast<SceneUtil::Skeleton*>(&group) != nullptr)
+                return;
+            traverse(group);
+        }
+
+        void apply(osg::MatrixTransform& transform) override
+        {
+            if (transform.getName().empty())
+            {
+                osg::Matrixf identity;
+                identity.makeIdentity();
+                const bool nonIdentity = !matrixClose(osg::Matrixf(transform.getMatrix()), identity);
+                if (nonIdentity)
+                    ++mNonidentityUnnamedDepth;
+                traverse(transform);
+                if (nonIdentity)
+                    --mNonidentityUnnamedDepth;
+                return;
+            }
+            if (mSkeletonAncestors.contains(&transform))
+                throw std::runtime_error("OpenNV animated auxiliary ancestor of canonical skeleton: "
+                    + transform.getName());
+            if (mNonidentityUnnamedDepth != 0)
+                throw std::runtime_error("OpenNV auxiliary target has a nonidentity unnamed transform parent: "
+                    + transform.getName());
+            const std::string key = Misc::StringUtils::lowerCase(transform.getName());
+            const osg::Matrixf actorMatrix(currentActorMatrix());
+            const auto canonical = mCanonicalByName.find(key);
+            if (canonical != mCanonicalByName.end())
+            {
+                const std::string encounteredParent
+                    = mParentStack.empty() ? std::string{} : mParentStack.back().first;
+                const int parentIndex = canonical->second->mParent;
+                const std::string expectedParent = parentIndex < 0
+                    ? std::string{} : mCanonicalBones[static_cast<std::size_t>(parentIndex)].mName;
+                if (!Misc::StringUtils::ciEqual(encounteredParent, expectedParent))
+                    throw std::runtime_error("OpenNV auxiliary canonical-name parent mismatch: "
+                        + transform.getName());
+                if (!matrixClose(actorMatrix, canonical->second->mSkeleton))
+                    throw std::runtime_error("OpenNV auxiliary canonical-name transform mismatch: "
+                        + transform.getName());
+                mParentStack.emplace_back(canonical->second->mName, canonical->second->mSkeleton);
+                traverse(transform);
+                mParentStack.pop_back();
+                return;
+            }
+            const auto duplicate = mNodeByName.find(key);
+            if (duplicate != mNodeByName.end())
+            {
+                // OSG actor assemblies can contain repeated named variant
+                // branches. Traverse matrix-identical copies so unique named
+                // descendants are not silently lost; reject ambiguous copies.
+                const OpenNvAuxiliaryNode& existing = mNodes[duplicate->second];
+                const std::string proposedParent
+                    = mParentStack.empty() ? std::string{} : mParentStack.back().first;
+                osg::Matrixf proposedLocal = actorMatrix;
+                if (!mParentStack.empty())
+                {
+                    osg::Matrixf parentInverse;
+                    if (!parentInverse.invert(mParentStack.back().second))
+                        throw std::runtime_error("OpenNV duplicate auxiliary parent matrix is singular");
+                    proposedLocal = actorMatrix * parentInverse;
+                }
+                if (!Misc::StringUtils::ciEqual(proposedParent, existing.mParentName)
+                    || !matrixClose(proposedLocal, existing.mLocal)
+                    || !matrixClose(actorMatrix, existing.mActor))
+                    throw std::runtime_error("OpenNV duplicate auxiliary transform mismatch: "
+                        + transform.getName());
+                mParentStack.emplace_back(existing.mName, existing.mActor);
+                traverse(transform);
+                mParentStack.pop_back();
+                return;
+            }
+            OpenNvAuxiliaryNode node;
+            node.mName = transform.getName();
+            node.mParentName = mParentStack.empty() ? std::string{} : mParentStack.back().first;
+            node.mActor = actorMatrix;
+            node.mLocal = actorMatrix;
+            if (!mParentStack.empty())
+            {
+                osg::Matrixf parentInverse;
+                if (!parentInverse.invert(mParentStack.back().second))
+                    throw std::runtime_error("OpenNV auxiliary-node parent matrix is singular");
+                node.mLocal = actorMatrix * parentInverse;
+            }
+            mNodeByName.emplace(key, mNodes.size());
+            mNodes.emplace_back(std::move(node));
+            mParentStack.emplace_back(mNodes.back().mName, mNodes.back().mActor);
+            traverse(transform);
+            mParentStack.pop_back();
+        }
+
+        const std::vector<OpenNvAuxiliaryNode>& getNodes() const { return mNodes; }
+
+    private:
+        static bool matrixClose(const osg::Matrixf& left, const osg::Matrixf& right)
+        {
+            for (int row = 0; row < 4; ++row)
+                for (int column = 0; column < 4; ++column)
+                    if (std::abs(left(row, column) - right(row, column)) > 1e-4f)
+                        return false;
+            return true;
+        }
+
+        void collectAncestors(const osg::Node* node)
+        {
+            if (node == nullptr)
+                return;
+            for (unsigned int index = 0; index < node->getNumParents(); ++index)
+            {
+                const osg::Node* parent = node->getParent(index);
+                if (parent != nullptr && mSkeletonAncestors.emplace(parent).second)
+                    collectAncestors(parent);
+            }
+        }
+
+        osg::Matrixd currentActorMatrix() const
+        {
+            osg::NodePath fullPath = mActorPath;
+            if (!fullPath.empty())
+                fullPath.pop_back();
+            const osg::NodePath& localPath = getNodePath();
+            fullPath.insert(fullPath.end(), localPath.begin(), localPath.end());
+            return osg::computeLocalToWorld(fullPath) * mWorldToActor;
+        }
+
+        osg::NodePath mActorPath;
+        osg::Matrixd mWorldToActor;
+        const std::vector<OpenNvCanonicalBone>& mCanonicalBones;
+        std::unordered_map<std::string, const OpenNvCanonicalBone*> mCanonicalByName;
+        std::unordered_map<std::string, std::size_t> mNodeByName;
+        std::unordered_set<const osg::Node*> mSkeletonAncestors;
+        std::vector<std::pair<std::string, osg::Matrixf>> mParentStack;
+        std::vector<OpenNvAuxiliaryNode> mNodes;
+        unsigned int mNonidentityUnnamedDepth = 0;
+    };
+
     // Lossless, engine-neutral actor skin payload. OBJ remains useful as a
     // diagnostic snapshot, but it cannot carry the bind mesh, bone palette or
     // vertex influences Godot needs for real animation. All scalar values are
@@ -2424,19 +2594,21 @@ namespace
     {
     public:
         OpenNvActorSkeletonVisitor(std::ostream& output, const osg::Matrixd& worldToActor,
-            const osg::NodePath& actorPath, const std::vector<OpenNvCanonicalBone>& canonicalBones)
+            const osg::NodePath& actorPath, const std::vector<OpenNvCanonicalBone>& canonicalBones,
+            const std::vector<OpenNvAuxiliaryNode>& auxiliaryNodes)
             : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
             , mOutput(output)
             , mWorldToActor(worldToActor)
             , mActorPath(actorPath)
             , mCanonicalBones(canonicalBones)
+            , mAuxiliaryNodes(auxiliaryNodes)
         {
             setTraversalMask(~0u);
             setNodeMaskOverride(~0u);
             static_assert(std::endian::native == std::endian::little,
                 "OpenNV actor skeleton export currently requires little-endian storage");
-            mOutput.write("ONVSKEL2", 8);
-            writeValue(std::uint32_t{ 2 });
+            mOutput.write("ONVSKEL3", 8);
+            writeValue(std::uint32_t{ 3 });
             mSurfaceCountOffset = mOutput.tellp();
             writeValue(std::uint32_t{ 0 });
             writeValue(static_cast<std::uint32_t>(mCanonicalBones.size()));
@@ -2446,6 +2618,14 @@ namespace
                 writeValue(static_cast<std::int32_t>(bone.mParent));
                 writeMatrix(bone.mLocal);
                 writeMatrix(bone.mSkeleton);
+            }
+            writeValue(static_cast<std::uint32_t>(mAuxiliaryNodes.size()));
+            for (const OpenNvAuxiliaryNode& node : mAuxiliaryNodes)
+            {
+                writeString(node.mName);
+                writeString(node.mParentName);
+                writeMatrix(node.mLocal);
+                writeMatrix(node.mActor);
             }
         }
 
@@ -2587,13 +2767,27 @@ namespace
                 const auto found = std::find_if(mCanonicalBones.begin(), mCanonicalBones.end(), [&](const auto& bone) {
                     return Misc::StringUtils::lowerCase(bone.mName) == key;
                 });
-                if (found == mCanonicalBones.end())
-                    continue;
-                osg::Matrixf boneInverse;
-                if (!boneInverse.invert(found->mSkeleton))
-                    throw std::runtime_error("OpenNV static attachment bone matrix is singular");
-                geometryTransform *= osg::Matrixd(boneInverse);
-                attachmentBone = found->mName;
+                osg::Matrixf attachmentActor;
+                if (found != mCanonicalBones.end())
+                {
+                    attachmentActor = found->mSkeleton;
+                    attachmentBone = found->mName;
+                }
+                else
+                {
+                    const auto auxiliary = std::find_if(mAuxiliaryNodes.begin(), mAuxiliaryNodes.end(),
+                        [&](const auto& candidate) {
+                            return Misc::StringUtils::lowerCase(candidate.mName) == key;
+                        });
+                    if (auxiliary == mAuxiliaryNodes.end())
+                        continue;
+                    attachmentActor = auxiliary->mActor;
+                    attachmentBone = auxiliary->mName;
+                }
+                osg::Matrixf attachmentInverse;
+                if (!attachmentInverse.invert(attachmentActor))
+                    throw std::runtime_error("OpenNV static attachment transform is singular");
+                geometryTransform *= osg::Matrixd(attachmentInverse);
                 break;
             }
             writeString(drawable.getName());
@@ -2721,6 +2915,7 @@ namespace
         osg::Matrixd mWorldToActor;
         osg::NodePath mActorPath;
         const std::vector<OpenNvCanonicalBone>& mCanonicalBones;
+        const std::vector<OpenNvAuxiliaryNode>& mAuxiliaryNodes;
         std::streampos mSurfaceCountOffset;
         std::size_t mSurfaceCount = 0;
         std::size_t mVertexCount = 0;
@@ -2738,18 +2933,45 @@ namespace
         std::ostringstream stem;
         stem << "actor-" << std::setw(3) << std::setfill('0') << index;
         const std::filesystem::path objPath = directory / (stem.str() + ".obj");
+        const std::filesystem::path mtlPath = directory / (stem.str() + ".mtl");
         const std::filesystem::path skeletonPath = directory / (stem.str() + ".onvskel");
-        if (std::filesystem::exists(objPath) && std::filesystem::exists(skeletonPath))
+        const auto cachedPayloadValid = [&]() {
+            if (!std::filesystem::exists(objPath) || !std::filesystem::exists(mtlPath)
+                || !std::filesystem::exists(skeletonPath) || std::filesystem::file_size(objPath) == 0
+                || std::filesystem::file_size(skeletonPath) < 16)
+                return false;
+            std::ifstream cached(skeletonPath, std::ios::binary);
+            std::array<char, 8> magic{};
+            std::uint32_t version = 0;
+            std::uint32_t surfaces = 0;
+            cached.read(magic.data(), magic.size());
+            cached.read(reinterpret_cast<char*>(&version), sizeof(version));
+            cached.read(reinterpret_cast<char*>(&surfaces), sizeof(surfaces));
+            const std::string_view magicView(magic.data(), magic.size());
+            return cached.good() && surfaces > 0
+                && ((magicView == "ONVSKEL2" && version == 2)
+                    || (magicView == "ONVSKEL3" && version == 3));
+        };
+        if (cachedPayloadValid())
             return true;
-        std::ofstream obj(objPath);
-        std::ofstream mtl(directory / (stem.str() + ".mtl"));
+        std::filesystem::remove(objPath);
+        std::filesystem::remove(mtlPath);
+        std::filesystem::remove(skeletonPath);
+        const std::filesystem::path objTemporary = objPath.string() + ".tmp";
+        const std::filesystem::path mtlTemporary = mtlPath.string() + ".tmp";
+        const std::filesystem::path skeletonTemporary = skeletonPath.string() + ".tmp";
+        std::filesystem::remove(objTemporary);
+        std::filesystem::remove(mtlTemporary);
+        std::filesystem::remove(skeletonTemporary);
+        std::ofstream obj(objTemporary);
+        std::ofstream mtl(mtlTemporary);
         if (!obj || !mtl)
             return false;
         obj << "mtllib " << stem.str() << ".mtl\n";
         const ESM::Position& position = actor.getRefData().getPosition();
         OpenNvActorObjVisitor visitor(obj, mtl, osg::Vec3d(position.pos[0], position.pos[1], position.pos[2]));
         root->accept(visitor);
-        std::ofstream skeleton(skeletonPath, std::ios::binary);
+        std::ofstream skeleton(skeletonTemporary, std::ios::binary);
         osg::NodePath actorPath;
         const osg::NodePathList parentPaths = root->getParentalNodePaths();
         if (!parentPaths.empty())
@@ -2766,10 +2988,25 @@ namespace
         OpenNvCanonicalSkeletonVisitor canonicalVisitor(
             actorPath, worldToActor, skeletonCandidateVisitor.best());
         root->accept(canonicalVisitor);
+        OpenNvAuxiliaryNodeVisitor auxiliaryVisitor(
+            actorPath, worldToActor, canonicalVisitor.getBones(), skeletonCandidateVisitor.best());
+        root->accept(auxiliaryVisitor);
         OpenNvActorSkeletonVisitor skeletonVisitor(
-            skeleton, worldToActor, actorPath, canonicalVisitor.getBones());
+            skeleton, worldToActor, actorPath, canonicalVisitor.getBones(), auxiliaryVisitor.getNodes());
         root->accept(skeletonVisitor);
         skeletonVisitor.finish();
+        obj.flush();
+        mtl.flush();
+        skeleton.flush();
+        if (!obj.good() || !mtl.good() || !skeleton.good() || visitor.getTriangles() == 0
+            || skeletonVisitor.getSurfaceCount() == 0)
+            throw std::runtime_error("OpenNV actor export produced an incomplete payload");
+        obj.close();
+        mtl.close();
+        skeleton.close();
+        std::filesystem::rename(objTemporary, objPath);
+        std::filesystem::rename(mtlTemporary, mtlPath);
+        std::filesystem::rename(skeletonTemporary, skeletonPath);
         Log(visitor.getTriangles() > 0 ? Debug::Info : Debug::Error)
             << "OpenNV actor mesh export: index=" << index << " actor=" << actor.toString()
             << " surfaces=" << visitor.getSurfaces() << " triangles=" << visitor.getTriangles()
@@ -2777,7 +3014,7 @@ namespace
             << " skeletalVertices=" << skeletonVisitor.getVertexCount()
             << " skeletalTriangles=" << skeletonVisitor.getTriangleCount()
             << " skeletalPath=" << skeletonPath.string();
-        return visitor.getTriangles() > 0;
+        return true;
     }
 
     enum class FalloutProofSkinRole : std::size_t
