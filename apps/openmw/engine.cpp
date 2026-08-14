@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 217168)
-Total output lines: 15598
-
 #include "engine.hpp"
 #include "fnvsidecaripc.hpp"
 
@@ -1335,7 +1332,12662 @@ namespace
             frameSamples.push_back(focus + right * frameSide + osg::Vec3f(0.f, 0.f, frameUp));
             frameSamples.push_back(focus - right * frameSide + osg::Vec3f(0.f, 0.f, frameUp));
             for (const osg::Vec3f& sample : frameSamples)
-      …187168 tokens truncated…        }
+                scoreSample(sample, true);
+
+            return score;
+        };
+
+        const auto betterScore = [](const CandidateScore& left, const CandidateScore& right) {
+            if (left.mBlockers != right.mBlockers)
+                return left.mBlockers < right.mBlockers;
+            if (left.mFrameBlockers != right.mFrameBlockers)
+                return left.mFrameBlockers < right.mFrameBlockers;
+            if (left.mNearestFrameBlocker != right.mNearestFrameBlocker)
+                return left.mNearestFrameBlocker > right.mNearestFrameBlocker;
+            return std::abs(left.mAngle) < std::abs(right.mAngle);
+        };
+
+        CandidateScore best;
+        bool haveBest = false;
+        for (float angle : angleOffsets)
+        {
+            const osg::Vec3f candidatePos = focus + rotateOffset(seedOffset, angle);
+            CandidateScore score = scoreCandidate(candidatePos, angle);
+            Log(Debug::Info) << "FNV/ESM4 proof: actor orbit camera candidate target=\""
+                             << (target != nullptr ? target : "") << "\" angle=" << angle << " pos=("
+                             << candidatePos.x() << "," << candidatePos.y() << "," << candidatePos.z()
+                             << ") blockers=" << score.mBlockers
+                             << " frameBlockers=" << score.mFrameBlockers
+                             << " nearestBlocker=" << (score.mNearestBlocker == std::numeric_limits<float>::max()
+                                        ? -1.f
+                                        : score.mNearestBlocker)
+                             << " nearestFrameBlocker="
+                             << (score.mNearestFrameBlocker == std::numeric_limits<float>::max()
+                                        ? -1.f
+                                        : score.mNearestFrameBlocker)
+                             << " closestSampleDistance="
+                             << (score.mClosestSampleDistance == std::numeric_limits<float>::max()
+                                        ? -1.f
+                                        : score.mClosestSampleDistance)
+                             << " blockerBase=" << score.mFirstBlockerBase
+                             << " blockerType=\"" << score.mFirstBlockerType << "\""
+                             << " blockerName=\"" << score.mFirstBlockerName << "\"";
+            if (!haveBest || betterScore(score, best))
+            {
+                best = score;
+                haveBest = true;
+            }
+        }
+
+        const CandidateScore current = scoreCandidate(targetPos, 0.f);
+        if (!haveBest || !betterScore(best, current))
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: actor orbit camera kept target=\""
+                             << (target != nullptr ? target : "") << "\" blockers="
+                             << (haveBest ? best.mBlockers : -1)
+                             << " frameBlockers=" << (haveBest ? best.mFrameBlockers : -1);
+            return false;
+        }
+
+        Log(Debug::Info) << "FNV/ESM4 proof: actor orbit camera selected target=\""
+                         << (target != nullptr ? target : "") << "\" angle=" << best.mAngle << " from=("
+                         << targetPos.x() << "," << targetPos.y() << "," << targetPos.z() << ") to=("
+                         << best.mPos.x() << "," << best.mPos.y() << "," << best.mPos.z()
+                         << ") blockers=" << best.mBlockers << " frameBlockers=" << best.mFrameBlockers;
+        targetPos = best.mPos;
+        return true;
+    }
+
+    void applyWorldViewerStaticCamera(MWRender::Camera* camera, const osg::Vec3d& eye, const osg::Vec3d& target)
+    {
+        camera->setMode(MWRender::Camera::Mode::Static, true);
+        camera->setStaticPosition(eye);
+        const osg::Vec3d delta = target - eye;
+        const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+        camera->setPitch(static_cast<float>(std::atan2(delta.z(), horizontal)), true);
+        camera->setYaw(-static_cast<float>(std::atan2(delta.x(), delta.y())), true);
+        camera->setRoll(0.f);
+        camera->instantTransition();
+        camera->updateCamera();
+    }
+
+    osg::Vec3d resolveWorldViewerOrbitCamera(MWWorld::World& world, const osg::Vec3d& seedEye,
+        const osg::Vec3d& target)
+    {
+        const osg::Vec3d seedDelta = seedEye - target;
+        const float seedRadius
+            = static_cast<float>(std::sqrt(seedDelta.x() * seedDelta.x() + seedDelta.y() * seedDelta.y()));
+        const float radius = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_ORBIT_RADIUS",
+            std::max(seedRadius, readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_DISTANCE", 420.f)));
+        const float height = readProofFloat(
+            "OPENMW_WORLD_VIEWER_START_CAMERA_ORBIT_HEIGHT", static_cast<float>(seedDelta.z()));
+        const int samples = std::max(4, readProofInt("OPENMW_WORLD_VIEWER_START_CAMERA_ORBIT_SAMPLES", 24));
+        const float clearance = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_ORBIT_CLEARANCE", 48.f);
+        const float minHitDistance = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_ORBIT_MIN_HIT_DISTANCE", 96.f);
+        const float minGroundHeight = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_ORBIT_MIN_GROUND_HEIGHT", 96.f);
+        const float rayDistance = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_ORBIT_GROUND_RAY_DISTANCE", 4096.f);
+        const float baseAngle = static_cast<float>(std::atan2(seedDelta.x(), seedDelta.y()));
+        const int groundMask = MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap
+            | MWPhysics::CollisionType_Door | MWPhysics::CollisionType_Water;
+        const MWPhysics::RayCastingInterface* rayCasting = world.getRayCasting();
+
+        osg::Vec3d bestEye = seedEye;
+        float bestScore = -std::numeric_limits<float>::infinity();
+        bool bestClear = false;
+        int bestIndex = -1;
+
+        for (int i = 0; i < samples; ++i)
+        {
+            const float angle = baseAngle + (static_cast<float>(i) * 2.f * static_cast<float>(osg::PI) / samples);
+            osg::Vec3d candidate(target.x() + std::sin(angle) * radius, target.y() + std::cos(angle) * radius,
+                target.z() + height);
+
+            bool groundHit = false;
+            float groundZ = 0.f;
+            if (rayCasting != nullptr)
+            {
+                const osg::Vec3f groundFrom(
+                    static_cast<float>(candidate.x()), static_cast<float>(candidate.y()),
+                    static_cast<float>(candidate.z() + rayDistance * 0.25f));
+                const osg::Vec3f groundTo(groundFrom.x(), groundFrom.y(), groundFrom.z() - rayDistance);
+                const MWPhysics::RayCastingResult groundRay = rayCasting->castRay(groundFrom, groundTo, groundMask);
+                groundHit = groundRay.mHit;
+                if (groundHit)
+                {
+                    groundZ = groundRay.mHitPos.z();
+                    if (candidate.z() < groundZ + minGroundHeight)
+                        candidate.z() = groundZ + minGroundHeight;
+                }
+            }
+
+            const osg::Vec3f from(
+                static_cast<float>(candidate.x()), static_cast<float>(candidate.y()), static_cast<float>(candidate.z()));
+            const osg::Vec3f to(static_cast<float>(target.x()), static_cast<float>(target.y()),
+                static_cast<float>(target.z()));
+            const float totalDistance = (to - from).length();
+            MWPhysics::RayCastingResult renderRay {};
+            world.castRenderingRay(renderRay, from, to, true, false, std::span<const MWWorld::Ptr> {});
+            const float hitDistance = renderRay.mHit ? (renderRay.mHitPos - from).length() : totalDistance;
+            bool actorHit = false;
+            if (renderRay.mHit && !renderRay.mHitObject.isEmpty())
+            {
+                try
+                {
+                    actorHit = renderRay.mHitObject.getClass().isActor();
+                }
+                catch (const std::exception&)
+                {
+                    actorHit = false;
+                }
+            }
+            const bool nearTargetHit = renderRay.mHit && hitDistance >= std::max(0.f, totalDistance - clearance);
+            const bool immediateBlock = renderRay.mHit && hitDistance < minHitDistance;
+            const bool clear = !renderRay.mHit || actorHit || nearTargetHit;
+            float score = hitDistance + (groundHit ? 200.f : 0.f) - (static_cast<float>(i) * 0.01f);
+            if (clear)
+                score += 100000.f;
+            if (actorHit)
+                score += 2000.f;
+            if (immediateBlock)
+                score -= 50000.f;
+
+            Log(Debug::Info) << "World viewer orbit raycast: candidate=" << i << " eye=(" << candidate.x() << ","
+                             << candidate.y() << "," << candidate.z() << ") target=(" << target.x() << ","
+                             << target.y() << "," << target.z() << ") radius=" << radius << " height=" << height
+                             << " groundHit=" << groundHit << " groundZ=" << groundZ << " renderHit="
+                             << renderRay.mHit << " actorHit=" << actorHit << " nearTargetHit=" << nearTargetHit
+                             << " immediateBlock=" << immediateBlock << " hitDistance=" << hitDistance
+                             << " totalDistance=" << totalDistance << " score=" << score << " hitPtr="
+                             << (renderRay.mHitObject.isEmpty() ? std::string("<none>")
+                                                                : renderRay.mHitObject.toString());
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestEye = candidate;
+                bestClear = clear;
+                bestIndex = i;
+            }
+        }
+
+        Log(Debug::Info) << "World viewer orbit raycast: selected candidate=" << bestIndex << " eye=(" << bestEye.x()
+                         << "," << bestEye.y() << "," << bestEye.z() << ") target=(" << target.x() << ","
+                         << target.y() << "," << target.z() << ") clear=" << bestClear << " score=" << bestScore;
+        return bestEye;
+    }
+
+    bool resolveFalloutProofHeadPose(const MWWorld::Ptr& actor, osg::Vec3d& center, osg::Vec3d& forward);
+
+    bool enforceWorldViewerStaticCamera(MWWorld::World& world, unsigned frameNumber)
+    {
+        if (!worldViewerStaticCameraRequested())
+            return false;
+
+        MWRender::Camera* camera = world.getCamera();
+        const MWWorld::Ptr player = world.getPlayerPtr();
+        if (camera == nullptr || player.isEmpty())
+            return false;
+
+        const ESM::Position& position = player.getRefData().getPosition();
+        const osg::Vec3d fallbackTarget(position.pos[0], position.pos[1], position.pos[2] + 128.f);
+        osg::Vec3d target(
+            readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_TARGET_X", static_cast<float>(fallbackTarget.x())),
+            readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_TARGET_Y", static_cast<float>(fallbackTarget.y())),
+            readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_TARGET_Z", static_cast<float>(fallbackTarget.z())));
+        osg::Vec3d eye(
+            readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_POS_X", position.pos[0] + 2048.f),
+            readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_POS_Y", position.pos[1] - 4096.f),
+            readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_POS_Z", position.pos[2] + 2048.f));
+
+        bool headFollowResolved = false;
+        std::string headFollowActor;
+        osg::Vec3d headFollowCenter;
+        osg::Vec3d headFollowForward;
+        float headFollowFocus = 0.f;
+        float headFollowDistance = 0.f;
+
+        const char* followRefText = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_REF");
+        if (followRefText != nullptr && *followRefText != '\0')
+        {
+            ESM::RefId followRef = ESM::RefId::deserializeText(followRefText);
+            if (followRef.empty())
+                followRef = ESM::RefId::stringRefId(followRefText);
+
+            MWWorld::Ptr followed;
+            if (const ESM::FormId* formId = followRef.getIf<ESM::FormId>())
+                followed = MWBase::Environment::get().getWorldModel()->getPtr(*formId);
+            if (followed.isEmpty())
+                followed = world.searchPtr(followRef, true);
+            if (!followed.isEmpty())
+            {
+                const ESM::Position& followedPosition = followed.getRefData().getPosition();
+                eye.set(followedPosition.pos[0]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_EYE_X", 0.f),
+                    followedPosition.pos[1]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_EYE_Y", -180.f),
+                    followedPosition.pos[2]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_EYE_Z", 115.f));
+                target.set(followedPosition.pos[0]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_TARGET_X", 0.f),
+                    followedPosition.pos[1]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_TARGET_Y", 0.f),
+                    followedPosition.pos[2]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_TARGET_Z", 78.f));
+
+                if (std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEADING") != nullptr)
+                {
+                    const float distance
+                        = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEADING_DISTANCE", 180.f);
+                    const float heading = followedPosition.rot[2];
+                    eye.x() = followedPosition.pos[0] + std::sin(heading) * distance;
+                    eye.y() = followedPosition.pos[1] + std::cos(heading) * distance;
+                }
+
+                if (std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD") != nullptr)
+                {
+                    osg::Vec3d headCenter;
+                    osg::Vec3d headForward;
+                    if (resolveFalloutProofHeadPose(followed, headCenter, headForward))
+                    {
+                        const float focus
+                            = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_FOCUS", 4.f);
+                        const float distance
+                            = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_DISTANCE", 86.f);
+                        target = headCenter + headForward * focus;
+                        osg::Vec3d cameraDirection = headForward;
+                        if (std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_ORBIT_DEG") != nullptr)
+                        {
+                            const double radians
+                                = osg::DegreesToRadians(readProofFloat(
+                                    "OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_ORBIT_DEG", 0.f));
+                            const double c = std::cos(radians);
+                            const double s = std::sin(radians);
+                            cameraDirection.set(
+                                headForward.x() * c - headForward.y() * s,
+                                headForward.x() * s + headForward.y() * c,
+                                headForward.z());
+                            const double planarLength = std::sqrt(cameraDirection.x() * cameraDirection.x()
+                                + cameraDirection.y() * cameraDirection.y());
+                            if (planarLength > 1e-6)
+                            {
+                                const double originalPlanarLength
+                                    = std::sqrt(headForward.x() * headForward.x() + headForward.y() * headForward.y());
+                                cameraDirection.x() *= originalPlanarLength / planarLength;
+                                cameraDirection.y() *= originalPlanarLength / planarLength;
+                            }
+                        }
+                        eye = target + cameraDirection * distance;
+                        eye.z() += readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_EYE_Z", 0.f);
+                        headFollowResolved = true;
+                        headFollowActor = followRefText;
+                        headFollowCenter = headCenter;
+                        headFollowForward = headForward;
+                        headFollowFocus = focus;
+                        headFollowDistance = distance;
+                    }
+                }
+            }
+        }
+
+        static const std::vector<WorldViewerCameraKeyframe> cameraSequence = getWorldViewerCameraSequence();
+        static int loggedCameraSequenceIndex = -2;
+        int cameraSequenceIndex = -1;
+        for (std::size_t i = 0; i < cameraSequence.size(); ++i)
+        {
+            if (frameNumber >= static_cast<unsigned>(cameraSequence[i].mFrame))
+                cameraSequenceIndex = static_cast<int>(i);
+        }
+        if (cameraSequenceIndex >= 0)
+        {
+            const WorldViewerCameraKeyframe& keyframe = cameraSequence[static_cast<std::size_t>(cameraSequenceIndex)];
+            eye = keyframe.mEye;
+            target = keyframe.mTarget;
+            if (loggedCameraSequenceIndex != cameraSequenceIndex)
+            {
+                loggedCameraSequenceIndex = cameraSequenceIndex;
+                Log(Debug::Info) << "World viewer: applying camera sequence index=" << cameraSequenceIndex
+                                 << " frame=" << frameNumber << " eye=(" << eye.x() << "," << eye.y() << ","
+                                 << eye.z() << ") target=(" << target.x() << "," << target.y() << ","
+                                 << target.z() << ")";
+            }
+        }
+        static bool orbitSolved = false;
+        static osg::Vec3d orbitEye;
+        static osg::Vec3d orbitTarget;
+        osg::Vec3d resolvedEye = eye;
+        if (cameraSequenceIndex < 0 && worldViewerOrbitRaycastRequested())
+        {
+            if (!orbitSolved || (orbitTarget - target).length() > 1.f)
+            {
+                orbitEye = resolveWorldViewerOrbitCamera(world, eye, target);
+                orbitTarget = target;
+                orbitSolved = true;
+            }
+            resolvedEye = orbitEye;
+        }
+
+        applyWorldViewerStaticCamera(camera, resolvedEye, target);
+
+        if (headFollowResolved && frameNumber % 30 == 0)
+        {
+            const osg::Vec3d expectedTarget = headFollowCenter + headFollowForward * headFollowFocus;
+            const float targetError = static_cast<float>((target - expectedTarget).length());
+            const float eyeDistance = static_cast<float>((resolvedEye - target).length());
+            const bool framingPass = cameraSequenceIndex < 0 && targetError <= 0.01f
+                && std::abs(eyeDistance - headFollowDistance) <= 0.01f;
+            Log(Debug::Info) << "World viewer actor framing: frame=" << frameNumber << " actor=\""
+                             << headFollowActor << "\" head=(" << headFollowCenter.x() << ","
+                             << headFollowCenter.y() << "," << headFollowCenter.z() << ") forward=("
+                             << headFollowForward.x() << "," << headFollowForward.y() << ","
+                             << headFollowForward.z() << ") eye=(" << resolvedEye.x() << ","
+                             << resolvedEye.y() << "," << resolvedEye.z() << ") target=(" << target.x() << ","
+                             << target.y() << "," << target.z() << ") targetError=" << targetError
+                             << " eyeDistance=" << eyeDistance << " requestedDistance=" << headFollowDistance
+                             << " status=" << (framingPass ? "pass" : "fail");
+        }
+
+        static bool logged = false;
+        if (!logged)
+        {
+            logged = true;
+            Log(Debug::Info) << "World viewer: enforcing static survey camera eye=(" << resolvedEye.x() << ","
+                             << resolvedEye.y() << "," << resolvedEye.z() << ") target=(" << target.x() << ","
+                             << target.y() << ","
+                             << target.z() << ") pitch=" << camera->getPitch() << " yaw=" << camera->getYaw();
+        }
+        return true;
+    }
+
+    bool settleWorldViewerNonStaticStartCamera(MWWorld::World& world)
+    {
+        if (!worldViewerNonStaticStartCameraRequested())
+            return false;
+
+        MWRender::Camera* camera = world.getCamera();
+        MWWorld::Ptr player = world.getPlayerPtr();
+        if (camera == nullptr || player.isEmpty())
+            return false;
+
+        const char* cameraMode = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_MODE");
+        const bool thirdPerson = cameraMode != nullptr && std::string(cameraMode) == "thirdperson";
+        ESM::Position position = player.getRefData().getPosition();
+        const float cameraDistance = readProofFloat(
+            "OPENMW_WORLD_VIEWER_START_CAMERA_DISTANCE", thirdPerson ? 192.f : 0.f);
+        const float cameraPitch = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_PITCH", -position.rot[0]);
+        const float cameraYaw = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_YAW", -position.rot[2]);
+
+        const char* cameraPitchEnv = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_PITCH");
+        const char* cameraYawEnv = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_YAW");
+        const bool explicitFirstPersonAngles = !thirdPerson
+            && ((cameraPitchEnv != nullptr && *cameraPitchEnv != '\0')
+                || (cameraYawEnv != nullptr && *cameraYawEnv != '\0'));
+        if (explicitFirstPersonAngles)
+        {
+            world.rotateObject(player, osg::Vec3f(-cameraPitch, position.rot[1], -cameraYaw));
+            position = player.getRefData().getPosition();
+        }
+
+        const float cameraNudgeDistance = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_NUDGE_DISTANCE",
+            readProofFloat("OPENMW_FNV_PROOF_CAMERA_NUDGE_DISTANCE", 128.f));
+
+        camera->attachTo(player);
+        if (cameraNudgeDistance > 0.f)
+        {
+            camera->setMode(MWRender::Camera::Mode::ThirdPerson, true);
+            camera->setPreferredCameraDistance(cameraNudgeDistance);
+            camera->processViewChange();
+            camera->update(0.f, false);
+            camera->instantTransition();
+        }
+        camera->setMode(thirdPerson ? MWRender::Camera::Mode::ThirdPerson : MWRender::Camera::Mode::FirstPerson, true);
+        camera->setPreferredCameraDistance(cameraDistance);
+        camera->processViewChange();
+        camera->update(0.f, false);
+        camera->instantTransition();
+        camera->setPitch(cameraPitch, true);
+        camera->setYaw(cameraYaw, true);
+        camera->setRoll(0.f);
+        camera->update(0.f, false);
+        camera->instantTransition();
+        camera->updateCamera();
+
+        const osg::Vec3d cameraPos = camera->getPosition();
+        Log(Debug::Info) << "World viewer: settled delayed non-static start camera mode="
+                         << (thirdPerson ? "thirdperson" : "firstperson") << " playerPos=(" << position.pos[0]
+                         << "," << position.pos[1] << "," << position.pos[2] << ") playerRot=("
+                         << position.rot[0] << "," << position.rot[1] << "," << position.rot[2]
+                         << ") cameraPos=(" << cameraPos.x() << "," << cameraPos.y() << "," << cameraPos.z()
+                         << ") pitch=" << camera->getPitch() << " yaw=" << camera->getYaw()
+                         << " distance=" << cameraDistance;
+        return true;
+    }
+
+    void enforceWorldViewerDryStart(MWWorld::World& world)
+    {
+        const char* value = std::getenv("OPENMW_WORLD_VIEWER_START_DRY");
+        if (value == nullptr || *value == '\0' || std::string(value) == "0")
+            return;
+
+        world.setWaterHeight(-200000.f);
+
+        static bool logged = false;
+        if (!logged)
+        {
+            logged = true;
+            Log(Debug::Info) << "World viewer: enforcing dry proof water height";
+        }
+    }
+
+    bool hasFalloutNvContent(const std::vector<std::string>& contentFiles)
+    {
+        for (std::string file : contentFiles)
+        {
+            std::transform(file.begin(), file.end(), file.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            constexpr std::string_view falloutNv = "falloutnv.esm";
+            if (file.size() >= falloutNv.size()
+                && file.compare(file.size() - falloutNv.size(), falloutNv.size(), falloutNv) == 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    bool isFalloutProofFaceNodeName(std::string_view lowerName)
+    {
+        if (lowerName.find("starfield generated face ") != std::string_view::npos)
+            return true;
+        if (lowerName.find("fnv part ") == std::string_view::npos)
+            return false;
+
+        return lowerName.find("characters/head/head") != std::string_view::npos
+            || lowerName.find("characters/head/mouth") != std::string_view::npos
+            || lowerName.find("characters/head/teeth") != std::string_view::npos
+            || lowerName.find("characters/head/tongue") != std::string_view::npos
+            || lowerName.find("characters/head/eye") != std::string_view::npos
+            || lowerName.find("characters/hair/beard") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/male/malehead") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/female/femalehead") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/male/lefteye") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/male/righteye") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/female/lefteye") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/female/righteye") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/male/eyebrow") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/female/eyebrow") != std::string_view::npos
+            || lowerName.find("actors/human/mesh/beards") != std::string_view::npos
+            || lowerName.find("actors/human/mesh/hairs") != std::string_view::npos;
+    }
+
+    bool isFalloutProofFaceHeadNodeName(std::string_view lowerName)
+    {
+        return lowerName.find("starfield generated face ") != std::string_view::npos
+            || (lowerName.find("fnv part ") != std::string_view::npos
+            && (lowerName.find("characters/head/head") != std::string_view::npos
+                || lowerName.find("actors/human/characterassets/male/malehead") != std::string_view::npos
+                || lowerName.find("actors/human/characterassets/female/femalehead") != std::string_view::npos));
+    }
+
+    bool isFalloutProofFaceFeatureNodeName(std::string_view lowerName)
+    {
+        if (lowerName.find("fnv part ") == std::string_view::npos)
+            return false;
+
+        return lowerName.find("characters/head/mouth") != std::string_view::npos
+            || lowerName.find("characters/head/teeth") != std::string_view::npos
+            || lowerName.find("characters/head/tongue") != std::string_view::npos
+            || lowerName.find("characters/head/eye") != std::string_view::npos
+            || lowerName.find("characters/hair/beard") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/male/lefteye") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/male/righteye") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/female/lefteye") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/female/righteye") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/male/eyebrow") != std::string_view::npos
+            || lowerName.find("actors/human/characterassets/female/eyebrow") != std::string_view::npos
+            || lowerName.find("actors/human/mesh/beards") != std::string_view::npos;
+    }
+
+    class FalloutProofFaceBoundsVisitor : public osg::NodeVisitor
+    {
+    public:
+        FalloutProofFaceBoundsVisitor()
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+        {
+            setTraversalMask(~(MWRender::Mask_ParticleSystem | MWRender::Mask_Effect));
+        }
+
+        void apply(osg::Node& node) override
+        {
+            const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
+            std::string_view semanticName(lowerName);
+            const bool bip01Semantic = semanticName.rfind("bip01 ", 0) == 0;
+            if (bip01Semantic)
+                semanticName.remove_prefix(6);
+            const bool explicitCreatureSemantic = bip01Semantic
+                || semanticName == "head" || semanticName.rfind("head ", 0) == 0
+                || semanticName.rfind("righead", 0) == 0 || semanticName.rfind("neck", 0) == 0
+                || semanticName.rfind("rigneck", 0) == 0 || semanticName.rfind("pelvis", 0) == 0
+                || semanticName.rfind("rigpelvis", 0) == 0 || semanticName.rfind("gaster", 0) == 0
+                || semanticName.rfind("abdomen", 0) == 0 || semanticName == "root"
+                || semanticName.rfind("torso", 0) == 0 || semanticName.rfind("rigtorso", 0) == 0
+                || semanticName.rfind("spine", 0) == 0 || semanticName.rfind("rigspine", 0) == 0
+                || semanticName == "tail" || semanticName.rfind("rigtail01", 0) == 0;
+            if (explicitCreatureSemantic)
+            {
+                // Fallout creature rigs do not share the humanoid Bip01 Head convention.  For example,
+                // ravens use RigHead/RigTail, mantises use Head/Gaster, and radscorpions expose Neck1/Pelvis.
+                // Preserve those authored semantic anchors so the proof camera can derive the creature's
+                // longitudinal axis instead of assuming that actor yaw is also the mesh's front axis.
+                const osg::Vec3d center = osg::computeLocalToWorld(getNodePath()).getTrans();
+                const SemanticAnchor anchor{ node.getName(), center };
+                if (semanticName.find("head") != std::string_view::npos
+                    && semanticName.find("brain") == std::string_view::npos
+                    && semanticName.find("nub") == std::string_view::npos)
+                    mCreatureFrontAnchors.push_back(anchor);
+                else if (semanticName.find("neck") != std::string_view::npos)
+                    mCreatureNeckAnchors.push_back(anchor);
+
+                if (semanticName.rfind("pelvis", 0) == 0 || semanticName.rfind("rigpelvis", 0) == 0
+                    || semanticName.rfind("gaster", 0) == 0 || semanticName.rfind("abdomen", 0) == 0
+                    || semanticName == "root" || semanticName.rfind("torso", 0) == 0
+                    || semanticName.rfind("rigtorso", 0) == 0 || semanticName.rfind("spine", 0) == 0
+                    || semanticName.rfind("rigspine", 0) == 0 || semanticName == "tail"
+                    || semanticName.rfind("rigtail01", 0) == 0)
+                    mCreatureRearAnchors.push_back(anchor);
+            }
+            if (lowerName.rfind("screen01", 0) == 0
+                || lowerName.rfind("screenreflection01", 0) == 0)
+            {
+                const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
+                osg::Vec3d screenForward
+                    = osg::Matrixd::transform3x3(osg::Vec3d(0.0, 1.0, 0.0), localToWorld);
+                if (screenForward.normalize() > 1e-6)
+                    mScreenForward += screenForward;
+
+                osg::Vec3d screenCenter = localToWorld.getTrans();
+                const osg::BoundingSphere bound = node.getBound();
+                if (bound.valid())
+                {
+                    osg::NodePath parentPath = getNodePath();
+                    if (!parentPath.empty())
+                        parentPath.pop_back();
+                    screenCenter = bound.center() * osg::computeLocalToWorld(parentPath);
+                }
+                mScreenCenter += screenCenter;
+                ++mScreenMatched;
+            }
+            if (lowerName == "bip01 head" || lowerName == "bip01 head_nub")
+            {
+                const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
+                osg::Vec3d forward
+                    = osg::Matrixd::transform3x3(osg::Vec3d(0.0, 1.0, 0.0), localToWorld);
+                forward.normalize();
+                if (lowerName == "bip01 head")
+                {
+                    mHeadBoneCenter += localToWorld.getTrans();
+                    if (forward.length2() > 1e-12)
+                        mHeadForward += forward;
+                    ++mHeadBoneMatched;
+                }
+                else
+                {
+                    // The retail oracle records Bip01 Head, not its child Head_Nub.
+                    // Keep the nub only as a fallback; averaging both shifted the
+                    // reported Easy Pete head by four world units and polluted the
+                    // orientation gate even when the rendered head was unchanged.
+                    mHeadFallbackCenter += localToWorld.getTrans();
+                    if (forward.length2() > 1e-12)
+                        mHeadFallbackForward += forward;
+                    ++mHeadFallbackMatched;
+                }
+            }
+
+            if (isFalloutProofFaceNodeName(lowerName))
+            {
+                const osg::BoundingSphere bound = node.getBound();
+                if (bound.valid())
+                {
+                    osg::NodePath parentPath = getNodePath();
+                    if (!parentPath.empty())
+                        parentPath.pop_back();
+                    const osg::Matrixd parentToWorld = osg::computeLocalToWorld(parentPath);
+                    const osg::Vec3d center = bound.center() * parentToWorld;
+                    const double radius = bound.radius();
+                    mBounds.expandBy(osg::Vec3d(center.x() - radius, center.y() - radius, center.z() - radius));
+                    mBounds.expandBy(osg::Vec3d(center.x() + radius, center.y() + radius, center.z() + radius));
+                    ++mMatched;
+
+                    if (isFalloutProofFaceHeadNodeName(lowerName))
+                    {
+                        mHeadCenter += center;
+                        ++mHeadMatched;
+                    }
+                    else if (isFalloutProofFaceFeatureNodeName(lowerName))
+                    {
+                        mFeatureCenter += center;
+                        ++mFeatureMatched;
+                    }
+                }
+            }
+
+            traverse(node);
+        }
+
+        const osg::BoundingBox& getBounds() const { return mBounds; }
+        unsigned int getMatched() const { return mMatched; }
+        unsigned int getHeadMatched() const { return mHeadMatched + mHeadBoneMatched; }
+        unsigned int getHeadBoneMatched() const { return mHeadBoneMatched + mHeadFallbackMatched; }
+        unsigned int getFeatureMatched() const { return mFeatureMatched; }
+        unsigned int getScreenMatched() const { return mScreenMatched; }
+        osg::Vec3d getScreenCenter() const
+        {
+            return mScreenMatched > 0 ? mScreenCenter / static_cast<double>(mScreenMatched) : osg::Vec3d();
+        }
+        osg::Vec3d getScreenForward(const osg::Vec3d& actorOrigin) const
+        {
+            if (mScreenMatched == 0)
+                return osg::Vec3d();
+
+            // A screen normal has two possible signs, and NIFs do not use one universal local winding/axis
+            // convention for every actor add-on. Pick the authored normal's outward hemisphere from geometry:
+            // the screen center must lie away from the actor origin in the same direction as the portrait camera.
+            // This also remains correct when coordinate conversion changes handedness or an add-on is mirrored.
+            osg::Vec3d radial = getScreenCenter() - actorOrigin;
+            radial.z() = 0.0;
+            const bool hasRadial = radial.normalize() > 1e-6;
+
+            osg::Vec3d forward = mScreenForward;
+            forward.z() = 0.0;
+            if (forward.normalize() <= 1e-6)
+                return hasRadial ? radial : osg::Vec3d();
+            if (hasRadial && forward * radial < 0.0)
+                forward = -forward;
+            return forward;
+        }
+        osg::Vec3d getHeadCenter() const
+        {
+            if (mHeadBoneMatched > 0)
+                return mHeadBoneCenter / static_cast<double>(mHeadBoneMatched);
+            if (mHeadFallbackMatched > 0)
+                return mHeadFallbackCenter / static_cast<double>(mHeadFallbackMatched);
+            return mHeadMatched > 0 ? mHeadCenter / static_cast<double>(mHeadMatched) : osg::Vec3d();
+        }
+        osg::Vec3d getHeadForward() const
+        {
+            osg::Vec3d forward = mHeadBoneMatched > 0 ? mHeadForward : mHeadFallbackForward;
+            if (forward.normalize() <= 1e-6)
+                return osg::Vec3d();
+            return forward;
+        }
+        osg::Vec3d getFeatureCenter() const
+        {
+            return mFeatureMatched > 0 ? mFeatureCenter / static_cast<double>(mFeatureMatched) : osg::Vec3d();
+        }
+        bool getCreatureAxis(
+            osg::Vec3d& center, osg::Vec3d& forward, std::string& frontName, std::string& rearName) const
+        {
+            const std::vector<SemanticAnchor>& frontAnchors
+                = !mCreatureFrontAnchors.empty() ? mCreatureFrontAnchors : mCreatureNeckAnchors;
+            if (frontAnchors.empty() || mCreatureRearAnchors.empty())
+                return false;
+
+            // Prefer the semantic pair with the greatest planar separation.  This picks Head/Gaster for
+            // insects and RigHead/RigTail for birds, while a curled scorpion tail naturally loses to
+            // Neck/Pelvis.  Requiring a real planar baseline rejects vertical head/pelvis pairs that do not
+            // encode which way a standing creature faces.
+            const SemanticAnchor* bestFront = nullptr;
+            const SemanticAnchor* bestRear = nullptr;
+            double bestPlanarLength2 = 1.0;
+            for (const SemanticAnchor& candidateFront : frontAnchors)
+            {
+                for (const SemanticAnchor& candidateRear : mCreatureRearAnchors)
+                {
+                    const double dx = candidateFront.mCenter.x() - candidateRear.mCenter.x();
+                    const double dy = candidateFront.mCenter.y() - candidateRear.mCenter.y();
+                    const double planarLength2 = dx * dx + dy * dy;
+                    if (planarLength2 > bestPlanarLength2)
+                    {
+                        bestPlanarLength2 = planarLength2;
+                        bestFront = &candidateFront;
+                        bestRear = &candidateRear;
+                    }
+                }
+            }
+            if (bestFront == nullptr || bestRear == nullptr)
+                return false;
+
+            center = bestFront->mCenter;
+            forward = bestFront->mCenter - bestRear->mCenter;
+            forward.z() = 0.0;
+            if (forward.normalize() <= 1e-6)
+                return false;
+            frontName = bestFront->mName;
+            rearName = bestRear->mName;
+            return true;
+        }
+
+    private:
+        struct SemanticAnchor
+        {
+            std::string mName;
+            osg::Vec3d mCenter;
+        };
+
+        osg::BoundingBox mBounds;
+        osg::Vec3d mScreenCenter;
+        osg::Vec3d mScreenForward;
+        osg::Vec3d mHeadBoneCenter;
+        osg::Vec3d mHeadForward;
+        osg::Vec3d mHeadFallbackCenter;
+        osg::Vec3d mHeadFallbackForward;
+        osg::Vec3d mHeadCenter;
+        osg::Vec3d mFeatureCenter;
+        unsigned int mMatched = 0;
+        unsigned int mScreenMatched = 0;
+        unsigned int mHeadBoneMatched = 0;
+        unsigned int mHeadFallbackMatched = 0;
+        unsigned int mHeadMatched = 0;
+        unsigned int mFeatureMatched = 0;
+        std::vector<SemanticAnchor> mCreatureFrontAnchors;
+        std::vector<SemanticAnchor> mCreatureNeckAnchors;
+        std::vector<SemanticAnchor> mCreatureRearAnchors;
+    };
+
+    class FalloutProofDrawableCullVisitor final : public osg::NodeVisitor
+    {
+    public:
+        explicit FalloutProofDrawableCullVisitor(unsigned int minimumCullTraversal)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            , mMinimumCullTraversal(minimumCullTraversal)
+        {
+            setNodeMaskOverride(~0u);
+            setTraversalMask(~0u);
+        }
+
+        void apply(osg::Drawable& drawable) override
+        {
+            bool visiblePath = drawable.getNodeMask() != 0;
+            for (osg::Node* node : getNodePath())
+            {
+                if (node != nullptr && node->getNodeMask() == 0)
+                {
+                    visiblePath = false;
+                    break;
+                }
+            }
+            if (!visiblePath)
+                return;
+
+            ++mVisibleDrawables;
+            auto* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable);
+            if (rig == nullptr)
+                return;
+
+            ++mVisibleRigs;
+            if (rig->hasResolvedParentSkeleton())
+                ++mResolvedRigs;
+            const unsigned int traversal = rig->getLastCullTraversalNumber();
+            mMaximumCullTraversal = std::max(mMaximumCullTraversal, traversal);
+            if (traversal >= mMinimumCullTraversal)
+                ++mCullReadyRigs;
+        }
+
+        unsigned int mVisibleDrawables = 0;
+        unsigned int mVisibleRigs = 0;
+        unsigned int mResolvedRigs = 0;
+        unsigned int mCullReadyRigs = 0;
+        unsigned int mMaximumCullTraversal = 0;
+
+    private:
+        unsigned int mMinimumCullTraversal = 0;
+    };
+
+    class OpenNvActorSkeletonVisitor final : public osg::NodeVisitor
+    {
+    public:
+        OpenNvActorSkeletonVisitor(std::ostream& output, const osg::Matrixd& worldToActor)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ACTIVE_CHILDREN)
+            , mOutput(output)
+            , mWorldToActor(worldToActor)
+        {
+            setTraversalMask(~0u);
+            static_assert(std::endian::native == std::endian::little,
+                "OpenNV actor skeleton export currently requires little-endian storage");
+            mOutput.write("ONVSKEL1", 8);
+            writeValue(std::uint32_t{ 1 });
+            mSurfaceCountOffset = mOutput.tellp();
+            writeValue(std::uint32_t{ 0 });
+        }
+
+        void apply(osg::Drawable& drawable) override
+        {
+            if (drawable.getNodeMask() == 0)
+                return;
+            for (const osg::Node* node : getNodePath())
+                if (node != nullptr && node->getNodeMask() == 0)
+                    return;
+            auto* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable);
+            if (rig == nullptr)
+            {
+                if (osg::Geometry* geometry = drawable.asGeometry())
+                    writeStaticSurface(drawable, *geometry);
+                return;
+            }
+            osg::Geometry* source = rig->getSourceGeometry();
+            const auto* vertices = source == nullptr ? nullptr
+                : dynamic_cast<const osg::Vec3Array*>(source->getVertexArray());
+            if (source == nullptr || vertices == nullptr || vertices->empty())
+                return;
+
+            std::vector<SceneUtil::RigGeometry::BoneInfo> bones;
+            std::vector<SceneUtil::RigGeometry::BoneWeights> influences;
+            std::vector<osg::Matrixf> localBoneMatrices;
+            std::vector<osg::Matrixf> skeletonBoneMatrices;
+            osg::Matrixf transform;
+            osg::Matrixf skinToSkeleton;
+            if (!rig->getSkinningDebugData(bones, influences, localBoneMatrices,
+                    skeletonBoneMatrices, transform, skinToSkeleton))
+                return;
+            if (influences.size() != vertices->size() || bones.empty())
+                return;
+            std::vector<int> parentBoneIndices;
+            if (!rig->getBoneParentIndices(parentBoneIndices) || parentBoneIndices.size() != bones.size())
+                return;
+
+            std::vector<std::uint32_t> indices;
+            appendTriangleIndices(*source, indices);
+            if (indices.empty())
+                return;
+
+            writeString(drawable.getName());
+            writeString(std::string(rig->getRootBone()));
+            writeString(texturePath(drawable, *source));
+            writeValue(static_cast<std::uint32_t>(vertices->size()));
+            writeValue(static_cast<std::uint32_t>(indices.size()));
+            writeValue(static_cast<std::uint32_t>(bones.size()));
+            writeMatrix(transform);
+            writeMatrix(skinToSkeleton);
+
+            const auto* normals = dynamic_cast<const osg::Vec3Array*>(source->getNormalArray());
+            const auto* texcoords = dynamic_cast<const osg::Vec2Array*>(source->getTexCoordArray(0));
+            for (std::size_t i = 0; i < vertices->size(); ++i)
+            {
+                const osg::Vec3f& vertex = (*vertices)[i];
+                const osg::Vec3f normal
+                    = normals != nullptr && i < normals->size() ? (*normals)[i] : osg::Vec3f(0.f, 0.f, 1.f);
+                const osg::Vec2f uv
+                    = texcoords != nullptr && i < texcoords->size() ? (*texcoords)[i] : osg::Vec2f();
+                writeValue(vertex.x());
+                writeValue(vertex.y());
+                writeValue(vertex.z());
+                writeValue(normal.x());
+                writeValue(normal.y());
+                writeValue(normal.z());
+                writeValue(uv.x());
+                writeValue(uv.y());
+            }
+            for (std::uint32_t index : indices)
+                writeValue(index);
+
+            for (std::size_t i = 0; i < bones.size(); ++i)
+            {
+                writeString(bones[i].mName);
+                writeValue(static_cast<std::int32_t>(parentBoneIndices[i]));
+                writeMatrix(bones[i].mInvBindMatrix);
+                osg::Matrixf compressedLocal = i < skeletonBoneMatrices.size()
+                    ? skeletonBoneMatrices[i] : osg::Matrixf();
+                if (parentBoneIndices[i] >= 0)
+                {
+                    osg::Matrixf parentInverse;
+                    if (!parentInverse.invert(skeletonBoneMatrices[static_cast<std::size_t>(parentBoneIndices[i])]))
+                        throw std::runtime_error("OpenNV actor skeleton parent matrix is singular");
+                    compressedLocal = skeletonBoneMatrices[i] * parentInverse;
+                }
+                writeMatrix(compressedLocal);
+                writeMatrix(i < skeletonBoneMatrices.size() ? skeletonBoneMatrices[i] : osg::Matrixf());
+            }
+            for (const SceneUtil::RigGeometry::BoneWeights& vertexInfluences : influences)
+            {
+                const std::size_t count = std::min<std::size_t>(
+                    vertexInfluences.size(), std::numeric_limits<std::uint16_t>::max());
+                writeValue(static_cast<std::uint16_t>(count));
+                for (std::size_t i = 0; i < count; ++i)
+                {
+                    if (vertexInfluences[i].first > std::numeric_limits<std::uint16_t>::max())
+                        throw std::runtime_error("OpenNV actor skeleton bone index exceeds uint16 range");
+                    writeValue(static_cast<std::uint16_t>(vertexInfluences[i].first));
+                    writeValue(vertexInfluences[i].second);
+                }
+            }
+            ++mSurfaceCount;
+            mVertexCount += vertices->size();
+            mTriangleCount += indices.size() / 3;
+        }
+
+        void finish()
+        {
+            const std::streampos end = mOutput.tellp();
+            mOutput.seekp(mSurfaceCountOffset);
+            writeValue(static_cast<std::uint32_t>(mSurfaceCount));
+            mOutput.seekp(end);
+        }
+
+        std::size_t getSurfaceCount() const { return mSurfaceCount; }
+        std::size_t getVertexCount() const { return mVertexCount; }
+        std::size_t getTriangleCount() const { return mTriangleCount; }
+
+    private:
+        void writeStaticSurface(osg::Drawable& drawable, osg::Geometry& geometry)
+        {
+            const auto* vertices = dynamic_cast<const osg::Vec3Array*>(geometry.getVertexArray());
+            if (vertices == nullptr || vertices->empty())
+                return;
+            std::vector<std::uint32_t> indices;
+            appendTriangleIndices(geometry, indices);
+            if (indices.empty())
+                return;
+            writeString(drawable.getName());
+            writeString({});
+            writeString(texturePath(drawable, geometry));
+            writeValue(static_cast<std::uint32_t>(vertices->size()));
+            writeValue(static_cast<std::uint32_t>(indices.size()));
+            writeValue(std::uint32_t{ 0 });
+            osg::Matrixf identity;
+            identity.makeIdentity();
+            writeMatrix(identity);
+            writeMatrix(identity);
+            const osg::Matrixd world = osg::computeLocalToWorld(getNodePath());
+            const auto* normals = dynamic_cast<const osg::Vec3Array*>(geometry.getNormalArray());
+            const auto* texcoords = dynamic_cast<const osg::Vec2Array*>(geometry.getTexCoordArray(0));
+            for (std::size_t i = 0; i < vertices->size(); ++i)
+            {
+                const osg::Vec3d vertex = osg::Vec3d((*vertices)[i]) * world * mWorldToActor;
+                osg::Vec3d normal = normals != nullptr && i < normals->size()
+                        ? osg::Matrixd::transform3x3(osg::Vec3d((*normals)[i]), world * mWorldToActor)
+                    : osg::Vec3d(0.0, 0.0, 1.0);
+                normal.normalize();
+                const osg::Vec2f uv
+                    = texcoords != nullptr && i < texcoords->size() ? (*texcoords)[i] : osg::Vec2f();
+                writeValue(static_cast<float>(vertex.x()));
+                writeValue(static_cast<float>(vertex.y()));
+                writeValue(static_cast<float>(vertex.z()));
+                writeValue(static_cast<float>(normal.x()));
+                writeValue(static_cast<float>(normal.y()));
+                writeValue(static_cast<float>(normal.z()));
+                writeValue(uv.x());
+                writeValue(uv.y());
+            }
+            for (std::uint32_t index : indices)
+                writeValue(index);
+            for (std::size_t i = 0; i < vertices->size(); ++i)
+                writeValue(std::uint16_t{ 0 });
+            ++mSurfaceCount;
+            mVertexCount += vertices->size();
+            mTriangleCount += indices.size() / 3;
+        }
+
+        template <class T>
+        void writeValue(const T& value)
+        {
+            static_assert(std::is_trivially_copyable_v<T>);
+            mOutput.write(reinterpret_cast<const char*>(&value), sizeof(T));
+        }
+
+        void writeString(std::string_view value)
+        {
+            if (value.size() > std::numeric_limits<std::uint32_t>::max())
+                throw std::runtime_error("OpenNV actor skeleton string exceeds uint32 range");
+            writeValue(static_cast<std::uint32_t>(value.size()));
+            mOutput.write(value.data(), static_cast<std::streamsize>(value.size()));
+        }
+
+        void writeMatrix(const osg::Matrixf& matrix)
+        {
+            for (unsigned int row = 0; row < 4; ++row)
+                for (unsigned int column = 0; column < 4; ++column)
+                    writeValue(matrix(row, column));
+        }
+
+        static void appendTriangleIndices(const osg::Geometry& geometry, std::vector<std::uint32_t>& result)
+        {
+            const auto emit = [&](unsigned int a, unsigned int b, unsigned int c) {
+                result.push_back(a);
+                result.push_back(b);
+                result.push_back(c);
+            };
+            for (unsigned int p = 0; p < geometry.getNumPrimitiveSets(); ++p)
+            {
+                const osg::PrimitiveSet* primitive = geometry.getPrimitiveSet(p);
+                const unsigned int count = primitive == nullptr ? 0 : primitive->getNumIndices();
+                if (primitive == nullptr || count < 3)
+                    continue;
+                if (primitive->getMode() == GL_TRIANGLES)
+                {
+                    for (unsigned int i = 0; i + 2 < count; i += 3)
+                        emit(primitive->index(i), primitive->index(i + 1), primitive->index(i + 2));
+                }
+                else if (primitive->getMode() == GL_TRIANGLE_STRIP)
+                {
+                    for (unsigned int i = 0; i + 2 < count; ++i)
+                    {
+                        if ((i & 1u) == 0)
+                            emit(primitive->index(i), primitive->index(i + 1), primitive->index(i + 2));
+                        else
+                            emit(primitive->index(i + 1), primitive->index(i), primitive->index(i + 2));
+                    }
+                }
+            }
+        }
+
+        std::string texturePath(const osg::Drawable& drawable, const osg::Geometry& geometry) const
+        {
+            std::string result;
+            const auto gather = [&](const osg::StateSet* state) {
+                const auto* texture = state == nullptr ? nullptr
+                    : dynamic_cast<const osg::Texture2D*>(
+                        state->getTextureAttribute(0, osg::StateAttribute::TEXTURE));
+                const osg::Image* image = texture == nullptr ? nullptr : texture->getImage();
+                if (image != nullptr && !image->getFileName().empty())
+                    result = image->getFileName();
+            };
+            for (const osg::Node* node : getNodePath())
+                if (node != nullptr)
+                    gather(node->getStateSet());
+            gather(geometry.getStateSet());
+            gather(drawable.getStateSet());
+            return result;
+        }
+
+        std::ostream& mOutput;
+        osg::Matrixd mWorldToActor;
+        std::streampos mSurfaceCountOffset;
+        std::size_t mSurfaceCount = 0;
+        std::size_t mVertexCount = 0;
+        std::size_t mTriangleCount = 0;
+    };
+
+    bool exportOpenNvActorMesh(const MWWorld::Ptr& actor, std::size_t index)
+    {
+        const char* rootValue = std::getenv("OPENMW_OPENNV_ACTOR_EXPORT_ROOT");
+        osg::Node* root = actor.isEmpty() ? nullptr : actor.getRefData().getBaseNode();
+        if (rootValue == nullptr || rootValue[0] == '\0' || root == nullptr)
+            return false;
+        const std::filesystem::path directory(rootValue);
+        std::filesystem::create_directories(directory);
+        std::ostringstream stem;
+        stem << "actor-" << std::setw(3) << std::setfill('0') << index;
+        const std::filesystem::path skeletonPath = directory / (stem.str() + ".onvskel");
+        if (std::filesystem::exists(skeletonPath) && std::filesystem::file_size(skeletonPath) > 16)
+            return true;
+        std::ofstream skeleton(skeletonPath, std::ios::binary);
+        if (!skeleton)
+            return false;
+        osg::NodePath actorPath;
+        const osg::NodePathList parentPaths = root->getParentalNodePaths();
+        if (!parentPaths.empty())
+            actorPath = parentPaths.front();
+        if (actorPath.empty() || actorPath.back() != root)
+            actorPath.push_back(root);
+        osg::Matrixd worldToActor;
+        if (!worldToActor.invert(osg::computeLocalToWorld(actorPath)))
+            throw std::runtime_error("OpenNV actor world transform is singular");
+        OpenNvActorSkeletonVisitor skeletonVisitor(skeleton, worldToActor);
+        root->accept(skeletonVisitor);
+        skeletonVisitor.finish();
+        Log(skeletonVisitor.getSurfaceCount() > 0 ? Debug::Info : Debug::Error)
+            << "OpenNV actor skeletal export: index=" << index << " actor=" << actor.toString()
+            << " skeletalSurfaces=" << skeletonVisitor.getSurfaceCount()
+            << " skeletalVertices=" << skeletonVisitor.getVertexCount()
+            << " skeletalTriangles=" << skeletonVisitor.getTriangleCount()
+            << " skeletalPath=" << skeletonPath.string();
+        return skeletonVisitor.getSurfaceCount() > 0;
+    }
+
+
+    enum class FalloutProofSkinRole : std::size_t
+    {
+        Head,
+        LeftHand,
+        RightHand,
+        Body,
+        ExposedEquipment,
+        Count,
+    };
+
+    constexpr std::array<std::string_view, static_cast<std::size_t>(FalloutProofSkinRole::Count)>
+        sFalloutProofSkinRoleNames = { "head", "leftHand", "rightHand", "body", "exposed-equipment" };
+
+    struct FalloutProofSkinTexture
+    {
+        std::string mSemantic;
+        std::string mPath;
+        unsigned int mUnit = 0;
+        int mWidth = 0;
+        int mHeight = 0;
+    };
+
+    struct FalloutProofSkinRoleSummary
+    {
+        unsigned int mDrawables = 0;
+        unsigned int mMissingFaceGen0 = 0;
+        unsigned int mMissingFaceGen1 = 0;
+        unsigned int mNeutralFaceGenBindings = 0;
+        std::vector<FalloutProofSkinTexture> mTextures;
+    };
+
+    struct FalloutProofSkinState
+    {
+        bool mAvailable = false;
+        bool mPass = false;
+        bool mOwnershipMetadataPresent = false;
+        bool mOwnershipMatches = true;
+        unsigned int mSampleFrame = 0;
+        std::size_t mActorIndex = static_cast<std::size_t>(-1);
+        unsigned int mVisibleDrawables = 0;
+        unsigned int mVisibleSkinDrawables = 0;
+        std::string mActorRef;
+        std::string mActorBase;
+        std::string mExpectedOwner;
+        std::vector<std::string> mObservedOwners;
+        std::array<FalloutProofSkinRoleSummary, static_cast<std::size_t>(FalloutProofSkinRole::Count)> mRoles;
+        std::vector<std::string> mFailures;
+    };
+
+    std::string normalizeFalloutProofTexturePath(std::string value, bool lower)
+    {
+        std::replace(value.begin(), value.end(), '\\', '/');
+        if (lower)
+            Misc::StringUtils::lowerCaseInPlace(value);
+        return value;
+    }
+
+    bool isFalloutProofFaceGenSemantic(std::string_view semantic, unsigned int index)
+    {
+        return index == 0 ? Misc::StringUtils::ciEqual(semantic, "faceGenMap0")
+                          : Misc::StringUtils::ciEqual(semantic, "faceGenMap1");
+    }
+
+    bool isFalloutProofNeutralFaceGenPath(std::string_view path)
+    {
+        std::string normalized = normalizeFalloutProofTexturePath(std::string(path), true);
+        return normalized.rfind("runtime/fallout/neutral-facegen", 0) == 0;
+    }
+
+    bool falloutProofDescriptorContainsAny(
+        std::string_view descriptor, std::initializer_list<std::string_view> values)
+    {
+        return std::any_of(values.begin(), values.end(), [&](std::string_view value) {
+            return descriptor.find(value) != std::string_view::npos;
+        });
+    }
+
+    FalloutProofSkinRole classifyFalloutProofSkinRole(const osg::NodePath& path, const osg::Drawable& drawable,
+        const osg::Geometry* renderGeometry, const std::vector<FalloutProofSkinTexture>& textures)
+    {
+        std::string pathDescriptor;
+        std::string surfaceDescriptor;
+        const auto append = [](std::string& destination, std::string_view value) {
+            if (value.empty())
+                return;
+            if (!destination.empty())
+                destination.push_back('|');
+            destination.append(value);
+        };
+        for (const osg::Node* node : path)
+        {
+            if (node == nullptr || node->getName().empty())
+                continue;
+            const std::string name = Misc::StringUtils::lowerCase(node->getName());
+            append(pathDescriptor, name);
+            if (!Misc::StringUtils::ciStartsWith(name, "bip01")
+                && !Misc::StringUtils::ciEqual(name, "scene root"))
+                append(surfaceDescriptor, name);
+        }
+        append(surfaceDescriptor, Misc::StringUtils::lowerCase(drawable.getName()));
+        if (renderGeometry != nullptr && renderGeometry != &drawable)
+            append(surfaceDescriptor, Misc::StringUtils::lowerCase(renderGeometry->getName()));
+        for (const FalloutProofSkinTexture& texture : textures)
+            append(surfaceDescriptor, normalizeFalloutProofTexturePath(texture.mPath, true));
+
+        const std::string handDescriptor = surfaceDescriptor + '|' + pathDescriptor;
+        if (falloutProofDescriptorContainsAny(handDescriptor,
+                { "lefthand", "left hand", "l hand", "lhand", "hand_l", "handleft" }))
+            return FalloutProofSkinRole::LeftHand;
+        if (falloutProofDescriptorContainsAny(handDescriptor,
+                { "righthand", "right hand", "r hand", "rhand", "hand_r", "handright" }))
+            return FalloutProofSkinRole::RightHand;
+        if (falloutProofDescriptorContainsAny(surfaceDescriptor,
+                { "headhuman", "humanhead", "femalehead", "malehead", "headfemale", "headmale",
+                    "faceskin", "facegen", "head_human" }))
+            return FalloutProofSkinRole::Head;
+        if (falloutProofDescriptorContainsAny(surfaceDescriptor,
+                { "upperbody", "upper body", "nakedbody", "bodymale", "bodyfemale", "maleupper",
+                    "femaleupper", "skinbody", "torso" }))
+            return FalloutProofSkinRole::Body;
+        return FalloutProofSkinRole::ExposedEquipment;
+    }
+
+    class FalloutProofSkinStateVisitor final : public osg::NodeVisitor
+    {
+    public:
+        explicit FalloutProofSkinStateVisitor(std::string expectedOwner)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ACTIVE_CHILDREN)
+            , mExpectedOwner(std::move(expectedOwner))
+        {
+            setTraversalMask(~0u);
+        }
+
+        void apply(osg::Drawable& drawable) override
+        {
+            ++mResult.mVisibleDrawables;
+
+            std::vector<const osg::StateSet*> stateSets;
+            stateSets.reserve(getNodePath().size() + 1);
+            bool skinShader = false;
+            for (const osg::Node* node : getNodePath())
+            {
+                if (node == nullptr)
+                    continue;
+                if (const osg::StateSet* stateSet = node->getStateSet())
+                    stateSets.push_back(stateSet);
+                gatherOwner(*node);
+                std::string shaderPrefix;
+                if (node->getUserValue("shaderPrefix", shaderPrefix)
+                    && Misc::StringUtils::ciEqual(shaderPrefix, "bs/skin"))
+                    skinShader = true;
+            }
+
+            if (const osg::StateSet* stateSet = drawable.getStateSet())
+                stateSets.push_back(stateSet);
+            gatherOwner(drawable);
+            std::string drawableShaderPrefix;
+            if (drawable.getUserValue("shaderPrefix", drawableShaderPrefix)
+                && Misc::StringUtils::ciEqual(drawableShaderPrefix, "bs/skin"))
+                skinShader = true;
+
+            const osg::Geometry* renderGeometry = dynamic_cast<const osg::Geometry*>(&drawable);
+            if (const auto* rig = dynamic_cast<const SceneUtil::RigGeometry*>(&drawable))
+                renderGeometry = rig->getLastFrameGeometry();
+            if (renderGeometry != nullptr && renderGeometry != &drawable)
+            {
+                if (const osg::StateSet* stateSet = renderGeometry->getStateSet())
+                    stateSets.push_back(stateSet);
+                gatherOwner(*renderGeometry);
+                std::string shaderPrefix;
+                if (renderGeometry->getUserValue("shaderPrefix", shaderPrefix)
+                    && Misc::StringUtils::ciEqual(shaderPrefix, "bs/skin"))
+                    skinShader = true;
+            }
+
+            unsigned int textureUnits = 0;
+            bool localFaceGenSemantic = false;
+            bool actorLocalFaceGen = false;
+            for (const osg::StateSet* stateSet : stateSets)
+            {
+                if (stateSet == nullptr)
+                    continue;
+                textureUnits = std::max(textureUnits, stateSet->getNumTextureAttributeLists());
+                actorLocalFaceGen = actorLocalFaceGen
+                    || stateSet->getDefinePair("FALLOUT_ACTOR_LOCAL_FACEGEN") != nullptr;
+                for (unsigned int unit = 0; unit < stateSet->getNumTextureAttributeLists(); ++unit)
+                {
+                    const auto* pair
+                        = stateSet->getTextureAttributePair(unit, SceneUtil::TextureType::AttributeType);
+                    const auto* type = pair == nullptr ? nullptr
+                        : dynamic_cast<const SceneUtil::TextureType*>(pair->first.get());
+                    localFaceGenSemantic = localFaceGenSemantic || (type != nullptr
+                        && (isFalloutProofFaceGenSemantic(type->getName(), 0)
+                            || isFalloutProofFaceGenSemantic(type->getName(), 1)));
+                }
+            }
+
+            std::vector<FalloutProofSkinTexture> textures;
+            textures.reserve(textureUnits);
+            bool hasFaceGen0 = false;
+            bool hasFaceGen1 = false;
+            for (unsigned int unit = 0; unit < textureUnits; ++unit)
+            {
+                const EffectiveAttribute textureAttribute
+                    = resolveEffectiveAttribute(stateSets, unit, osg::StateAttribute::TEXTURE);
+                const EffectiveAttribute typeAttribute
+                    = resolveEffectiveAttribute(stateSets, unit, SceneUtil::TextureType::AttributeType);
+                const auto* texture
+                    = dynamic_cast<const osg::Texture2D*>(textureAttribute.mAttribute);
+                const auto* type
+                    = dynamic_cast<const SceneUtil::TextureType*>(typeAttribute.mAttribute);
+                if (texture == nullptr && type == nullptr)
+                    continue;
+
+                FalloutProofSkinTexture binding;
+                binding.mUnit = unit;
+                if (type != nullptr)
+                    binding.mSemantic = type->getName();
+                const osg::Image* image = texture != nullptr ? texture->getImage() : nullptr;
+                if (image != nullptr)
+                {
+                    binding.mPath = normalizeFalloutProofTexturePath(image->getFileName(), false);
+                    binding.mWidth = image->s();
+                    binding.mHeight = image->t();
+                }
+                else if (texture != nullptr)
+                {
+                    binding.mPath = normalizeFalloutProofTexturePath(texture->getName(), false);
+                    binding.mWidth = texture->getTextureWidth();
+                    binding.mHeight = texture->getTextureHeight();
+                }
+                hasFaceGen0 = hasFaceGen0
+                    || (type != nullptr && isFalloutProofFaceGenSemantic(type->getName(), 0));
+                hasFaceGen1 = hasFaceGen1
+                    || (type != nullptr && isFalloutProofFaceGenSemantic(type->getName(), 1));
+                textures.push_back(std::move(binding));
+            }
+
+            const bool skinDrawable
+                = skinShader || actorLocalFaceGen || localFaceGenSemantic || hasFaceGen0 || hasFaceGen1;
+            if (!skinDrawable)
+                return;
+
+            ++mResult.mVisibleSkinDrawables;
+            const FalloutProofSkinRole role
+                = classifyFalloutProofSkinRole(getNodePath(), drawable, renderGeometry, textures);
+            FalloutProofSkinRoleSummary& summary = mResult.mRoles[static_cast<std::size_t>(role)];
+            ++summary.mDrawables;
+            if (!hasFaceGen0)
+                ++summary.mMissingFaceGen0;
+            if (!hasFaceGen1)
+                ++summary.mMissingFaceGen1;
+            for (const FalloutProofSkinTexture& texture : textures)
+            {
+                if (isFalloutProofNeutralFaceGenPath(texture.mPath))
+                    ++summary.mNeutralFaceGenBindings;
+                summary.mTextures.push_back(texture);
+            }
+        }
+
+        FalloutProofSkinState finish(FalloutProofSkinState result)
+        {
+            result.mVisibleDrawables = mResult.mVisibleDrawables;
+            result.mVisibleSkinDrawables = mResult.mVisibleSkinDrawables;
+            result.mRoles = std::move(mResult.mRoles);
+            result.mExpectedOwner = mExpectedOwner;
+            result.mObservedOwners = std::move(mObservedOwners);
+            std::sort(result.mObservedOwners.begin(), result.mObservedOwners.end());
+            result.mObservedOwners.erase(
+                std::unique(result.mObservedOwners.begin(), result.mObservedOwners.end()),
+                result.mObservedOwners.end());
+            result.mOwnershipMetadataPresent = !result.mObservedOwners.empty();
+            result.mOwnershipMatches = !result.mOwnershipMetadataPresent
+                || std::all_of(result.mObservedOwners.begin(), result.mObservedOwners.end(),
+                    [&](std::string_view owner) { return Misc::StringUtils::ciEqual(owner, mExpectedOwner); });
+
+            bool missingFaceGen0 = false;
+            bool missingFaceGen1 = false;
+            bool neutralNonHead = false;
+            for (std::size_t index = 0; index < result.mRoles.size(); ++index)
+            {
+                FalloutProofSkinRoleSummary& summary = result.mRoles[index];
+                missingFaceGen0 = missingFaceGen0 || summary.mMissingFaceGen0 != 0;
+                missingFaceGen1 = missingFaceGen1 || summary.mMissingFaceGen1 != 0;
+                neutralNonHead = neutralNonHead
+                    || (index != static_cast<std::size_t>(FalloutProofSkinRole::Head)
+                        && summary.mNeutralFaceGenBindings != 0);
+                std::sort(summary.mTextures.begin(), summary.mTextures.end(), [](const auto& left, const auto& right) {
+                    return std::tie(left.mSemantic, left.mUnit, left.mPath, left.mWidth, left.mHeight)
+                        < std::tie(right.mSemantic, right.mUnit, right.mPath, right.mWidth, right.mHeight);
+                });
+                summary.mTextures.erase(std::unique(summary.mTextures.begin(), summary.mTextures.end(),
+                                            [](const auto& left, const auto& right) {
+                                                return std::tie(left.mSemantic, left.mUnit, left.mPath, left.mWidth,
+                                                           left.mHeight)
+                                                    == std::tie(right.mSemantic, right.mUnit, right.mPath,
+                                                        right.mWidth, right.mHeight);
+                                            }),
+                    summary.mTextures.end());
+            }
+            if (result.mVisibleDrawables == 0)
+                result.mFailures.emplace_back("visible-drawable-state-empty");
+            if (!result.mOwnershipMatches)
+                result.mFailures.emplace_back("actor-ownership-mismatch");
+            if (missingFaceGen0)
+                result.mFailures.emplace_back("missing-facegen0-semantic");
+            if (missingFaceGen1)
+                result.mFailures.emplace_back("missing-facegen1-semantic");
+            if (neutralNonHead)
+                result.mFailures.emplace_back("neutral-facegen-visible-nonhead");
+            result.mPass = result.mFailures.empty();
+            return result;
+        }
+
+    private:
+        struct EffectiveAttribute
+        {
+            const osg::StateAttribute* mAttribute = nullptr;
+            osg::StateAttribute::OverrideValue mFlags{};
+        };
+
+        static EffectiveAttribute resolveEffectiveAttribute(const std::vector<const osg::StateSet*>& stateSets,
+            unsigned int unit, osg::StateAttribute::Type type)
+        {
+            EffectiveAttribute result;
+            for (const osg::StateSet* stateSet : stateSets)
+            {
+                if (stateSet == nullptr)
+                    continue;
+                const osg::StateSet::RefAttributePair* candidate
+                    = stateSet->getTextureAttributePair(unit, type);
+                if (candidate == nullptr || candidate->first == nullptr)
+                    continue;
+                if (result.mAttribute != nullptr
+                    && (result.mFlags & osg::StateAttribute::OVERRIDE) != 0
+                    && (candidate->second & osg::StateAttribute::PROTECTED) == 0)
+                    continue;
+                result.mAttribute = candidate->first.get();
+                result.mFlags = candidate->second;
+            }
+            return result;
+        }
+
+        void gatherOwner(const osg::Object& object)
+        {
+            std::string owner;
+            if (object.getUserValue("OpenMW.ActorEditorId", owner) && !owner.empty())
+                mObservedOwners.push_back(std::move(owner));
+        }
+
+        std::string mExpectedOwner;
+        FalloutProofSkinState mResult;
+        std::vector<std::string> mObservedOwners;
+    };
+
+    FalloutProofSkinState inspectFalloutProofSkinState(
+        const MWWorld::Ptr& actor, std::size_t actorIndex, unsigned int frameNumber)
+    {
+        FalloutProofSkinState result;
+        result.mSampleFrame = frameNumber;
+        result.mActorIndex = actorIndex;
+        if (actor.isEmpty() || actor.getType() != ESM4::Npc::sRecordId)
+        {
+            result.mFailures.emplace_back("staged-fnv-npc-unavailable");
+            return result;
+        }
+
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(actor);
+        if (traits == nullptr || !traits->mIsFONV)
+        {
+            result.mFailures.emplace_back("staged-actor-not-fnv-npc");
+            return result;
+        }
+
+        result.mAvailable = true;
+        result.mActorRef = actor.getCellRef().getRefNum().toString("FormId:");
+        result.mActorBase = actor.getCellRef().getRefId().toDebugString();
+        result.mExpectedOwner = traits->mEditorId;
+        osg::Node* root = actor.getRefData().getBaseNode();
+        if (root == nullptr)
+        {
+            result.mFailures.emplace_back("actor-root-missing");
+            return result;
+        }
+
+        FalloutProofSkinStateVisitor visitor(traits->mEditorId);
+        root->accept(visitor);
+        return visitor.finish(std::move(result));
+    }
+
+    void writeFalloutProofSkinStateJson(std::ostream& out, const FalloutProofSkinState& state)
+    {
+        out << "{\"schema\":\"nikami-fnv-openmw-skin-state/v1\",\"samplePhase\":\"post-render\""
+            << ",\"cameraIndependent\":true"
+            << ",\"sampleFrame\":" << state.mSampleFrame << ",\"available\":"
+            << (state.mAvailable ? "true" : "false") << ",\"actorIndex\":";
+        if (state.mActorIndex == static_cast<std::size_t>(-1))
+            out << "null";
+        else
+            out << state.mActorIndex;
+        out << ",\"actor\":{\"ref\":";
+        writeProofJsonString(out, state.mActorRef);
+        out << ",\"base\":";
+        writeProofJsonString(out, state.mActorBase);
+        out << "},\"ownership\":{\"expected\":";
+        writeProofJsonString(out, state.mExpectedOwner);
+        out << ",\"metadataPresent\":" << (state.mOwnershipMetadataPresent ? "true" : "false")
+            << ",\"matches\":" << (state.mOwnershipMatches ? "true" : "false") << ",\"observed\":[";
+        for (std::size_t index = 0; index < state.mObservedOwners.size(); ++index)
+        {
+            if (index != 0)
+                out << ',';
+            writeProofJsonString(out, state.mObservedOwners[index]);
+        }
+        out << "]},\"counts\":{\"visibleDrawables\":" << state.mVisibleDrawables
+            << ",\"visibleSkinDrawables\":" << state.mVisibleSkinDrawables << "},\"roles\":[";
+        for (std::size_t roleIndex = 0; roleIndex < state.mRoles.size(); ++roleIndex)
+        {
+            if (roleIndex != 0)
+                out << ',';
+            const FalloutProofSkinRoleSummary& role = state.mRoles[roleIndex];
+            out << "{\"role\":";
+            writeProofJsonString(out, sFalloutProofSkinRoleNames[roleIndex]);
+            out << ",\"drawables\":" << role.mDrawables << ",\"missingFaceGen0\":"
+                << role.mMissingFaceGen0 << ",\"missingFaceGen1\":" << role.mMissingFaceGen1
+                << ",\"neutralFaceGenBindings\":" << role.mNeutralFaceGenBindings << ",\"textures\":[";
+            for (std::size_t textureIndex = 0; textureIndex < role.mTextures.size(); ++textureIndex)
+            {
+                if (textureIndex != 0)
+                    out << ',';
+                const FalloutProofSkinTexture& texture = role.mTextures[textureIndex];
+                out << "{\"unit\":" << texture.mUnit << ",\"semantic\":";
+                if (texture.mSemantic.empty())
+                    out << "null";
+                else
+                    writeProofJsonString(out, texture.mSemantic);
+                out << ",\"path\":";
+                if (texture.mPath.empty())
+                    out << "null";
+                else
+                    writeProofJsonString(out, texture.mPath);
+                out << ",\"dimensions\":";
+                if (texture.mWidth > 0 && texture.mHeight > 0)
+                    out << '[' << texture.mWidth << ',' << texture.mHeight << ']';
+                else
+                    out << "null";
+                out << '}';
+            }
+            out << "]}";
+        }
+        out << "],\"status\":\"" << (state.mPass ? "pass" : "fail") << "\",\"failures\":[";
+        for (std::size_t index = 0; index < state.mFailures.size(); ++index)
+        {
+            if (index != 0)
+                out << ',';
+            writeProofJsonString(out, state.mFailures[index]);
+        }
+        out << "]}";
+    }
+
+    bool resolveFalloutProofHeadPose(const MWWorld::Ptr& actor, osg::Vec3d& center, osg::Vec3d& forward)
+    {
+        if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
+            return false;
+
+        FalloutProofFaceBoundsVisitor visitor;
+        actor.getRefData().getBaseNode()->accept(visitor);
+        if (visitor.getScreenMatched() > 0)
+        {
+            const ESM::Position& actorPosition = actor.getRefData().getPosition();
+            const osg::Vec3d actorOrigin(
+                actorPosition.pos[0], actorPosition.pos[1], actorPosition.pos[2]);
+            center = visitor.getScreenCenter();
+            forward = visitor.getScreenForward(actorOrigin);
+            if (forward.length2() > 1e-6)
+                return true;
+        }
+        if (actor.getType() == ESM::REC_CREA4)
+        {
+            std::string frontName;
+            std::string rearName;
+            if (visitor.getCreatureAxis(center, forward, frontName, rearName))
+            {
+                const osg::Vec3d sceneForward = forward;
+                // The imported Fallout skeleton path is reflected across the engine/world Y basis.  The node
+                // pair therefore supplies the right semantic longitudinal axis but its scene-space Y sign is
+                // opposite the authored actor/camera transform recorded by retail.  Convert the direction at
+                // the proof-camera boundary; X and Z already share the world basis.
+                forward.y() = -forward.y();
+                forward.normalize();
+                Log(Debug::Info) << "FNV/ESM4 proof: creature semantic camera axis actor=" << actor.toString()
+                                 << " frontNode=\"" << frontName << "\" rearNode=\"" << rearName
+                                 << "\" frontCenter=(" << center.x() << "," << center.y() << "," << center.z()
+                                 << ") sceneForward=(" << sceneForward.x() << "," << sceneForward.y() << ","
+                                 << sceneForward.z() << ") retailWorldForward=(" << forward.x() << ","
+                                 << forward.y() << "," << forward.z() << ")";
+                return true;
+            }
+        }
+        if (visitor.getHeadBoneMatched() == 0)
+            return false;
+
+        center = visitor.getHeadCenter();
+        forward = visitor.getHeadForward();
+        return forward.length2() > 1e-6;
+    }
+
+    struct FalloutProofPortraitPose
+    {
+        osg::Vec3d mHeadCenter;
+        osg::Vec3d mHeadForward;
+        osg::Vec3d mPelvisCenter;
+        osg::Vec3d mLeftHandCenter;
+        osg::Vec3d mRightHandCenter;
+        osg::Vec3d mLeftFootCenter;
+        osg::Vec3d mRightFootCenter;
+        bool mHeadResolved = false;
+        bool mPelvisResolved = false;
+        bool mLeftHandResolved = false;
+        bool mRightHandResolved = false;
+        bool mLeftFootResolved = false;
+        bool mRightFootResolved = false;
+    };
+
+    class FalloutProofPortraitPoseVisitor : public osg::NodeVisitor
+    {
+    public:
+        FalloutProofPortraitPoseVisitor()
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+        {
+            setTraversalMask(~(MWRender::Mask_ParticleSystem | MWRender::Mask_Effect));
+        }
+
+        void apply(osg::Node& node) override
+        {
+            const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
+            if (lowerName == "bip01 head" || lowerName == "bip01 head_nub"
+                || lowerName == "bip01 pelvis" || lowerName == "bip01 l hand"
+                || lowerName == "bip01 r hand" || lowerName == "bip01 l foot"
+                || lowerName == "bip01 r foot")
+            {
+                const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
+                const osg::Vec3d center = localToWorld.getTrans();
+                if (lowerName == "bip01 head" || lowerName == "bip01 head_nub")
+                {
+                    mPose.mHeadCenter += center;
+                    osg::Vec3d forward
+                        = osg::Matrixd::transform3x3(osg::Vec3d(0.0, 1.0, 0.0), localToWorld);
+                    if (forward.normalize() > 1e-6)
+                        mPose.mHeadForward += forward;
+                    ++mHeadCount;
+                }
+                else if (lowerName == "bip01 pelvis")
+                {
+                    mPose.mPelvisCenter += center;
+                    ++mPelvisCount;
+                }
+                else if (lowerName == "bip01 l hand")
+                {
+                    mPose.mLeftHandCenter += center;
+                    ++mLeftHandCount;
+                }
+                else if (lowerName == "bip01 r hand")
+                {
+                    mPose.mRightHandCenter += center;
+                    ++mRightHandCount;
+                }
+                else if (lowerName == "bip01 l foot")
+                {
+                    mPose.mLeftFootCenter += center;
+                    ++mLeftFootCount;
+                }
+                else
+                {
+                    mPose.mRightFootCenter += center;
+                    ++mRightFootCount;
+                }
+            }
+            traverse(node);
+        }
+
+        FalloutProofPortraitPose getPose() const
+        {
+            FalloutProofPortraitPose result = mPose;
+            if (mHeadCount > 0)
+            {
+                result.mHeadCenter /= static_cast<double>(mHeadCount);
+                result.mHeadResolved = result.mHeadForward.normalize() > 1e-6;
+            }
+            if (mPelvisCount > 0)
+            {
+                result.mPelvisCenter /= static_cast<double>(mPelvisCount);
+                result.mPelvisResolved = true;
+            }
+            if (mLeftHandCount > 0)
+            {
+                result.mLeftHandCenter /= static_cast<double>(mLeftHandCount);
+                result.mLeftHandResolved = true;
+            }
+            if (mRightHandCount > 0)
+            {
+                result.mRightHandCenter /= static_cast<double>(mRightHandCount);
+                result.mRightHandResolved = true;
+            }
+            if (mLeftFootCount > 0)
+            {
+                result.mLeftFootCenter /= static_cast<double>(mLeftFootCount);
+                result.mLeftFootResolved = true;
+            }
+            if (mRightFootCount > 0)
+            {
+                result.mRightFootCenter /= static_cast<double>(mRightFootCount);
+                result.mRightFootResolved = true;
+            }
+            return result;
+        }
+
+    private:
+        FalloutProofPortraitPose mPose;
+        unsigned int mHeadCount = 0;
+        unsigned int mPelvisCount = 0;
+        unsigned int mLeftHandCount = 0;
+        unsigned int mRightHandCount = 0;
+        unsigned int mLeftFootCount = 0;
+        unsigned int mRightFootCount = 0;
+    };
+
+    FalloutProofPortraitPose resolveFalloutProofPortraitPose(const MWWorld::Ptr& actor)
+    {
+        if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
+            return {};
+        FalloutProofPortraitPoseVisitor visitor;
+        actor.getRefData().getBaseNode()->accept(visitor);
+        return visitor.getPose();
+    }
+
+    constexpr std::size_t FalloutRetailTransformComponentCount = 13;
+    constexpr std::size_t FalloutRetailMatrixComponentCount = 12;
+
+    struct FalloutRetailPoseNode
+    {
+        std::string mName;
+        std::string mParent;
+        std::array<std::uint32_t, FalloutRetailTransformComponentCount> mLocalBits{};
+        std::array<std::uint32_t, FalloutRetailTransformComponentCount> mWorldBits{};
+        osg::Matrixd mLocalMatrix;
+        osg::Matrixd mWorldMatrix;
+    };
+
+    struct FalloutRetailPoseSnapshot
+    {
+        std::string mPath;
+        std::array<std::uint32_t, 6> mRootBits{};
+        std::vector<FalloutRetailPoseNode> mNodes;
+        std::unordered_map<std::string, std::size_t> mNodeByLowerName;
+    };
+
+    osg::Matrixd makeFalloutRetailPoseMatrix(
+        const std::array<std::uint32_t, FalloutRetailTransformComponentCount>& bits)
+    {
+        osg::Matrixd matrix;
+        matrix.makeIdentity();
+        const double scale = static_cast<double>(proofFloatFromBits(bits[12]));
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            for (std::size_t column = 0; column < 3; ++column)
+            {
+                matrix(row, column)
+                    = static_cast<double>(proofFloatFromBits(bits[column * 3 + row])) * scale;
+            }
+        }
+        matrix(3, 0) = proofFloatFromBits(bits[9]);
+        matrix(3, 1) = proofFloatFromBits(bits[10]);
+        matrix(3, 2) = proofFloatFromBits(bits[11]);
+        return matrix;
+    }
+
+    std::array<std::uint32_t, FalloutRetailMatrixComponentCount> getFalloutRetailMatrixBits(
+        const osg::Matrixd& matrix)
+    {
+        std::array<std::uint32_t, FalloutRetailMatrixComponentCount> result{};
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            for (std::size_t column = 0; column < 3; ++column)
+                result[row * 3 + column] = std::bit_cast<std::uint32_t>(static_cast<float>(matrix(row, column)));
+        }
+        const osg::Vec3d translation = matrix.getTrans();
+        result[9] = std::bit_cast<std::uint32_t>(static_cast<float>(translation.x()));
+        result[10] = std::bit_cast<std::uint32_t>(static_cast<float>(translation.y()));
+        result[11] = std::bit_cast<std::uint32_t>(static_cast<float>(translation.z()));
+        return result;
+    }
+
+    bool isFalloutRetailPoseSnapshotRoot(std::string_view lowerName)
+    {
+        return lowerName == "scene root";
+    }
+
+    std::size_t getFalloutRetailPoseReplayNodeCount(const FalloutRetailPoseSnapshot& snapshot)
+    {
+        return std::count_if(snapshot.mNodes.begin(), snapshot.mNodes.end(), [](const FalloutRetailPoseNode& node) {
+            return !isFalloutRetailPoseSnapshotRoot(Misc::StringUtils::lowerCase(node.mName));
+        });
+    }
+
+    osg::Matrixd getFalloutRetailPoseAdapterLocal(
+        const FalloutRetailPoseNode& node, const osg::NodePath& nodePath)
+    {
+        osg::NodePath parentPath = nodePath;
+        if (!parentPath.empty())
+            parentPath.pop_back();
+        const osg::Matrixd parentWorld = osg::computeLocalToWorld(parentPath);
+        return node.mWorldMatrix * osg::Matrixd::inverse(parentWorld);
+    }
+
+    float falloutRetailFloatMultiply(float left, float right)
+    {
+        volatile float rounded = left * right;
+        return rounded;
+    }
+
+    float falloutRetailFloatAdd(float left, float right)
+    {
+        volatile float rounded = left + right;
+        return rounded;
+    }
+
+    float falloutRetailFloatDot3(float left0, float right0, float left1, float right1, float left2, float right2)
+    {
+        float result = falloutRetailFloatMultiply(left0, right0);
+        result = falloutRetailFloatAdd(result, falloutRetailFloatMultiply(left1, right1));
+        return falloutRetailFloatAdd(result, falloutRetailFloatMultiply(left2, right2));
+    }
+
+    std::array<std::uint32_t, FalloutRetailTransformComponentCount> composeFalloutRetailTransformBits(
+        const std::array<std::uint32_t, FalloutRetailTransformComponentCount>& parent,
+        const std::array<std::uint32_t, FalloutRetailTransformComponentCount>& local)
+    {
+        std::array<std::uint32_t, FalloutRetailTransformComponentCount> result{};
+        std::array<float, FalloutRetailTransformComponentCount> parentValues{};
+        std::array<float, FalloutRetailTransformComponentCount> localValues{};
+        for (std::size_t component = 0; component < FalloutRetailTransformComponentCount; ++component)
+        {
+            parentValues[component] = proofFloatFromBits(parent[component]);
+            localValues[component] = proofFloatFromBits(local[component]);
+        }
+
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            for (std::size_t column = 0; column < 3; ++column)
+            {
+                const float value = falloutRetailFloatDot3(parentValues[row * 3], localValues[column],
+                    parentValues[row * 3 + 1], localValues[3 + column], parentValues[row * 3 + 2],
+                    localValues[6 + column]);
+                result[row * 3 + column] = std::bit_cast<std::uint32_t>(value);
+            }
+
+            const float rotatedTranslation = falloutRetailFloatDot3(parentValues[row * 3], localValues[9],
+                parentValues[row * 3 + 1], localValues[10], parentValues[row * 3 + 2], localValues[11]);
+            const float scaledTranslation = falloutRetailFloatMultiply(rotatedTranslation, parentValues[12]);
+            result[9 + row]
+                = std::bit_cast<std::uint32_t>(falloutRetailFloatAdd(scaledTranslation, parentValues[9 + row]));
+        }
+        result[12]
+            = std::bit_cast<std::uint32_t>(falloutRetailFloatMultiply(parentValues[12], localValues[12]));
+        return result;
+    }
+
+    void auditFalloutRetailPoseSource(const FalloutRetailPoseSnapshot& snapshot)
+    {
+        std::vector<std::array<std::uint32_t, FalloutRetailTransformComponentCount>> calculated;
+        calculated.reserve(snapshot.mNodes.size());
+        std::size_t mismatchedNodes = 0;
+        std::size_t mismatchedWords = 0;
+        for (std::size_t index = 0; index < snapshot.mNodes.size(); ++index)
+        {
+            const FalloutRetailPoseNode& node = snapshot.mNodes[index];
+            std::array<std::uint32_t, FalloutRetailTransformComponentCount> world = node.mLocalBits;
+            if (Misc::StringUtils::lowerCase(node.mParent) != "none")
+            {
+                const auto parent = snapshot.mNodeByLowerName.find(Misc::StringUtils::lowerCase(node.mParent));
+                if (parent == snapshot.mNodeByLowerName.end() || parent->second >= index)
+                    throw std::runtime_error("retail pose parent missing or out of order for node " + node.mName);
+                world = composeFalloutRetailTransformBits(calculated[parent->second], node.mLocalBits);
+            }
+            calculated.push_back(world);
+
+            bool nodeMismatch = false;
+            for (std::size_t component = 0; component < FalloutRetailTransformComponentCount; ++component)
+            {
+                if (world[component] == node.mWorldBits[component])
+                    continue;
+                nodeMismatch = true;
+                ++mismatchedWords;
+            }
+            mismatchedNodes += nodeMismatch ? 1 : 0;
+        }
+
+        const std::size_t words = snapshot.mNodes.size() * FalloutRetailTransformComponentCount;
+        const bool pass = mismatchedNodes == 0;
+        Log(pass ? Debug::Info : Debug::Error)
+            << "FNV/ESM4 retail pose source audit: snapshot=\"" << snapshot.mPath << "\" nodes="
+            << snapshot.mNodes.size() << " transformWords=" << words << " mismatchedNodes=" << mismatchedNodes
+            << " mismatchedWords=" << mismatchedWords << " arithmetic=parent-times-local-round-every-float32-op status="
+            << (pass ? "pass" : "fail");
+        if (!pass)
+            throw std::runtime_error("retail pose source arithmetic audit failed: " + snapshot.mPath);
+    }
+
+    std::shared_ptr<FalloutRetailPoseSnapshot> loadFalloutRetailPoseSnapshot(const std::string& path)
+    {
+        std::ifstream input(path);
+        if (!input)
+            throw std::runtime_error("failed to open retail pose snapshot: " + path);
+
+        std::string line;
+        if (!std::getline(input, line) || line != "NIKAMI_RETAIL_POSE_SNAPSHOT_V1")
+            throw std::runtime_error("unsupported retail pose snapshot schema: " + path);
+
+        auto snapshot = std::make_shared<FalloutRetailPoseSnapshot>();
+        snapshot->mPath = path;
+        bool foundRoot = false;
+        while (std::getline(input, line))
+        {
+            if (line.empty())
+                continue;
+            std::istringstream row(line);
+            std::string kind;
+            row >> kind;
+            if (kind == "source")
+                continue;
+            if (kind == "root")
+            {
+                for (std::uint32_t& bits : snapshot->mRootBits)
+                {
+                    std::string token;
+                    if (!(row >> token) || !parseProofFloatBits(token, bits))
+                        throw std::runtime_error("invalid root float bits in retail pose snapshot: " + path);
+                }
+                foundRoot = true;
+                continue;
+            }
+            if (kind != "node")
+                throw std::runtime_error("unknown retail pose snapshot row: " + kind);
+
+            FalloutRetailPoseNode node;
+            std::string parentToken;
+            std::string localToken;
+            std::string worldToken;
+            if (!(row >> std::quoted(node.mName) >> parentToken >> std::quoted(node.mParent) >> localToken)
+                || parentToken != "parent" || localToken != "local")
+            {
+                throw std::runtime_error("invalid node header in retail pose snapshot: " + path);
+            }
+            for (std::uint32_t& bits : node.mLocalBits)
+            {
+                std::string token;
+                if (!(row >> token) || !parseProofFloatBits(token, bits))
+                    throw std::runtime_error("invalid local float bits for retail pose node " + node.mName);
+            }
+            if (!(row >> worldToken) || worldToken != "world")
+                throw std::runtime_error("missing world transform for retail pose node " + node.mName);
+            for (std::uint32_t& bits : node.mWorldBits)
+            {
+                std::string token;
+                if (!(row >> token) || !parseProofFloatBits(token, bits))
+                    throw std::runtime_error("invalid world float bits for retail pose node " + node.mName);
+            }
+            node.mLocalMatrix = makeFalloutRetailPoseMatrix(node.mLocalBits);
+            node.mWorldMatrix = makeFalloutRetailPoseMatrix(node.mWorldBits);
+            snapshot->mNodes.push_back(std::move(node));
+        }
+
+        if (!foundRoot || snapshot->mNodes.empty())
+            throw std::runtime_error("retail pose snapshot has no root or nodes: " + path);
+        for (std::size_t index = 0; index < snapshot->mNodes.size(); ++index)
+        {
+            const std::string lower = Misc::StringUtils::lowerCase(snapshot->mNodes[index].mName);
+            if (!snapshot->mNodeByLowerName.emplace(lower, index).second)
+                throw std::runtime_error("duplicate retail pose node: " + snapshot->mNodes[index].mName);
+        }
+        auditFalloutRetailPoseSource(*snapshot);
+        return snapshot;
+    }
+
+    struct FalloutRetailPoseAuditResult
+    {
+        std::size_t mMatched = 0;
+        std::size_t mDuplicates = 0;
+        std::size_t mLocalMismatches = 0;
+        std::size_t mWorldMismatches = 0;
+        std::vector<std::string> mDetails;
+    };
+
+    class FalloutRetailPoseAuditVisitor final : public osg::NodeVisitor
+    {
+    public:
+        explicit FalloutRetailPoseAuditVisitor(const FalloutRetailPoseSnapshot& snapshot)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            , mSnapshot(snapshot)
+            , mSeen(snapshot.mNodes.size(), 0)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
+            const auto found = mSnapshot.mNodeByLowerName.find(lowerName);
+            const auto* transform = dynamic_cast<const osg::MatrixTransform*>(&node);
+            if (found != mSnapshot.mNodeByLowerName.end() && transform != nullptr
+                && !isFalloutRetailPoseSnapshotRoot(lowerName))
+            {
+                const std::size_t index = found->second;
+                const FalloutRetailPoseNode& expected = mSnapshot.mNodes[index];
+                ++mResult.mMatched;
+                if (++mSeen[index] > 1)
+                    ++mResult.mDuplicates;
+
+                const auto localBits = getFalloutRetailMatrixBits(transform->getMatrix());
+                const auto worldBits = getFalloutRetailMatrixBits(osg::computeLocalToWorld(getNodePath()));
+                const auto expectedLocalBits
+                    = getFalloutRetailMatrixBits(getFalloutRetailPoseAdapterLocal(expected, getNodePath()));
+                const auto expectedWorldBits = getFalloutRetailMatrixBits(expected.mWorldMatrix);
+                bool localMismatch = false;
+                bool worldMismatch = false;
+                for (std::size_t component = 0; component < FalloutRetailMatrixComponentCount; ++component)
+                {
+                    localMismatch = localMismatch || localBits[component] != expectedLocalBits[component];
+                    worldMismatch = worldMismatch || worldBits[component] != expectedWorldBits[component];
+                }
+                mResult.mLocalMismatches += localMismatch ? 1 : 0;
+                mResult.mWorldMismatches += worldMismatch ? 1 : 0;
+                if ((localMismatch || worldMismatch) && mResult.mDetails.size() < 24)
+                {
+                    std::ostringstream detail;
+                    detail << "node=\"" << expected.mName << "\" localMismatch=" << localMismatch
+                           << " worldMismatch=" << worldMismatch << " localExpected="
+                           << formatProofFloatBits(expectedLocalBits)
+                           << " localActual=" << formatProofFloatBits(localBits) << " worldExpected="
+                           << formatProofFloatBits(expectedWorldBits)
+                           << " worldActual=" << formatProofFloatBits(worldBits);
+                    mResult.mDetails.push_back(detail.str());
+                }
+            }
+            traverse(node);
+        }
+
+        FalloutRetailPoseAuditResult finish()
+        {
+            for (std::size_t index = 0; index < mSnapshot.mNodes.size(); ++index)
+            {
+                if (isFalloutRetailPoseSnapshotRoot(Misc::StringUtils::lowerCase(mSnapshot.mNodes[index].mName)))
+                    continue;
+                if (mSeen[index] == 0 && mResult.mDetails.size() < 24)
+                    mResult.mDetails.push_back("missingNode=\"" + mSnapshot.mNodes[index].mName + "\"");
+            }
+            return std::move(mResult);
+        }
+
+    private:
+        const FalloutRetailPoseSnapshot& mSnapshot;
+        std::vector<unsigned int> mSeen;
+        FalloutRetailPoseAuditResult mResult;
+    };
+
+    class FalloutRetailPoseApplyVisitor final : public osg::NodeVisitor
+    {
+    public:
+        explicit FalloutRetailPoseApplyVisitor(const FalloutRetailPoseSnapshot& snapshot)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            , mSnapshot(snapshot)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
+            const auto found = mSnapshot.mNodeByLowerName.find(lowerName);
+            auto* transform = dynamic_cast<osg::MatrixTransform*>(&node);
+            if (found != mSnapshot.mNodeByLowerName.end() && transform != nullptr
+                && !isFalloutRetailPoseSnapshotRoot(lowerName))
+            {
+                transform->setMatrix(
+                    getFalloutRetailPoseAdapterLocal(mSnapshot.mNodes[found->second], getNodePath()));
+                ++mApplied;
+            }
+            traverse(node);
+        }
+
+        std::size_t getApplied() const { return mApplied; }
+
+    private:
+        const FalloutRetailPoseSnapshot& mSnapshot;
+        std::size_t mApplied = 0;
+    };
+
+    class FalloutRetailPoseSkeletonRefreshVisitor final : public osg::NodeVisitor
+    {
+    public:
+        explicit FalloutRetailPoseSkeletonRefreshVisitor(unsigned int traversalNumber)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            , mTraversalNumber(traversalNumber)
+        {
+        }
+
+        void apply(osg::Group& group) override
+        {
+            if (auto* skeleton = dynamic_cast<SceneUtil::Skeleton*>(&group))
+            {
+                skeleton->markBoneMatriceDirty();
+                skeleton->updateBoneMatrices(mTraversalNumber);
+                ++mSkeletons;
+            }
+            traverse(group);
+        }
+
+        std::size_t getSkeletons() const { return mSkeletons; }
+
+    private:
+        unsigned int mTraversalNumber = 0;
+        std::size_t mSkeletons = 0;
+    };
+
+    class FalloutRetailPoseRigRefreshVisitor final : public osg::NodeVisitor
+    {
+    public:
+        FalloutRetailPoseRigRefreshVisitor()
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Geode& geode) override
+        {
+            for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
+                refresh(geode.getDrawable(index));
+            traverse(geode);
+        }
+
+        void apply(osg::Drawable& drawable) override { refresh(&drawable); }
+
+        std::size_t getRefreshed() const { return mRefreshed; }
+        std::size_t getVisited() const { return mVisited; }
+
+    private:
+        void refresh(osg::Drawable* drawable)
+        {
+            auto* rig = dynamic_cast<SceneUtil::RigGeometry*>(drawable);
+            if (rig == nullptr || !rig->isFalloutCharacterRig())
+                return;
+            ++mVisited;
+            rig->forceNextUpdate();
+            if (rig->refreshFalloutSkinningForCurrentPose())
+                ++mRefreshed;
+        }
+
+        std::size_t mVisited = 0;
+        std::size_t mRefreshed = 0;
+    };
+
+    class FalloutRetailPoseReplayCallback final : public osg::NodeCallback
+    {
+    public:
+        FalloutRetailPoseReplayCallback(
+            std::shared_ptr<const FalloutRetailPoseSnapshot> snapshot, int applyFrame, int auditFrame)
+            : mSnapshot(std::move(snapshot))
+            , mApplyFrame(applyFrame)
+            , mAuditFrame(auditFrame)
+        {
+        }
+
+        void operator()(osg::Node* node, osg::NodeVisitor* visitor) override
+        {
+            traverse(node, visitor);
+            if (node == nullptr || visitor == nullptr || visitor->getFrameStamp() == nullptr)
+                return;
+            const unsigned int frame = visitor->getFrameStamp()->getFrameNumber();
+            if (frame < static_cast<unsigned int>(std::max(0, mApplyFrame)))
+                return;
+
+            if (static_cast<int>(frame) == mAuditFrame)
+                audit(*node, frame, "pre-replay");
+
+            FalloutRetailPoseApplyVisitor applyVisitor(*mSnapshot);
+            node->accept(applyVisitor);
+            FalloutRetailPoseSkeletonRefreshVisitor skeletonRefresh(visitor->getTraversalNumber());
+            node->accept(skeletonRefresh);
+            FalloutRetailPoseRigRefreshVisitor rigRefresh;
+            node->accept(rigRefresh);
+            if (!mApplyLogged)
+            {
+                mApplyLogged = true;
+                Log(Debug::Info) << "FNV/ESM4 retail pose replay: frame=" << frame << " snapshot=\""
+                                 << mSnapshot->mPath << "\" expectedNodes="
+                                 << getFalloutRetailPoseReplayNodeCount(*mSnapshot)
+                                  << " appliedNodes=" << applyVisitor.getApplied()
+                                  << " refreshedSkeletons=" << skeletonRefresh.getSkeletons()
+                                  << " visitedRigs=" << rigRefresh.getVisited()
+                                  << " refreshedRigs=" << rigRefresh.getRefreshed();
+            }
+
+            if (static_cast<int>(frame) == mAuditFrame)
+                audit(*node, frame, "post-replay");
+        }
+
+    private:
+        void audit(osg::Node& root, unsigned int frame, std::string_view stage)
+        {
+            FalloutRetailPoseAuditVisitor visitor(*mSnapshot);
+            root.accept(visitor);
+            FalloutRetailPoseAuditResult result = visitor.finish();
+            const std::size_t expected = getFalloutRetailPoseReplayNodeCount(*mSnapshot);
+            const std::size_t missing = result.mMatched < expected ? expected - result.mMatched : 0;
+            const bool pass = missing == 0 && result.mDuplicates == 0 && result.mLocalMismatches == 0
+                && result.mWorldMismatches == 0;
+            Log(pass ? Debug::Info : Debug::Error)
+                << "FNV/ESM4 retail pose audit: frame=" << frame << " stage=" << stage
+                << " expectedNodes=" << expected << " matchedNodes=" << result.mMatched << " missingNodes="
+                << missing << " duplicateNodes=" << result.mDuplicates << " localMismatchNodes="
+                << result.mLocalMismatches << " worldMismatchNodes=" << result.mWorldMismatches
+                << " status=" << (pass ? "pass" : "fail");
+            for (const std::string& detail : result.mDetails)
+                Log(Debug::Error) << "FNV/ESM4 retail pose mismatch: frame=" << frame << " stage=" << stage
+                                  << " " << detail;
+        }
+
+        std::shared_ptr<const FalloutRetailPoseSnapshot> mSnapshot;
+        int mApplyFrame = 0;
+        int mAuditFrame = -1;
+        bool mApplyLogged = false;
+    };
+
+    template <typename T>
+    ESM::RefId findEsm4EditorId(const MWWorld::ESMStore& store, std::string_view editorId)
+    {
+        const auto& typedStore = store.get<T>();
+        for (auto it = typedStore.begin(); it != typedStore.end(); ++it)
+        {
+            if (it->mEditorId == editorId)
+                return ESM::RefId::formIdRefId(it->mId);
+        }
+
+        return ESM::RefId();
+    }
+
+    template <typename T>
+    bool addFNVEditorItem(
+        MWWorld::ContainerStore& inventory, const MWWorld::ESMStore& store, std::string_view editorId, int count)
+    {
+        const ESM::RefId id = findEsm4EditorId<T>(store, editorId);
+        if (id.empty())
+            return false;
+
+        try
+        {
+            const int existing = inventory.count(id);
+            const int missing = std::max(0, count - existing);
+            if (missing > 0)
+                inventory.add(id, missing, false);
+            Log(Debug::Info) << "FNV/ESM4 proof: starter inventory " << (missing > 0 ? "added " : "retained ")
+                             << editorId << " x" << count << " id=" << id.toDebugString()
+                             << " previous=" << existing << " inserted=" << missing;
+            return true;
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: starter inventory failed " << editorId << " id="
+                                << id.toDebugString() << ": " << e.what();
+            return false;
+        }
+    }
+
+    template <typename T>
+    bool isFNVEditorItemEquipped(
+        MWWorld::InventoryStore& inventory, const MWWorld::ESMStore& store, std::string_view editorId)
+    {
+        const ESM::RefId id = findEsm4EditorId<T>(store, editorId);
+        return !id.empty() && inventory.isEquipped(id);
+    }
+
+    template <typename T>
+    bool equipFNVEditorItem(const MWWorld::Ptr& player, MWWorld::InventoryStore& inventory,
+        const MWWorld::ESMStore& store, std::string_view editorId)
+    {
+        const ESM::RefId id = findEsm4EditorId<T>(store, editorId);
+        if (id.empty())
+            return false;
+
+        try
+        {
+            const MWWorld::Ptr item = inventory.search(id);
+            if (item.isEmpty())
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof: starter equipment missing from inventory " << editorId
+                                    << " id=" << id.toDebugString();
+                return false;
+            }
+
+            MWWorld::ActionEquip(item, true).execute(player);
+            const bool equipped = inventory.isEquipped(id);
+            Log(equipped ? Debug::Info : Debug::Warning)
+                << "FNV/ESM4 proof: starter equipment " << editorId << " id=" << id.toDebugString()
+                << " equipped=" << equipped;
+            return equipped;
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: starter equipment failed " << editorId << " id="
+                                << id.toDebugString() << ": " << e.what();
+            return false;
+        }
+    }
+
+    void applyFNVLevelOneCourierBootstrap(MWBase::World& world, bool moveOutsideDoc, bool applyProfile)
+    {
+        const int vcg01Stage = readProofInt("OPENMW_FNV_BOOTSTRAP_VCG01_STAGE", 200);
+        const bool questStageSet = world.getESM4QuestRuntime().setStage(
+            "VCG01", static_cast<std::uint8_t>(std::clamp(vcg01Stage, 0, 255)));
+        if (!questStageSet)
+            Log(Debug::Warning) << "FNV/ESM4 proof: could not set native VCG01 stage=" << vcg01Stage;
+        const float proofHour = readProofFloat("OPENMW_FNV_BOOTSTRAP_HOUR", 12.f);
+        world.setGlobalFloat(MWWorld::Globals::sGameHour, proofHour);
+        world.advanceTime(0.0, false);
+        Log(Debug::Info) << "FNV/ESM4 proof: set quest state VCG01 stage=" << vcg01Stage
+                         << " previousLoadSafe=explicit-bootstrap hour=" << proofHour;
+
+        if (moveOutsideDoc)
+        {
+            ESM::Position outside;
+            outside.pos[0] = readProofFloat("OPENMW_FNV_BOOTSTRAP_POS_X", -67735.f);
+            outside.pos[1] = readProofFloat("OPENMW_FNV_BOOTSTRAP_POS_Y", 3204.f);
+            outside.pos[2] = readProofFloat("OPENMW_FNV_BOOTSTRAP_POS_Z", 8425.f);
+            outside.rot[0] = readProofFloat("OPENMW_FNV_BOOTSTRAP_ROT_X", 0.f);
+            outside.rot[1] = readProofFloat("OPENMW_FNV_BOOTSTRAP_ROT_Y", 0.f);
+            outside.rot[2] = readProofFloat("OPENMW_FNV_BOOTSTRAP_ROT_Z", -0.6981317f);
+            ESM::Position cellProbe = outside;
+            ESM::RefId cellId = world.findExteriorPosition("Goodsprings", cellProbe);
+            if (cellId.empty())
+            {
+                cellId = ESM::RefId::formIdRefId(ESM::FormId::fromUint32(0x010daeb9));
+                Log(Debug::Warning) << "FNV/ESM4 proof: Goodsprings cell lookup failed; falling back to "
+                                    << cellId.toDebugString();
+            }
+            else
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: resolved Goodsprings bootstrap cell " << cellId.toDebugString()
+                                 << " preserving explicit proof pos=(" << outside.pos[0] << "," << outside.pos[1]
+                                 << "," << outside.pos[2] << ")";
+            }
+            world.changeToCell(cellId, outside, false, true);
+            MWWorld::Ptr player = world.getPlayerPtr();
+            player = world.moveObject(player, outside.asVec3(), true, true);
+            if (player.getCell() != nullptr)
+                player.getCell()->setWaterLevel(-200000.f);
+            world.rotateObject(player, osg::Vec3f(outside.rot[0], outside.rot[1], outside.rot[2]));
+            if (MWRender::Camera* camera = world.getCamera())
+            {
+                const char* cameraMode = std::getenv("OPENMW_FNV_BOOTSTRAP_CAMERA_MODE");
+                const bool forceFirstPerson
+                    = cameraMode != nullptr && Misc::StringUtils::ciEqual(cameraMode, "firstperson");
+                const float cameraDistance = readProofFloat("OPENMW_FNV_BOOTSTRAP_CAMERA_DISTANCE", 0.f);
+                camera->attachTo(player);
+                camera->setMode(
+                    forceFirstPerson ? MWRender::Camera::Mode::FirstPerson : MWRender::Camera::Mode::ThirdPerson,
+                    true);
+                camera->setPreferredCameraDistance(cameraDistance);
+                camera->update(0.f, false);
+                camera->setPitch(-outside.rot[0], true);
+                camera->setYaw(-outside.rot[2], true);
+                camera->setRoll(0.f);
+                camera->updateCamera();
+                const ESM::Position& actual = player.getRefData().getPosition();
+                const osg::Vec3d cameraPos = camera->getPosition();
+                Log(Debug::Info) << "FNV/ESM4 proof: reset player camera mode="
+                                 << static_cast<int>(camera->getMode()) << " playerPos=("
+                                 << actual.pos[0] << "," << actual.pos[1] << "," << actual.pos[2]
+                                 << ") playerRot=(" << actual.rot[0] << "," << actual.rot[1] << ","
+                                 << actual.rot[2] << ") cameraPos=(" << cameraPos.x() << "," << cameraPos.y()
+                                 << "," << cameraPos.z() << ") cameraPitch=" << camera->getPitch()
+                                 << " cameraYaw=" << camera->getYaw() << " cameraDistance=" << cameraDistance;
+            }
+            Log(Debug::Info) << "FNV/ESM4 proof: moved player outside after Doc handoff activeCell="
+                             << world.getCellName(player.getCell()) << " pos=("
+                             << outside.pos[0] << "," << outside.pos[1] << "," << outside.pos[2] << ") rotZ="
+                             << outside.rot[2] << " rotX=" << outside.rot[0] << " rotY=" << outside.rot[1]
+                             << " cell=" << cellId.toDebugString() << " waterLevel=-200000";
+        }
+
+        if (!applyProfile)
+            return;
+
+        MWWorld::Ptr player = world.getPlayerPtr();
+        MWMechanics::NpcStats& stats = player.getClass().getNpcStats(player);
+        stats.setLevel(1);
+        stats.setLevelProgress(0);
+        stats.setBounty(0);
+        stats.setReputation(0);
+        stats.setBaseDisposition(50);
+
+        const std::pair<ESM::RefId, float> attributes[] = {
+            { ESM::Attribute::Strength, 60.f },
+            { ESM::Attribute::Intelligence, 60.f },
+            { ESM::Attribute::Willpower, 50.f },
+            { ESM::Attribute::Agility, 60.f },
+            { ESM::Attribute::Speed, 50.f },
+            { ESM::Attribute::Endurance, 60.f },
+            { ESM::Attribute::Personality, 50.f },
+            { ESM::Attribute::Luck, 60.f },
+        };
+        for (const auto& [id, value] : attributes)
+            stats.setAttribute(id, value);
+
+        for (int i = 0; i < ESM::Skill::Length; ++i)
+        {
+            MWMechanics::SkillValue skill;
+            skill.setBase(35.f);
+            skill.setProgress(0.f);
+            stats.setSkill(ESM::Skill::indexToRefId(i), skill);
+        }
+
+        stats.setHealth(MWMechanics::DynamicStat<float>(125.f, 125.f, 125.f));
+        stats.setMagicka(MWMechanics::DynamicStat<float>(60.f, 60.f, 60.f));
+        stats.setFatigue(MWMechanics::DynamicStat<float>(220.f, 220.f, 220.f));
+
+        MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+        const MWWorld::ESMStore& store = world.getStore();
+        int added = 0;
+        const bool pistolAdded
+            = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNV9mmPistol", 1);
+        const bool rifleAdded
+            = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNVVarmintRifle", 1);
+        const bool ammo9mmAdded
+            = addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo9mm", 60);
+        const bool ammo556Added
+            = addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo556mm", 60);
+        const bool stimpakAdded = addFNVEditorItem<ESM4::Potion>(inventory, store, "Stimpak", 5);
+        const bool bobbyPinAdded = addFNVEditorItem<ESM4::MiscItem>(inventory, store, "BobbyPin", 5);
+        const int starterCaps = std::max(0, readProofInt("OPENMW_FNV_PROOF_STARTER_CAPS", 75));
+        const bool capsAdded = addFNVEditorItem<ESM4::MiscItem>(inventory, store, "Caps001", starterCaps);
+        const bool outfitAdded = addFNVEditorItem<ESM4::Armor>(inventory, store, "VaultSuit21", 1);
+        const bool headgearAdded = addFNVEditorItem<ESM4::Armor>(inventory, store, "CowboyHat02", 1);
+        for (const bool present : { pistolAdded, rifleAdded, ammo9mmAdded, ammo556Added, stimpakAdded,
+                 bobbyPinAdded, capsAdded, outfitAdded, headgearAdded })
+        {
+            added += present ? 1 : 0;
+        }
+
+        // Audit the loaded save before the idempotent equip pass below. On a fresh bootstrap these flags are
+        // expected to be false; on a reload they prove the equipped InventoryStore slots survived serialization.
+        const bool outfitPreviouslyEquipped
+            = isFNVEditorItemEquipped<ESM4::Armor>(inventory, store, "VaultSuit21");
+        const bool headgearPreviouslyEquipped
+            = isFNVEditorItemEquipped<ESM4::Armor>(inventory, store, "CowboyHat02");
+        const bool weaponPreviouslyEquipped
+            = isFNVEditorItemEquipped<ESM4::Weapon>(inventory, store, "WeapNVVarmintRifle");
+        const bool ammunitionPreviouslyEquipped
+            = isFNVEditorItemEquipped<ESM4::Ammunition>(inventory, store, "Ammo556mm");
+
+        const bool outfitEquipped
+            = outfitAdded && equipFNVEditorItem<ESM4::Armor>(player, inventory, store, "VaultSuit21");
+        const bool headgearEquipped
+            = headgearAdded && equipFNVEditorItem<ESM4::Armor>(player, inventory, store, "CowboyHat02");
+        const bool weaponEquipped
+            = rifleAdded && equipFNVEditorItem<ESM4::Weapon>(player, inventory, store, "WeapNVVarmintRifle");
+        const bool ammunitionEquipped
+            = ammo556Added && equipFNVEditorItem<ESM4::Ammunition>(player, inventory, store, "Ammo556mm");
+        player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
+
+        Log(Debug::Info) << "FNV/ESM4 proof: level-1 Courier profile applied level=" << stats.getLevel()
+                         << " attributes=8 skills=" << ESM::Skill::Length << " starterItemKinds=" << added
+                         << " visualOutfit=VaultSuit21 visualHeadgear=CowboyHat02"
+                         << " visualWeapon=WeapNVVarmintRifle"
+                         << " inventoryCounts={VaultSuit21:" << inventory.count(findEsm4EditorId<ESM4::Armor>(
+                                store, "VaultSuit21"))
+                         << ",CowboyHat02:" << inventory.count(findEsm4EditorId<ESM4::Armor>(store, "CowboyHat02"))
+                         << ",WeapNV9mmPistol:"
+                         << inventory.count(findEsm4EditorId<ESM4::Weapon>(store, "WeapNV9mmPistol"))
+                         << ",WeapNVVarmintRifle:"
+                         << inventory.count(findEsm4EditorId<ESM4::Weapon>(store, "WeapNVVarmintRifle"))
+                         << ",Ammo9mm:"
+                         << inventory.count(findEsm4EditorId<ESM4::Ammunition>(store, "Ammo9mm"))
+                         << ",Ammo556mm:"
+                          << inventory.count(findEsm4EditorId<ESM4::Ammunition>(store, "Ammo556mm")) << "}"
+                          << " preexistingEquipped={outfit:" << outfitPreviouslyEquipped
+                          << ",headgear:" << headgearPreviouslyEquipped << ",weapon:"
+                          << weaponPreviouslyEquipped << ",ammunition:" << ammunitionPreviouslyEquipped << "}"
+                          << " equipped={outfit:" << outfitEquipped << ",headgear:" << headgearEquipped
+                         << ",weapon:" << weaponEquipped << ",ammunition:" << ammunitionEquipped << "}"
+                         << " status="
+                         << (outfitEquipped && headgearEquipped && weaponEquipped && ammunitionEquipped ? "pass"
+                                                                                                     : "fail");
+    }
+
+    bool applyFNVGameplayStartPlacement(MWBase::World& world)
+    {
+        const char* const requestedCellText = std::getenv("OPENMW_FNV_GAMEPLAY_START_WORLDSPACE");
+        if (requestedCellText == nullptr || *requestedCellText == '\0')
+            return true;
+
+        ESM::RefId requestedWorldspace;
+        try
+        {
+            requestedWorldspace = ESM::RefId::deserializeText(requestedCellText);
+        }
+        catch (const std::exception& error)
+        {
+            Log(Debug::Error) << "FNV gameplay start: final developer exterior placement=failed reason="
+                              << error.what() << " requestedCell=" << requestedCellText;
+            return false;
+        }
+
+        if (requestedWorldspace.empty())
+        {
+            Log(Debug::Error) << "FNV gameplay start: final developer exterior placement=failed reason=empty-worldspace "
+                              << "requestedWorldspace=" << requestedCellText;
+            return false;
+        }
+
+        const int requestedGridX = readProofInt("OPENMW_FNV_GAMEPLAY_START_GRID_X", 0);
+        const int requestedGridY = readProofInt("OPENMW_FNV_GAMEPLAY_START_GRID_Y", 0);
+        const ESM::ExteriorCellLocation location(requestedGridX, requestedGridY, requestedWorldspace);
+        ESM::RefId cellId;
+        try
+        {
+            // OPENMW_FNV_GAMEPLAY_START_WORLDSPACE names the ESM4 WRLD record,
+            // not a CELL record. Resolve its real exterior cell through the
+            // normal WorldModel worldspace-plus-grid path.
+            MWWorld::CellStore& exterior = MWBase::Environment::get().getWorldModel()->getExterior(location);
+            cellId = exterior.getCell()->getId();
+        }
+        catch (const std::exception& error)
+        {
+            Log(Debug::Error) << "FNV gameplay start: final developer exterior placement=failed reason="
+                              << error.what() << " worldspace=" << requestedWorldspace.toDebugString()
+                              << " grid=(" << requestedGridX << "," << requestedGridY << ")";
+            return false;
+        }
+
+        const osg::Vec2f center = ESM::indexToPosition(location, true);
+        ESM::Position position;
+        position.pos[0] = center.x();
+        position.pos[1] = center.y();
+        position.pos[2] = 0.f;
+        position.rot[0] = 0.f;
+        position.rot[1] = 0.f;
+        position.rot[2] = 0.f;
+
+        world.changeToCell(cellId, position, false, true);
+        MWWorld::Ptr player = world.getPlayerPtr();
+        player = world.moveObject(player, position.asVec3(), true, true);
+        world.adjustPosition(player, true);
+
+        const ESM::Position& applied = player.getRefData().getPosition();
+        Log(Debug::Info) << "FNV gameplay start: applied final developer exterior placement="
+                         << cellId.toDebugString() << " worldspace="
+                         << requestedWorldspace.toDebugString() << " grid=(" << requestedGridX << ","
+                         << requestedGridY << ") position=(" << applied.pos[0] << "," << applied.pos[1] << ","
+                         << applied.pos[2] << ") source=normal-new-game-postload";
+        return true;
+    }
+
+    bool applyFNVPipBoyShowcaseLoadout(MWBase::World& world)
+    {
+        // The physical Pip-Boy is a presentation of the real inventory. Keep
+        // the showcase useful without inventing Morrowind fallback items.
+        MWWorld::Ptr player = world.getPlayerPtr();
+        if (player.isEmpty())
+        {
+            Log(Debug::Error) << "FNV Pip-Boy showcase: authored loadout failed because Player is unresolved";
+            return false;
+        }
+
+        MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+        const MWWorld::ESMStore& store = world.getStore();
+        const bool pistolAdded = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNV9mmPistol", 1);
+        const bool rifleAdded = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNVVarmintRifle", 1);
+        const bool ammo9mmAdded = addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo9mm", 60);
+        const bool ammo556Added = addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo556mm", 60);
+        const bool stimpakAdded = addFNVEditorItem<ESM4::Potion>(inventory, store, "Stimpak", 5);
+        const bool lockpickAdded = addFNVEditorItem<ESM4::MiscItem>(inventory, store, "Lockpick", 5);
+        const bool capsAdded = addFNVEditorItem<ESM4::MiscItem>(inventory, store, "Caps001", 75);
+        const bool outfitAdded = addFNVEditorItem<ESM4::Armor>(inventory, store, "VaultSuit21", 1);
+        const bool headgearAdded = addFNVEditorItem<ESM4::Armor>(inventory, store, "CowboyHat02", 1);
+
+        const bool outfitEquipped
+            = outfitAdded && equipFNVEditorItem<ESM4::Armor>(player, inventory, store, "VaultSuit21");
+        const bool headgearEquipped
+            = headgearAdded && equipFNVEditorItem<ESM4::Armor>(player, inventory, store, "CowboyHat02");
+        const bool weaponEquipped
+            = pistolAdded && equipFNVEditorItem<ESM4::Weapon>(player, inventory, store, "WeapNV9mmPistol");
+        const bool ammunitionEquipped
+            = ammo9mmAdded && equipFNVEditorItem<ESM4::Ammunition>(player, inventory, store, "Ammo9mm");
+        player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
+
+        const bool authoredItemsPresent = pistolAdded && rifleAdded && ammo9mmAdded && ammo556Added && stimpakAdded
+            && lockpickAdded && capsAdded && outfitAdded && headgearAdded;
+        const bool presentationEquipped
+            = outfitEquipped && headgearEquipped && weaponEquipped && ammunitionEquipped;
+        Log(authoredItemsPresent && presentationEquipped ? Debug::Info : Debug::Error)
+            << "FNV Pip-Boy showcase: authored loadout source=FalloutNV.esm fallbackItems=0 "
+            << "items={WeapNV9mmPistol:" << pistolAdded << ",WeapNVVarmintRifle:" << rifleAdded
+            << ",Ammo9mm:" << ammo9mmAdded << ",Ammo556mm:" << ammo556Added << ",Stimpak:" << stimpakAdded
+            << ",Lockpick:" << lockpickAdded << ",Caps001:" << capsAdded << ",VaultSuit21:" << outfitAdded
+            << ",CowboyHat02:" << headgearAdded << "} equipped={outfit:" << outfitEquipped
+            << ",headgear:" << headgearEquipped << ",weapon:" << weaponEquipped << ",ammunition:"
+            << ammunitionEquipped << "} status="
+            << (authoredItemsPresent && presentationEquipped ? "pass" : "fail");
+        return authoredItemsPresent && presentationEquipped;
+    }
+
+    void resetFNVProofCamera(MWBase::World& world)
+    {
+        MWWorld::Ptr player = world.getPlayerPtr();
+        if (player.isEmpty())
+            return;
+
+        ESM::Position pos = player.getRefData().getPosition();
+        pos.rot[0] = readProofFloat("OPENMW_FNV_PROOF_CAMERA_PLAYER_ROT_X", pos.rot[0]);
+        pos.rot[1] = readProofFloat("OPENMW_FNV_PROOF_CAMERA_PLAYER_ROT_Y", pos.rot[1]);
+        pos.rot[2] = readProofFloat("OPENMW_FNV_PROOF_CAMERA_PLAYER_ROT_Z", -0.6981317f);
+        world.rotateObject(player, osg::Vec3f(pos.rot[0], pos.rot[1], pos.rot[2]));
+
+        if (MWRender::Camera* camera = world.getCamera())
+        {
+            const char* cameraMode = std::getenv("OPENMW_FNV_PROOF_CAMERA_MODE");
+            const bool firstPerson = cameraMode == nullptr || *cameraMode == '\0'
+                || Misc::StringUtils::ciEqual(cameraMode, "firstperson");
+            const float cameraDistance = readProofFloat("OPENMW_FNV_PROOF_CAMERA_DISTANCE", 0.f);
+            const float cameraPitch = readProofFloat("OPENMW_FNV_PROOF_CAMERA_PITCH", 0.45f);
+            const float cameraYaw = readProofFloat("OPENMW_FNV_PROOF_CAMERA_YAW", -pos.rot[2]);
+
+            camera->attachTo(player);
+            camera->setMode(MWRender::Camera::Mode::ThirdPerson, true);
+            camera->setPreferredCameraDistance(readProofFloat("OPENMW_FNV_PROOF_CAMERA_NUDGE_DISTANCE", 128.f));
+            camera->processViewChange();
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->setMode(firstPerson ? MWRender::Camera::Mode::FirstPerson : MWRender::Camera::Mode::ThirdPerson,
+                true);
+            camera->setPreferredCameraDistance(cameraDistance);
+            camera->processViewChange();
+            camera->update(0.f, false);
+            camera->setPitch(cameraPitch, true);
+            camera->setYaw(cameraYaw, true);
+            camera->setRoll(0.f);
+            camera->instantTransition();
+            camera->update(0.f, false);
+            camera->updateCamera();
+
+            const osg::Vec3d cameraPos = camera->getPosition();
+            const ESM::Position& actual = player.getRefData().getPosition();
+            Log(Debug::Info) << "FNV/ESM4 proof: reset real-start camera mode=" << static_cast<int>(camera->getMode())
+                             << " playerPos=(" << actual.pos[0] << "," << actual.pos[1] << "," << actual.pos[2]
+                             << ") playerRot=(" << actual.rot[0] << "," << actual.rot[1] << "," << actual.rot[2]
+                             << ") cameraPos=(" << cameraPos.x() << "," << cameraPos.y() << "," << cameraPos.z()
+                             << ") cameraPitch=" << camera->getPitch() << " cameraYaw=" << camera->getYaw()
+                             << " cameraDistance=" << cameraDistance;
+        }
+    }
+
+    void settleFNVFlatStartupCamera(MWBase::World& world)
+    {
+        if (VR::getVR())
+            return;
+
+        MWWorld::Ptr player = world.getPlayerPtr();
+        if (player.isEmpty())
+            return;
+
+        MWRender::Camera* camera = world.getCamera();
+        if (camera == nullptr)
+            return;
+
+        const ESM::Position& pos = player.getRefData().getPosition();
+        const float cameraPitch = 0.20f;
+        const float cameraYaw = -pos.rot[2];
+
+        camera->attachTo(player);
+        camera->setMode(MWRender::Camera::Mode::ThirdPerson, true);
+        camera->setPreferredCameraDistance(128.f);
+        camera->processViewChange();
+        camera->update(0.f, false);
+        camera->instantTransition();
+        camera->setMode(MWRender::Camera::Mode::FirstPerson, true);
+        camera->setPreferredCameraDistance(0.f);
+        camera->processViewChange();
+        camera->update(0.f, false);
+        camera->setPitch(cameraPitch, true);
+        camera->setYaw(cameraYaw, true);
+        camera->setRoll(0.f);
+        camera->instantTransition();
+        camera->update(0.f, false);
+        camera->updateCamera();
+
+        const osg::Vec3d cameraPos = camera->getPosition();
+        Log(Debug::Verbose) << "FNV/ESM4 diag: settled flat startup camera via zoom-cycle equivalent"
+                         << " mode=" << static_cast<int>(camera->getMode()) << " playerPos=(" << pos.pos[0] << ","
+                         << pos.pos[1] << "," << pos.pos[2] << ") playerRotZ=" << pos.rot[2] << " cameraPos=("
+                         << cameraPos.x() << "," << cameraPos.y() << "," << cameraPos.z()
+                         << ") cameraPitch=" << camera->getPitch() << " cameraYaw=" << camera->getYaw();
+    }
+
+    bool viewerTelemetryEnabled(const char* name)
+    {
+        const char* value = std::getenv(name);
+        if (value == nullptr || *value == '\0')
+            return false;
+
+        return !Misc::StringUtils::ciEqual(value, "0") && !Misc::StringUtils::ciEqual(value, "false")
+            && !Misc::StringUtils::ciEqual(value, "off") && !Misc::StringUtils::ciEqual(value, "no");
+    }
+
+    bool worldViewerTraceEnabled()
+    {
+        return viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TRACE");
+    }
+
+    void worldViewerTrace(unsigned int frameNumber, std::string_view phase)
+    {
+        if (!worldViewerTraceEnabled())
+            return;
+
+        Log(Debug::Info) << "World viewer trace: frame=" << frameNumber << " phase=\"" << phase << "\"";
+        std::fflush(stdout);
+        std::fflush(stderr);
+    }
+
+    std::string cleanWorldViewerTelemetryString(std::string value)
+    {
+        for (char& c : value)
+        {
+            if (c == '"')
+                c = '\'';
+            else if (static_cast<unsigned char>(c) < 32)
+                c = ' ';
+        }
+        return value;
+    }
+
+    std::string worldViewerOsgObjectType(const osg::Object& object)
+    {
+        std::string type = object.libraryName();
+        if (!type.empty())
+            type += "::";
+        type += object.className();
+        return cleanWorldViewerTelemetryString(type);
+    }
+
+    std::string worldViewerCallbackType(const osg::Callback& callback)
+    {
+        std::string type = worldViewerOsgObjectType(callback);
+        if (type == "osg::Callback")
+            type = typeid(callback).name();
+        return cleanWorldViewerTelemetryString(type);
+    }
+
+    std::string worldViewerNodePathText(const osg::NodePath& path)
+    {
+        if (path.empty())
+            return "<none>";
+
+        std::string out;
+        const std::size_t start = path.size() > 8 ? path.size() - 8 : 0;
+        if (start > 0)
+            out = ".../";
+
+        for (std::size_t i = start; i < path.size(); ++i)
+        {
+            if (i != start)
+                out += "/";
+
+            const osg::Node* node = path[i];
+            if (node == nullptr)
+            {
+                out += "<null>";
+                continue;
+            }
+
+            std::string name = node->getName();
+            if (name.empty())
+                name = worldViewerOsgObjectType(*node);
+            out += cleanWorldViewerTelemetryString(name);
+        }
+
+        return out;
+    }
+
+    std::string lowerWorldViewerText(std::string value)
+    {
+        std::transform(value.begin(), value.end(), value.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return value;
+    }
+
+    std::vector<std::string> readWorldViewerFilterList(const char* name)
+    {
+        std::vector<std::string> out;
+        const char* value = std::getenv(name);
+        if (value == nullptr || *value == '\0')
+            return out;
+
+        std::string current;
+        for (const char c : std::string_view(value))
+        {
+            if (c == ';' || c == ',' || c == '|')
+            {
+                if (!current.empty())
+                    out.push_back(lowerWorldViewerText(current));
+                current.clear();
+                continue;
+            }
+            if (!std::isspace(static_cast<unsigned char>(c)))
+                current += c;
+        }
+        if (!current.empty())
+            out.push_back(lowerWorldViewerText(current));
+
+        return out;
+    }
+
+    class WorldViewerOsgUpdateCallbackAuditVisitor : public osg::NodeVisitor
+    {
+    public:
+        WorldViewerOsgUpdateCallbackAuditVisitor(
+            unsigned int frameNumber, bool stripAllNodeCallbacks, bool stripAllStateSetCallbacks,
+            std::vector<std::string> stripClassFilters, std::vector<std::string> keepPathFilters, int logLimit)
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            , mFrameNumber(frameNumber)
+            , mStripAllNodeCallbacks(stripAllNodeCallbacks)
+            , mStripAllStateSetCallbacks(stripAllStateSetCallbacks)
+            , mStripClassFilters(std::move(stripClassFilters))
+            , mKeepPathFilters(std::move(keepPathFilters))
+            , mLogLimit(std::max(0, logLimit))
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            ++mNodesVisited;
+            auditNode(node);
+            traverse(node);
+        }
+
+        void report(std::string_view rootName) const
+        {
+            Log(Debug::Info) << "World viewer osg-update-callback-summary: frame=" << mFrameNumber << " root=\""
+                             << rootName << "\" nodesVisited=" << mNodesVisited
+                             << " nodeOwners=" << mNodeOwnersSeen << " nodeCallbacks=" << mNodeCallbacksSeen
+                             << " nodeOwnersStripped=" << mNodeOwnersStripped
+                             << " stateSetOwners=" << mStateSetOwnersSeen
+                             << " stateSetCallbacks=" << mStateSetCallbacksSeen
+                             << " stateSetOwnersStripped=" << mStateSetOwnersStripped
+                             << " logged=" << mLogged;
+        }
+
+    private:
+        void auditNode(osg::Node& node)
+        {
+            const std::string pathText = worldViewerNodePathText(getNodePath());
+            osg::Callback* nodeCallback = node.getUpdateCallback();
+            if (nodeCallback != nullptr)
+            {
+                const bool stripNodeCallbacks = shouldStripCallbackChain(nodeCallback, mStripAllNodeCallbacks, pathText);
+                ++mNodeOwnersSeen;
+                mNodeCallbacksSeen += auditCallbackChain("node", node, nodeCallback, stripNodeCallbacks, pathText);
+                if (stripNodeCallbacks)
+                {
+                    node.setUpdateCallback(nullptr);
+                    ++mNodeOwnersStripped;
+                }
+            }
+
+            osg::StateSet* stateSet = node.getStateSet();
+            if (stateSet == nullptr || stateSet->getUpdateCallback() == nullptr)
+                return;
+
+            const bool stripStateSetCallbacks
+                = shouldStripCallbackChain(stateSet->getUpdateCallback(), mStripAllStateSetCallbacks, pathText);
+            ++mStateSetOwnersSeen;
+            mStateSetCallbacksSeen += auditCallbackChain("stateset", node, stateSet->getUpdateCallback(),
+                stripStateSetCallbacks, pathText);
+            if (stripStateSetCallbacks)
+            {
+                stateSet->setUpdateCallback(nullptr);
+                ++mStateSetOwnersStripped;
+            }
+        }
+
+        bool shouldStripCallbackChain(osg::Callback* callback, bool stripAll, std::string_view pathText) const
+        {
+            const std::string lowerPath = lowerWorldViewerText(std::string(pathText));
+            for (const std::string& keep : mKeepPathFilters)
+            {
+                if (!keep.empty() && lowerPath.find(keep) != std::string::npos)
+                    return false;
+            }
+
+            if (stripAll)
+                return true;
+
+            if (mStripClassFilters.empty())
+                return false;
+
+            for (osg::Callback* cb = callback; cb != nullptr; cb = cb->getNestedCallback())
+            {
+                const std::string callbackType = lowerWorldViewerText(worldViewerCallbackType(*cb));
+                for (const std::string& filter : mStripClassFilters)
+                {
+                    if (!filter.empty() && callbackType.find(filter) != std::string::npos)
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        int auditCallbackChain(
+            const char* owner, osg::Node& node, osg::Callback* callback, bool stripOwner, std::string_view pathText)
+        {
+            int count = 0;
+            for (osg::Callback* cb = callback; cb != nullptr; cb = cb->getNestedCallback())
+            {
+                if (mLogged < mLogLimit)
+                {
+                    Log(Debug::Info) << "World viewer osg-update-callback: frame=" << mFrameNumber << " owner=\""
+                                     << owner << "\" action=\"" << (stripOwner ? "strip" : "audit")
+                                     << "\" link=" << count << " nodeClass=\"" << worldViewerOsgObjectType(node)
+                                     << "\" nodeName=\"" << cleanWorldViewerTelemetryString(node.getName())
+                                     << "\" callbackClass=\"" << worldViewerCallbackType(*cb) << "\" path=\""
+                                     << pathText << "\"";
+                    ++mLogged;
+                }
+                ++count;
+            }
+            return count;
+        }
+
+        unsigned int mFrameNumber = 0;
+        bool mStripAllNodeCallbacks = false;
+        bool mStripAllStateSetCallbacks = false;
+        std::vector<std::string> mStripClassFilters;
+        std::vector<std::string> mKeepPathFilters;
+        int mLogLimit = 0;
+        int mLogged = 0;
+        int mNodesVisited = 0;
+        int mNodeOwnersSeen = 0;
+        int mNodeCallbacksSeen = 0;
+        int mNodeOwnersStripped = 0;
+        int mStateSetOwnersSeen = 0;
+        int mStateSetCallbacksSeen = 0;
+        int mStateSetOwnersStripped = 0;
+    };
+
+    bool worldViewerOsgUpdateCallbackAuditRequested()
+    {
+        return viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_AUDIT_OSG_UPDATE_CALLBACKS")
+            || viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_STRIP_OSG_UPDATE_CALLBACKS")
+            || viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_STRIP_OSG_NODE_UPDATE_CALLBACKS")
+            || viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_STRIP_OSG_STATESET_UPDATE_CALLBACKS")
+            || std::getenv("OPENMW_WORLD_VIEWER_STRIP_OSG_UPDATE_CALLBACK_CLASS_FILTER") != nullptr
+            || std::getenv("OPENMW_WORLD_VIEWER_KEEP_OSG_UPDATE_CALLBACK_PATH_FILTER") != nullptr;
+    }
+
+    void auditWorldViewerOsgUpdateCallbacks(osg::Node* sceneData, unsigned int frameNumber)
+    {
+        if (!worldViewerOsgUpdateCallbackAuditRequested())
+            return;
+
+        if (sceneData == nullptr)
+        {
+            Log(Debug::Info) << "World viewer osg-update-callback-summary: frame=" << frameNumber
+                             << " root=\"scene\" nodesVisited=0 nodeOwners=0 nodeCallbacks=0"
+                             << " nodeOwnersStripped=0 stateSetOwners=0 stateSetCallbacks=0"
+                             << " stateSetOwnersStripped=0 logged=0 reason=\"missing scene data\"";
+            return;
+        }
+
+        const bool stripAll = viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_STRIP_OSG_UPDATE_CALLBACKS");
+        const bool stripNodeCallbacks
+            = stripAll || viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_STRIP_OSG_NODE_UPDATE_CALLBACKS");
+        const bool stripStateSetCallbacks
+            = stripAll || viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_STRIP_OSG_STATESET_UPDATE_CALLBACKS");
+        std::vector<std::string> stripClassFilters
+            = readWorldViewerFilterList("OPENMW_WORLD_VIEWER_STRIP_OSG_UPDATE_CALLBACK_CLASS_FILTER");
+        std::vector<std::string> keepPathFilters
+            = readWorldViewerFilterList("OPENMW_WORLD_VIEWER_KEEP_OSG_UPDATE_CALLBACK_PATH_FILTER");
+
+        static bool loggedExamples = false;
+        const bool logEveryFrame = viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_AUDIT_OSG_UPDATE_CALLBACKS_EVERY_FRAME");
+        const int logLimit = (!loggedExamples || logEveryFrame)
+            ? readProofInt("OPENMW_WORLD_VIEWER_OSG_UPDATE_CALLBACK_AUDIT_LIMIT", 120)
+            : 0;
+
+        WorldViewerOsgUpdateCallbackAuditVisitor visitor(
+            frameNumber, stripNodeCallbacks, stripStateSetCallbacks, std::move(stripClassFilters),
+            std::move(keepPathFilters), logLimit);
+        sceneData->accept(visitor);
+        visitor.report("scene");
+
+        if (logLimit > 0)
+            loggedExamples = true;
+
+        std::fflush(stdout);
+        std::fflush(stderr);
+    }
+
+    std::string safeWorldViewerPtrText(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty())
+            return "<none>";
+
+        try
+        {
+            return ptr.toString();
+        }
+        catch (const std::exception& e)
+        {
+            return std::string("<ptr failed: ") + e.what() + ">";
+        }
+    }
+
+    std::string safeWorldViewerPtrBase(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty())
+            return "<none>";
+
+        try
+        {
+            return ptr.getCellRef().getRefId().toDebugString();
+        }
+        catch (const std::exception& e)
+        {
+            return std::string("<base failed: ") + e.what() + ">";
+        }
+    }
+
+    std::string safeWorldViewerPtrType(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty())
+            return "<none>";
+
+        try
+        {
+            return std::string(ptr.getTypeDescription());
+        }
+        catch (const std::exception& e)
+        {
+            return std::string("<type failed: ") + e.what() + ">";
+        }
+    }
+
+    std::string safeWorldViewerPtrName(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty())
+            return "<none>";
+
+        try
+        {
+            return std::string(ptr.getClass().getName(ptr));
+        }
+        catch (const std::exception& e)
+        {
+            return std::string("<name failed: ") + e.what() + ">";
+        }
+    }
+
+    bool isWorldViewerActorPtr(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty())
+            return false;
+
+        try
+        {
+            return ptr.getClass().isActor();
+        }
+        catch (const std::exception&)
+        {
+            return false;
+        }
+    }
+
+    void logWorldViewerRayResult(const char* kind, unsigned frameNumber, const osg::Vec3f& from,
+        const osg::Vec3f& to, const MWPhysics::RayCastingResult& result)
+    {
+        const float distance = result.mHit ? (result.mHitPos - from).length() : (to - from).length();
+        const MWWorld::Ptr& hitObject = result.mHitObject;
+
+        Log(Debug::Info) << "World viewer ray: kind=" << kind << " frame=" << frameNumber << " hit=" << result.mHit
+                         << " distance=" << distance << " actorHit=" << isWorldViewerActorPtr(hitObject)
+                         << " from=(" << from.x() << "," << from.y() << "," << from.z() << ") to=(" << to.x()
+                         << "," << to.y() << "," << to.z() << ") hitPos=(" << result.mHitPos.x() << ","
+                         << result.mHitPos.y() << "," << result.mHitPos.z() << ") hitNormal=("
+                         << result.mHitNormal.x() << "," << result.mHitNormal.y() << "," << result.mHitNormal.z()
+                         << ") hitBase=" << safeWorldViewerPtrBase(hitObject)
+                         << " hitType=\"" << safeWorldViewerPtrType(hitObject) << "\" hitName=\""
+                         << safeWorldViewerPtrName(hitObject) << "\" hitPtr=" << safeWorldViewerPtrText(hitObject);
+    }
+
+    void logWorldViewerTelemetry(MWWorld::World& world, osgViewer::Viewer& viewer, unsigned frameNumber, int state,
+        bool loadingGui, bool worldReady, int worldReadyFrames)
+    {
+        MWWorld::Ptr player;
+        try
+        {
+            player = world.getPlayerPtr();
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "World viewer telemetry: player lookup failed: " << e.what();
+        }
+
+        MWWorld::CellStore* playerCell = !player.isEmpty() && player.isInCell() ? player.getCell() : nullptr;
+        const bool playerExterior = playerCell != nullptr && playerCell->isExterior();
+        ESM::Position playerPos = {};
+        if (!player.isEmpty())
+            playerPos = player.getRefData().getPosition();
+
+        MWRender::Camera* camera = world.getCamera();
+        const osg::Vec3d cameraPos = camera != nullptr ? camera->getPosition() : osg::Vec3d();
+        const osg::Vec3f cameraPosF(cameraPos.x(), cameraPos.y(), cameraPos.z());
+        const osg::Vec3f playerPosF(playerPos.pos[0], playerPos.pos[1], playerPos.pos[2]);
+        const auto playerHealthValue = world.getFalloutPlayerRuntimeState().getCurrentActorValue(
+            MWWorld::FalloutPlayerRuntimeState::HealthActorValue);
+        const auto playerActionPointsValue = world.getFalloutPlayerRuntimeState().getCurrentActorValue(
+            MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue);
+        const auto playerActionPointsMax = world.getFalloutPlayerRuntimeState().getMaxActionPoints();
+        const float playerHealth = playerHealthValue ? playerHealthValue->mValue : -1.f;
+        const float playerActionPoints = playerActionPointsValue ? playerActionPointsValue->mValue : -1.f;
+        const float playerActionPointsMaximum = playerActionPointsMax ? *playerActionPointsMax : -1.f;
+
+        Log(Debug::Info) << "World viewer telemetry: frame=" << frameNumber << " state=" << state
+                         << " loadingGui=" << loadingGui << " worldReady=" << worldReady
+                         << " readyFrames=" << worldReadyFrames
+                         << " activeCells=" << world.getWorldScene().getActiveCells().size()
+                         << " hour=" << world.getTimeStamp().getHour()
+                         << " weatherId=" << world.getCurrentWeatherScriptId()
+                         << " weatherTransition=" << world.getWeatherTransition()
+                         << " playerCell=\"" << (playerCell != nullptr ? world.getCellName(playerCell) : "<none>")
+                         << "\" exterior=" << playerExterior << " grid=("
+                         << (playerCell != nullptr && playerExterior ? playerCell->getCell()->getGridX() : 0)
+                         << ","
+                         << (playerCell != nullptr && playerExterior ? playerCell->getCell()->getGridY() : 0)
+                         << ") worldspace="
+                         << (playerCell != nullptr ? playerCell->getCell()->getWorldSpace().toDebugString() : "<none>")
+                         << " playerPos=(" << playerPos.pos[0] << "," << playerPos.pos[1] << ","
+                         << playerPos.pos[2] << ") playerRot=(" << playerPos.rot[0] << "," << playerPos.rot[1]
+                         << "," << playerPos.rot[2] << ") cameraMode="
+                         << (camera != nullptr ? static_cast<int>(camera->getMode()) : -1)
+                         << " cameraPos=(" << cameraPos.x() << "," << cameraPos.y() << "," << cameraPos.z()
+                         << ") cameraPitch=" << (camera != nullptr ? camera->getPitch() : 0.f)
+                         << " cameraYaw=" << (camera != nullptr ? camera->getYaw() : 0.f)
+                         << " playerHealth=" << playerHealth << " playerActionPoints=" << playerActionPoints
+                         << " playerActionPointsMax=" << playerActionPointsMaximum
+                         << " cullMask=0x" << std::hex << viewer.getCamera()->getCullMask() << std::dec;
+
+        if (viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_RAY_TELEMETRY"))
+        {
+            const float rayMaxDistance = static_cast<float>(readProofInt("OPENMW_WORLD_VIEWER_RAY_DISTANCE", 200000));
+            const osg::Vec3f rayUpOffset(0.f, 0.f, 512.f);
+            const osg::Vec3f rayDown(0.f, 0.f, -rayMaxDistance);
+            const MWPhysics::RayCastingInterface* rayCasting = world.getRayCasting();
+            const int groundMask = MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap
+                | MWPhysics::CollisionType_Door | MWPhysics::CollisionType_Water;
+
+            if (rayCasting != nullptr)
+            {
+                const osg::Vec3f playerGroundFrom = playerPosF + rayUpOffset;
+                const osg::Vec3f playerGroundTo = playerGroundFrom + rayDown;
+                logWorldViewerRayResult("playerGround", frameNumber, playerGroundFrom, playerGroundTo,
+                    rayCasting->castRay(playerGroundFrom, playerGroundTo, groundMask));
+
+                const osg::Vec3f cameraGroundFrom = cameraPosF + rayUpOffset;
+                const osg::Vec3f cameraGroundTo = cameraGroundFrom + rayDown;
+                logWorldViewerRayResult("cameraGround", frameNumber, cameraGroundFrom, cameraGroundTo,
+                    rayCasting->castRay(cameraGroundFrom, cameraGroundTo, groundMask));
+            }
+
+            if (camera != nullptr)
+            {
+                osg::Vec3f forward = camera->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
+                forward.normalize();
+                const osg::Vec3f centerTo = cameraPosF + (forward * rayMaxDistance);
+                MWPhysics::RayCastingResult centerRay {};
+                world.castRenderingRay(centerRay, cameraPosF, centerTo, true, false, std::span<const MWWorld::Ptr> {});
+                logWorldViewerRayResult("cameraCenterRender", frameNumber, cameraPosF, centerTo, centerRay);
+            }
+        }
+
+        if (!viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_REF_TELEMETRY"))
+            return;
+
+        const int refLimit = readProofInt("OPENMW_WORLD_VIEWER_REF_TELEMETRY_LIMIT", 200);
+        const bool unlimitedRefs = refLimit == 0;
+        int refsLogged = 0;
+        int refsTotal = 0;
+        int actorRaysLogged = 0;
+        const int actorRayLimit = readProofInt("OPENMW_WORLD_VIEWER_ACTOR_RAY_LIMIT", 8);
+
+        for (MWWorld::CellStore* cellstore : world.getWorldScene().getActiveCells())
+        {
+            if (cellstore == nullptr)
+                continue;
+
+            int refs = 0;
+            int enabled = 0;
+            int rendered = 0;
+            int actors = 0;
+            int renderedActors = 0;
+            int doors = 0;
+            int deleted = 0;
+            int modelFailures = 0;
+            int nameFailures = 0;
+
+            cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                ++refs;
+                ++refsTotal;
+                const bool isDeleted = ptr.mRef != nullptr && ptr.mRef->isDeleted();
+                const bool isEnabled = ptr.getRefData().isEnabled();
+                const bool hasNode = ptr.getRefData().getBaseNode() != nullptr;
+                const bool isActor = ptr.getClass().isActor();
+                const bool isDoor = ptr.getClass().isDoor();
+                if (isDeleted)
+                    ++deleted;
+                if (isEnabled)
+                    ++enabled;
+                if (hasNode)
+                    ++rendered;
+                if (isActor)
+                    ++actors;
+                if (isActor && hasNode)
+                    ++renderedActors;
+                if (isDoor)
+                    ++doors;
+
+                std::string name;
+                try
+                {
+                    name = std::string(ptr.getClass().getName(ptr));
+                }
+                catch (const std::exception& e)
+                {
+                    ++nameFailures;
+                    name = std::string("<name failed: ") + e.what() + ">";
+                }
+
+                std::string model;
+                try
+                {
+                    model = ptr.getClass().getCorrectedModel(ptr).value();
+                }
+                catch (const std::exception& e)
+                {
+                    ++modelFailures;
+                    model = std::string("<model failed: ") + e.what() + ">";
+                }
+
+                if (unlimitedRefs || refsLogged < refLimit)
+                {
+                    const ESM::Position& pos = ptr.getRefData().getPosition();
+                    unsigned int nodeMask = 0;
+                    osg::Vec3d scenePos;
+                    if (ptr.getRefData().getBaseNode())
+                    {
+                        nodeMask = ptr.getRefData().getBaseNode()->getNodeMask();
+                        scenePos = ptr.getRefData().getBaseNode()->getPosition();
+                    }
+
+                    Log(Debug::Info) << "World viewer ref: cell=\"" << world.getCellName(cellstore)
+                                     << "\" ref=" << ptr.getCellRef().getRefNum().toString("FormId:")
+                                     << " base=" << ptr.getCellRef().getRefId().toDebugString()
+                                     << " type=" << ptr.getTypeDescription() << " enabled=" << isEnabled
+                                     << " deleted=" << isDeleted << " rendered=" << hasNode << " actor="
+                                     << isActor << " door=" << isDoor << " name=\"" << name << "\" model=\""
+                                     << model << "\" pos=(" << pos.pos[0] << "," << pos.pos[1] << ","
+                                     << pos.pos[2] << ") rot=(" << pos.rot[0] << "," << pos.rot[1] << ","
+                                     << pos.rot[2] << ") scenePos=(" << scenePos.x() << "," << scenePos.y()
+                                     << "," << scenePos.z() << ") nodeMask=0x" << std::hex << nodeMask << std::dec
+                                     << " ptr=" << ptr.toString();
+                    ++refsLogged;
+                }
+
+                if (viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_RAY_TELEMETRY") && isActor && hasNode
+                    && actorRaysLogged < actorRayLimit)
+                {
+                    const ESM::Position& pos = ptr.getRefData().getPosition();
+                    osg::Vec3f actorCenter(pos.pos[0], pos.pos[1], pos.pos[2] + 64.f);
+                    if (ptr.getRefData().getBaseNode())
+                    {
+                        const osg::Vec3d nodePos = ptr.getRefData().getBaseNode()->getPosition();
+                        actorCenter = osg::Vec3f(nodePos.x(), nodePos.y(), nodePos.z() + 64.f);
+                    }
+
+                    if (camera != nullptr)
+                    {
+                        MWPhysics::RayCastingResult cameraActorRay {};
+                        world.castRenderingRay(
+                            cameraActorRay, cameraPosF, actorCenter, true, false, std::span<const MWWorld::Ptr> {});
+                        logWorldViewerRayResult("cameraActorRender", frameNumber, cameraPosF, actorCenter,
+                            cameraActorRay);
+                    }
+
+                    const MWPhysics::RayCastingInterface* rayCasting = world.getRayCasting();
+                    if (rayCasting != nullptr)
+                    {
+                        const osg::Vec3f actorCrossFrom = actorCenter + osg::Vec3f(0.f, -128.f, 0.f);
+                        const osg::Vec3f actorCrossTo = actorCenter + osg::Vec3f(0.f, 128.f, 0.f);
+                        std::vector<MWWorld::Ptr> targetActor { ptr };
+                        logWorldViewerRayResult("actorCrossPhysics", frameNumber, actorCrossFrom, actorCrossTo,
+                            rayCasting->castRay(actorCrossFrom, actorCrossTo, {}, targetActor,
+                                MWPhysics::CollisionType_Actor));
+                    }
+
+                    ++actorRaysLogged;
+                }
+                return true;
+            });
+
+            Log(Debug::Info) << "World viewer cell: name=\"" << world.getCellName(cellstore) << "\" exterior="
+                             << cellstore->isExterior() << " grid=("
+                             << (cellstore->isExterior() ? cellstore->getCell()->getGridX() : 0) << ","
+                             << (cellstore->isExterior() ? cellstore->getCell()->getGridY() : 0) << ") worldspace="
+                             << cellstore->getCell()->getWorldSpace().toDebugString() << " refs=" << refs
+                             << " enabled=" << enabled << " rendered=" << rendered
+                             << " missingRenderNode=" << (enabled - rendered) << " actors=" << actors
+                             << " renderedActors=" << renderedActors << " doors=" << doors << " deleted="
+                             << deleted << " nameFailures=" << nameFailures << " modelFailures=" << modelFailures;
+        }
+
+        if (!unlimitedRefs && refsTotal > refsLogged)
+        {
+            Log(Debug::Info) << "World viewer telemetry: ref dump truncated refsLogged=" << refsLogged
+                             << " refsTotal=" << refsTotal << " limit=" << refLimit;
+        }
+    }
+    // ## VR_PATCH BEGIN
+
+    class InitializeVrOperation : public osg::GraphicsOperation
+    {
+    public:
+        InitializeVrOperation(OMW::Engine* engine)
+            : GraphicsOperation("InitializeVrOperation", false)
+            , mEngine(engine)
+        {
+        }
+
+        void operator()(osg::GraphicsContext* graphicsContext) override { mEngine->configureVRGraphics(graphicsContext); }
+
+        OMW::Engine* mEngine;
+    };
+    // ## VR_PATCH END
+}
+
+void OMW::Engine::executeLocalScripts()
+{
+    MWWorld::LocalScripts& localScripts = mWorld->getLocalScripts();
+
+    localScripts.startIteration();
+    std::pair<ESM::RefId, MWWorld::Ptr> script;
+    while (localScripts.getNext(script))
+    {
+        MWScript::InterpreterContext interpreterContext(&script.second.getRefData().getLocals(), script.second);
+        mScriptManager->run(script.first, interpreterContext);
+    }
+}
+
+bool OMW::Engine::frame(unsigned frameNumber, float frametime)
+{
+    const auto nativeFalloutSaveOwnsCamera = [&]() {
+        return mStateManager != nullptr && mStateManager->isNativeFalloutSaveLoaded();
+    };
+
+    const auto getProofFrame = [](const char* name) {
+        const char* env = std::getenv(name);
+        if (env == nullptr || *env == '\0')
+            return -1;
+        char* end = nullptr;
+        const long value = std::strtol(env, &end, 10);
+        if (end == env || value < 0)
+            return -1;
+        return static_cast<int>(value);
+    };
+    const auto getProofFrames = [](const char* name) {
+        std::vector<int> frames;
+        const char* env = std::getenv(name);
+        if (env == nullptr || *env == '\0')
+            return frames;
+
+        std::string_view value(env);
+        while (!value.empty())
+        {
+            const std::size_t comma = value.find(',');
+            std::string_view token = value.substr(0, comma);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front())))
+                token.remove_prefix(1);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back())))
+                token.remove_suffix(1);
+            if (!token.empty())
+            {
+                int frame = -1;
+                const auto result = std::from_chars(token.data(), token.data() + token.size(), frame);
+                if (result.ec == std::errc() && result.ptr == token.data() + token.size() && frame >= 0)
+                    frames.push_back(frame);
+            }
+            if (comma == std::string_view::npos)
+                break;
+            value.remove_prefix(comma + 1);
+        }
+
+        std::sort(frames.begin(), frames.end());
+        frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+        return frames;
+    };
+    const auto getProofFloats = [](const char* name) {
+        std::vector<float> values;
+        const char* env = std::getenv(name);
+        if (env == nullptr || *env == '\0')
+            return values;
+
+        std::string_view value(env);
+        while (!value.empty())
+        {
+            const std::size_t comma = value.find(',');
+            std::string_view token = value.substr(0, comma);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front())))
+                token.remove_prefix(1);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back())))
+                token.remove_suffix(1);
+            if (!token.empty())
+            {
+                const std::string tokenText(token);
+                char* end = nullptr;
+                const float parsed = std::strtof(tokenText.c_str(), &end);
+                if (end != tokenText.c_str() && *end == '\0')
+                    values.push_back(parsed);
+            }
+            if (comma == std::string_view::npos)
+                break;
+            value.remove_prefix(comma + 1);
+        }
+
+        return values;
+    };
+    static std::vector<int> proofScreenshotFrames = getProofFrames("OPENMW_PROOF_SCREENSHOT_FRAME");
+    static const std::vector<WorldViewerTimeKeyframe> worldViewerTimeSequence
+        = getWorldViewerTimeSequence();
+    static const std::vector<WorldViewerCameraAngleKeyframe> worldViewerCameraAngleSequence
+        = getWorldViewerCameraAngleSequence();
+    static const std::vector<float> proofActorViewOrbitDegrees
+        = getProofFloats("OPENMW_PROOF_ACTOR_VIEW_ORBIT_DEGREES");
+    static const std::vector<float> proofActorViewFrontDistances
+        = getProofFloats("OPENMW_PROOF_ACTOR_VIEW_FRONT_DISTANCES");
+    static const int proofScreenshotReadyFrames = getProofFrame("OPENMW_PROOF_SCREENSHOT_READY_FRAMES");
+    static const int proofInventoryFrame = getProofFrame("OPENMW_PROOF_INVENTORY_FRAME");
+    static const std::vector<int> proofInventoryPaneFrames = getProofFrames("OPENMW_PROOF_INVENTORY_PANE_FRAME");
+    static const std::vector<int> proofInventoryPaneIndices = getProofFrames("OPENMW_PROOF_INVENTORY_PANE_INDEX");
+    // Capture-only scheduling drives the production physical Pip-Boy mode
+    // after normal New Game. It does not synthesize desktop input.
+    static const bool fnvPipBoyShowcaseEnabled = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE");
+    static const bool fnvPipBoyLifecycleOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_LIFECYCLE_ONLY");
+    static const bool fnvPipBoyApparelOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_APPAREL_ONLY");
+    static const bool fnvPipBoyAidOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_AID_ONLY");
+    static const bool fnvPipBoyAmmoOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_AMMO_ONLY");
+    static const bool fnvPipBoyMiscOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_MISC_ONLY");
+    static const bool fnvGameplayStartPlacementEnabled
+        = std::getenv("OPENMW_FNV_GAMEPLAY_START_WORLDSPACE") != nullptr;
+    static const bool fnvPipBoyShowcaseLoadoutEnabled
+        = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE_LOADOUT");
+    static const bool fnvPipBoyShowcaseQuitAfterCapture
+        = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE_QUIT_AFTER_CAPTURE");
+    // C04 is the real Save330 natural-map-selection gate.  It is deliberately
+    // separate from the broader showcase schedule: the restored marker must
+    // already be present, and the schedule may only exercise production
+    // Pip-Boy/map callbacks after the ordinary --load-savegame boundary.
+    static const bool fnvRealSaveC04Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_C04");
+    static const int fnvRealSaveC04FirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_REAL_SAVE_C04_FIRST_READY_FRAME"));
+    // C05 confirms and executes the same natural Save330 map request.  It is
+    // kept separate from C04 so a confirmation frame can never be mistaken
+    // for an executed travel frame, and so the canonical C04 selection gate
+    // remains unconfirmed.
+    static const bool fnvRealSaveC05Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_C05");
+    static const int fnvRealSaveC05FirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_REAL_SAVE_C05_FIRST_READY_FRAME"));
+    static const int fnvPipBoyShowcaseFirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_PIPBOY_SHOWCASE_FIRST_READY_FRAME"));
+    static const int fnvPipBoyShowcaseFramesPerPaneRequested
+        = getProofFrame("OPENMW_FNV_PIPBOY_SHOWCASE_FRAMES_PER_PANE");
+    static const int fnvPipBoyShowcaseFramesPerPane
+        = fnvPipBoyShowcaseFramesPerPaneRequested >= 30 ? fnvPipBoyShowcaseFramesPerPaneRequested : 120;
+    static const int fnvPipBoyShowcaseCaptureDelayFramesRequested
+        = getProofFrame("OPENMW_FNV_PIPBOY_SHOWCASE_CAPTURE_DELAY_FRAMES");
+    static const int fnvPipBoyShowcaseCaptureDelayFrames
+        = fnvPipBoyShowcaseCaptureDelayFramesRequested >= 1
+        ? std::clamp(fnvPipBoyShowcaseCaptureDelayFramesRequested, 1, fnvPipBoyShowcaseFramesPerPane - 1)
+        : std::min(45, fnvPipBoyShowcaseFramesPerPane - 1);
+    // Each native capture state is driven through the same device-local
+    // actions a player uses.  This is deliberately more than a four-panel
+    // slideshow: it covers every subpage, list selection, map toggle/pan/zoom,
+    // and a final first-person weapon confirmation after the Pip-Boy lowers.
+    struct FnvPipBoyShowcaseState
+    {
+        const char* mName;
+        int mPane;
+        int mSubmenu;
+        int mListOffset;
+        bool mActivateSelection;
+        bool mWorldMap;
+        int mZoomInCount;
+        int mPanRightCount;
+        int mPanDownCount;
+    };
+    static constexpr std::array<FnvPipBoyShowcaseState, 30> fnvPipBoyShowcaseStates = { {
+        { "STATS-CND", 3, 0, 0, false, false, 0, 0, 0 },
+        { "STATS-RAD", 3, 1, 0, false, false, 0, 0, 0 },
+        { "STATS-EFF", 3, 2, 0, false, false, 0, 0, 0 },
+        { "STATS-SPECIAL", 3, 3, 0, false, false, 0, 0, 0 },
+        { "STATS-SKILLS", 3, 4, 0, false, false, 0, 0, 0 },
+        { "STATS-PERKS", 3, 5, 0, false, false, 0, 0, 0 },
+        { "STATS-GENERAL", 3, 6, 0, false, false, 0, 0, 0 },
+        { "ITEMS-WEAP-9MM", 1, 0, 0, true, false, 0, 0, 0 },
+        { "ITEMS-WEAP-VARMINT", 1, 0, 1, true, false, 0, 0, 0 },
+        { "ITEMS-APP-HAT", 1, 1, 0, true, false, 0, 0, 0 },
+        { "WORLD-APP-HAT-OFF", -2, 0, 0, false, false, 0, 0, 0 },
+        { "ITEMS-APP-SUIT", 1, 1, 1, true, false, 0, 0, 0 },
+        { "WORLD-APP-SUIT-OFF", -2, 0, 0, false, false, 0, 0, 0 },
+        { "ITEMS-AID-STIMPAK", 1, 2, 0, true, false, 0, 0, 0 },
+        { "ITEMS-MISC-CAPS", 1, 3, 0, true, false, 0, 0, 0 },
+        { "ITEMS-AMMO-9MM", 1, 4, 0, true, false, 0, 0, 0 },
+        { "ITEMS-AMMO-556", 1, 4, 1, true, false, 0, 0, 0 },
+        { "DATA-QUESTS", 2, 0, 0, true, false, 0, 0, 0 },
+        { "DATA-QUESTS-SCROLL", 2, 0, 1, true, false, 0, 0, 0 },
+        { "DATA-NOTES", 2, 1, 0, true, false, 0, 0, 0 },
+        { "DATA-RADIO", 2, 2, 0, true, false, 0, 0, 0 },
+        { "MAP-WORLD", 0, 0, 0, false, true, 0, 0, 0 },
+        { "MAP-WORLD-ZOOM-PAN", 0, 0, 0, false, true, 2, 2, 1 },
+        { "MAP-LOCAL", 0, 0, 0, false, false, 0, 0, 0 },
+        { "MAP-LOCAL-ZOOM-PAN", 0, 0, 0, false, false, 1, 1, 1 },
+        { "WORLD-VARMINT-EQUIPPED", -1, 0, 0, false, false, 0, 0, 0 },
+        { "ITEMS-WEAP-VARMINT-REOPEN", 1, 0, 1, false, false, 0, 0, 0 },
+        { "WORLD-AID-STIMPAK-USED", -3, 0, 0, false, false, 0, 0, 0 },
+        { "WORLD-AMMO-SELECTION", -4, 0, 0, false, false, 0, 0, 0 },
+        { "WORLD-MISC-INSPECTED", -5, 0, 0, false, false, 0, 0, 0 },
+    } };
+    // Short interaction gate: exercise a category button, list scroll, map
+    // category button, map zoom/pan, and final weapon restoration without the
+    // cost of the complete 24-panel presentation sweep.
+    static constexpr std::array<std::size_t, 9> fnvPipBoyLifecycleStateIndices = { 0, 7, 8, 13, 21, 22, 8, 25, 26 };
+    static constexpr std::array<std::size_t, 4> fnvPipBoyApparelStateIndices = { 9, 10, 11, 12 };
+    static constexpr std::array<std::size_t, 2> fnvPipBoyAidStateIndices = { 13, 27 };
+    static constexpr std::array<std::size_t, 3> fnvPipBoyAmmoStateIndices = { 15, 16, 28 };
+    static constexpr std::array<std::size_t, 2> fnvPipBoyMiscStateIndices = { 14, 29 };
+    static const int proofQuickSaveFrame = getProofFrame("OPENMW_PROOF_QUICKSAVE_FRAME");
+    static const bool proofQuitAfterQuickSave = proofEnvEnabled("OPENMW_PROOF_QUIT_AFTER_QUICKSAVE");
+    static const int proofQuickSaveQuitDelayFrames
+        = std::max(1, readProofInt("OPENMW_PROOF_QUICKSAVE_QUIT_DELAY_FRAMES", 30));
+    static const int proofFalloutQuickKeyAssignFrame
+        = getProofFrame("OPENMW_FNV_PROOF_QUICKKEY_ASSIGN_FRAME");
+    static const int proofFalloutQuickKeyActivateFrame
+        = getProofFrame("OPENMW_FNV_PROOF_QUICKKEY_ACTIVATE_FRAME");
+    static const int proofFalloutReloadFrame = getProofFrame("OPENMW_FNV_PROOF_RELOAD_FRAME");
+    static const int proofFalloutWeaponAuditFrame = getProofFrame("OPENMW_FNV_PROOF_WEAPON_AUDIT_FRAME");
+    static const int proofFalloutFastTravelDiscoverFrame
+        = getProofFrame("OPENMW_FNV_PROOF_FAST_TRAVEL_DISCOVER_FRAME");
+    static const int proofFalloutFastTravelSelectFrame
+        = getProofFrame("OPENMW_FNV_PROOF_FAST_TRAVEL_SELECT_FRAME");
+    static const int proofFalloutFastTravelConfirmFrame
+        = getProofFrame("OPENMW_FNV_PROOF_FAST_TRAVEL_CONFIRM_FRAME");
+    static const std::vector<std::string> proofFalloutTourLocations
+        = readWorldViewerStringList("OPENMW_FNV_PROOF_TOUR_LOCATIONS");
+    static const int proofSayFrame = getProofFrame("OPENMW_PROOF_SAY_FRAME");
+    static std::vector<std::string> proofActorBatchTargets
+        = readWorldViewerStringList("OPENMW_PROOF_SAY_ACTORS");
+    static const std::vector<std::string> proofActorPoseGroups
+        = readWorldViewerStringList("OPENMW_PROOF_ACTOR_POSE_GROUPS");
+    static const bool proofActorPoseAllAvailable
+        = proofEnvEnabled("OPENMW_PROOF_ACTOR_POSE_ALL_AVAILABLE");
+    static const bool proofActorPoseSweepEnabled
+        = proofActorPoseAllAvailable || !proofActorPoseGroups.empty();
+    static std::vector<std::string> proofActorActivePoseGroups = proofActorPoseGroups;
+    static const std::vector<std::string> proofSidecarActionIds
+        = readWorldViewerStringList("OPENMW_FNV_SIDECAR_ACTION_IDS");
+    static FNVSidecar::Client proofSidecarClient;
+    const bool proofSidecarEnabled = proofSidecarClient.enabled();
+    const FNVSidecar::Snapshot proofSidecarSnapshot
+        = proofSidecarEnabled ? proofSidecarClient.snapshot() : FNVSidecar::Snapshot{};
+    static const int proofTimedScript1Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_1_FRAME");
+    static const int proofTimedScript2Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_2_FRAME");
+    static std::size_t proofScreenshotFrameIndex = 0;
+    static std::size_t proofInventoryPaneFrameIndex = 0;
+    static bool proofScreenshotReadyQueued = false;
+    static int worldViewerTimeSequenceIndex = -1;
+    static int worldViewerCameraAngleSequenceIndex = -1;
+    static bool proofInventoryOpened = false;
+    static bool fnvPipBoyShowcaseLoadoutApplied = false;
+    static bool fnvPipBoyShowcaseLoadoutPassed = false;
+    static bool fnvPipBoyShowcaseStimpakDamageStaged = false;
+    static bool fnvPipBoyShowcaseReloadRequested = false;
+    static bool fnvPipBoyShowcaseFireRequested = false;
+    static bool fnvPipBoyShowcaseFireObserved = false;
+    static int fnvPipBoyShowcaseLoadedBeforeFire = 0;
+    static int fnvPipBoyShowcaseFireRequestFrame = -1;
+    static bool fnvPipBoyShowcaseReloadWaitLogged = false;
+    static bool fnvPipBoyShowcaseWeaponPoseWaitLogged = false;
+    static bool fnvPipBoyShowcaseWeaponPoseSampleValid = false;
+    static int fnvPipBoyShowcaseWeaponPoseStableFrames = 0;
+    static int fnvPipBoyShowcasePostFireRecoveryFrames = 0;
+    static osg::Matrix fnvPipBoyShowcaseWeaponPoseSample;
+    static bool fnvGameplayStartPlacementApplied = false;
+    static bool fnvGameplayStartPlacementPassed = false;
+    static std::size_t fnvPipBoyShowcaseActivePane = static_cast<std::size_t>(-1);
+    static std::size_t fnvPipBoyShowcaseCapturedPanes = 0;
+    static int fnvPipBoyShowcaseExitReadyFrame = -1;
+    static bool fnvPipBoyShowcaseQuitRequested = false;
+    static int fnvRealSaveC04Phase = 0;
+    static std::size_t fnvRealSaveC04CapturedFrames = 0;
+    static bool fnvRealSaveC04MarkerParsed = false;
+    static std::optional<ESM::FormId> fnvRealSaveC04Marker;
+    static int fnvRealSaveC04LastLogFrame = -1000000;
+    static int fnvRealSaveC04ExitReadyFrame = -1;
+    static int fnvRealSaveC04NextActionFrame = -1;
+    static FNVSidecarScreenshot fnvRealSaveC04ScreenshotBaseline;
+    static FNVSidecarScreenshot fnvRealSaveC04ScreenshotCandidate;
+    static int fnvRealSaveC04ScreenshotStableFrames = 0;
+    static bool fnvRealSaveC04ScreenshotPending = false;
+    static int fnvRealSaveC04ScreenshotDeadlineFrame = -1;
+    static std::string fnvRealSaveC04ScreenshotState;
+    static int fnvRealSaveC05Phase = 0;
+    static std::size_t fnvRealSaveC05CapturedFrames = 0;
+    static bool fnvRealSaveC05MarkerParsed = false;
+    static std::optional<ESM::FormId> fnvRealSaveC05Marker;
+    static int fnvRealSaveC05LastLogFrame = -1000000;
+    static int fnvRealSaveC05ExitReadyFrame = -1;
+    static bool fnvRealSaveC05BeforeObserved = false;
+    static double fnvRealSaveC05BeforeHour = 0.0;
+    static float fnvRealSaveC05BeforeX = 0.f;
+    static float fnvRealSaveC05BeforeY = 0.f;
+    static float fnvRealSaveC05BeforeZ = 0.f;
+    static int fnvRealSaveC05BeforeGridX = 0;
+    static int fnvRealSaveC05BeforeGridY = 0;
+    static std::string fnvRealSaveC05BeforeCell;
+    static std::string fnvRealSaveC05BeforeWorldspace;
+    static const bool fnvRealSaveC06Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_C06");
+    static const int fnvRealSaveC06FirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_REAL_SAVE_C06_FIRST_READY_FRAME"));
+    static int fnvRealSaveC06Phase = 0;
+    static std::size_t fnvRealSaveC06CapturedFrames = 0;
+    static bool fnvRealSaveC06MarkerParsed = false;
+    static std::optional<ESM::FormId> fnvRealSaveC06Marker;
+    static std::optional<ESM::FormId> fnvRealSaveC06HiddenMarker;
+    static bool fnvRealSaveC06BaselineObserved = false;
+    static double fnvRealSaveC06BaselineHour = 0.0;
+    static ESM::Position fnvRealSaveC06BaselinePosition;
+    static ESM::RefId fnvRealSaveC06BaselineCell;
+    static ESM::RefId fnvRealSaveC06BaselineWorldspace;
+    static int fnvRealSaveC06BaselineGridX = 0;
+    static int fnvRealSaveC06BaselineGridY = 0;
+    static int fnvRealSaveC06ExitReadyFrame = -1;
+    // ScreenCaptureHandler captures the following rendered frame. Keep C06's
+    // proof label pending until the UI string set by the production rejection
+    // handler has crossed a render update; otherwise a named frame contains
+    // the prior case's message even though the telemetry is correct.
+    static std::string fnvRealSaveC06PendingFrameState;
+    static int fnvRealSaveC06PendingFrameReadyFrame = -1;
+    // C07 is the production persistence circuit.  It reuses the C05
+    // MAP/WORLD/confirmation handler, but the first phase saves only after a
+    // real arrival and the reload phase proves the saved destination before a
+    // second request.  The phase flag is engine-owned and never changes the
+    // canonical Save330 marker denominator.
+    static const bool fnvRealSaveC07Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_C07");
+    static const std::string fnvRealSaveC07Phase = [] {
+        const char* value = std::getenv("OPENMW_FNV_REAL_SAVE_C07_PHASE");
+        return value != nullptr ? std::string(value) : std::string();
+    }();
+    static const bool fnvRealSaveC07First = fnvRealSaveC07Phase == "first";
+    static const bool fnvRealSaveC07Reload = fnvRealSaveC07Phase == "reload";
+    static bool fnvRealSaveC07SaveRequested = false;
+    static int fnvRealSaveC07SaveFrame = -1;
+    // D01 reads the already-restored Save330 through the production inventory
+    // window.  It only changes the physical Pip-Boy category selection and
+    // captures the five real item tabs; it never adds, removes, equips, or
+    // otherwise mutates an inventory item.
+    static const bool fnvRealSaveD01Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_D01");
+    static const int fnvRealSaveD01FirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_REAL_SAVE_D01_FIRST_READY_FRAME"));
+    static const int fnvRealSaveD01FramesPerCategory
+        = std::max(60, readProofInt("OPENMW_FNV_REAL_SAVE_D01_FRAMES_PER_CATEGORY", 90));
+    static int fnvRealSaveD01ActiveCategory = -1;
+    static int fnvRealSaveD01PresentationReadyFrame = -1;
+    static int fnvRealSaveD01InteractionSettledFrame = -1;
+    static int fnvRealSaveD01NextActionFrame = -1;
+    static std::size_t fnvRealSaveD01CapturedFrames = 0;
+    static int fnvRealSaveD01ExitReadyFrame = -1;
+    static bool fnvRealSaveD01Failed = false;
+    // D02 walks every authored Save330 WEAP row through the physical ITEMS
+    // tab, closes the Pip-Boy, and audits the live right-hand equipment and
+    // authored ammo/model contract.  The proof hook never inserts or names a
+    // showcase item; the exact FormID is selected from SortFilterItemModel and
+    // activated by InventoryWindow's normal row callback.
+    static const bool fnvRealSaveD02Enabled = proofEnvEnabled("OPENMW_FNV_REAL_SAVE_D02");
+    static const int fnvRealSaveD02FirstReadyFrame
+        = std::max(0, getProofFrame("OPENMW_FNV_REAL_SAVE_D02_FIRST_READY_FRAME"));
+    static std::vector<ESM::RefId> fnvRealSaveD02Weapons;
+    // D02 advances only after the preceding native frame has drained. It never
+    // selects a different restored weapon while an authored pose is still
+    // reaching its held state.
+    static int fnvRealSaveD02CurrentWeapon = 0;
+    static int fnvRealSaveD02WeaponStartFrame = -1;
+    static int fnvRealSaveD02ActiveWeapon = -1;
+    static bool fnvRealSaveD02ActivationRequested = false;
+    static bool fnvRealSaveD02EquipmentBridgeObserved = false;
+    static bool fnvRealSaveD02ControllerSynchronized = false;
+    static bool fnvRealSaveD02ReloadCalled = false;
+    static bool fnvRealSaveD02ReloadRequested = false;
+    static bool fnvRealSaveD02MenuClosed = false;
+    static bool fnvRealSaveD02AuditLogged = false;
+    static bool fnvRealSaveD02CapturedCurrent = false;
+    static bool fnvRealSaveD02PoseSampleValid = false;
+    static osg::Matrix fnvRealSaveD02PoseSample;
+    static int fnvRealSaveD02PoseStableFrames = 0;
+    static bool fnvRealSaveD02PosePendingLogged = false;
+    static bool fnvRealSaveD02PoseSettledLogged = false;
+    static std::size_t fnvRealSaveD02CapturedFrames = 0;
+    static FNVSidecarScreenshot fnvRealSaveD02ScreenshotBaseline;
+    static FNVSidecarScreenshot fnvRealSaveD02ScreenshotCandidate;
+    static int fnvRealSaveD02ScreenshotStableFrames = 0;
+    static bool fnvRealSaveD02ScreenshotPending = false;
+    static int fnvRealSaveD02ScreenshotDeadlineFrame = -1;
+    static int fnvRealSaveD02NextActionFrame = -1;
+    static int fnvRealSaveD02ScreenshotWeaponIndex = -1;
+    static std::string fnvRealSaveD02ScreenshotForm;
+    static int fnvRealSaveD02ExitReadyFrame = -1;
+    static bool fnvRealSaveD02Failed = false;
+    static bool proofQuickSaveQueued = false;
+    static unsigned proofQuickSaveCompletedFrame = 0;
+    static bool proofQuickSaveQuitRequested = false;
+    static bool proofFalloutQuickKeyAssigned = false;
+    static bool proofFalloutQuickKeyActivated = false;
+    static bool proofFalloutReloaded = false;
+    static bool proofFalloutWeaponAudited = false;
+    static bool proofFalloutFastTravelDiscovered = false;
+    static bool proofFalloutFastTravelSelected = false;
+    static bool proofFalloutFastTravelConfirmed = false;
+    static int proofFalloutTourPhase = proofFalloutTourLocations.empty() ? -1 : 0;
+    static std::size_t proofFalloutTourIndex = 0;
+    static unsigned proofFalloutTourPhaseFrame = 0;
+    static float proofFalloutTourLookYaw = 0.f;
+    static float proofFalloutTourLookPitch = 0.f;
+    static MWWorld::Ptr proofFalloutTourActor;
+    static bool proofSayQueued = false;
+    static bool proofDialogueTopicQueued = false;
+    static bool proofTimedScript1Executed = false;
+    static bool proofTimedScript2Executed = false;
+    static bool proofActorCameraAligned = false;
+    static int proofActorCameraAlignedFrame = -1;
+    static std::size_t proofActorCameraAlignedScreenshotIndex = static_cast<std::size_t>(-1);
+    static bool proofActorAlignedScreenshotQueued = false;
+    static bool proofActorNeutralizedForCamera = false;
+    static bool proofActorStagedForCamera = false;
+    static bool proofActorSnappedToRenderGround = false;
+    static bool proofActorRenderGroundFreshBoundsLatched = false;
+    static int proofActorStagedFrame = -1;
+    static int proofActorSnappedFrame = -1;
+    static MWWorld::Ptr proofPinnedStagedActor;
+    static osg::Vec3f proofPinnedStagedActorPosition;
+    static osg::Vec3f proofPinnedStagedActorRotation;
+    static int proofPinnedStagedActorLastLogFrame = -1000000;
+    static std::size_t proofActorBatchIndex = static_cast<std::size_t>(-1);
+    static MWWorld::Ptr proofActorBatchPrevious;
+    // A single-target proof run does not populate the batch slot. Retain its
+    // isolated base spawn independently so repeated camera/screenshot checks
+    // keep inspecting the same actor rather than placing a new one each frame.
+    static MWWorld::Ptr proofForcedBaseSpawnActor;
+    static ESM::RefId proofForcedBaseSpawnBase;
+    static bool proofActorBaseRosterExpanded = false;
+    static int proofActorBatchSelectedFrame = -1;
+    static std::size_t proofActorPoseBatchIndex = static_cast<std::size_t>(-1);
+    static std::size_t proofActorPoseIndex = 0;
+    static int proofActorPoseNextFrame = -1;
+    static bool proofActorPoseRestoringNativeState = false;
+    static bool proofActorPoseCycleComplete = false;
+    static bool proofActorPoseInventoryLogged = false;
+    static std::unordered_map<std::string, unsigned int> proofActorNativeGroupMasks;
+    static std::size_t proofActorPosePlayed = 0;
+    static std::size_t proofActorPoseDeferred = 0;
+    static std::size_t proofActorPoseSkipped = 0;
+    static bool proofActorPhaseTimedOut = false;
+    static std::string proofActorPhaseTimeoutReason;
+    static FNVSidecarOpenMwPhase proofSidecarPhase = FNVSidecarOpenMwPhase::WaitingRetail;
+    static std::optional<FNVSidecar::RetailAction> proofSidecarAction;
+    static std::uint64_t proofSidecarGeneration = 0;
+    static std::uint32_t proofSidecarPreviousActor = 0;
+    static std::uint32_t proofSidecarPreviousAction = 0;
+    static int proofSidecarActionStartFrame = -1;
+    static int proofSidecarCaptureStateStartFrame = -1;
+    static bool proofSidecarActionPlayed = false;
+    static FNVSidecarScreenshot proofSidecarScreenshotBaseline;
+    static FNVSidecarScreenshot proofSidecarScreenshotCandidate;
+    static int proofSidecarScreenshotStableFrames = 0;
+    static bool proofSidecarCompletionPublished = false;
+    static bool proofSidecarPeerErrorLogged = false;
+    static FalloutProofSkinState proofActorSkinState;
+    static std::string proofActorSkinStateLastLogKey;
+    static int proofActorBatchCompleteFrame = -1;
+    static bool proofActorBatchCompletionLogged = false;
+    static bool proofActorBatchQuitRequested = false;
+    static bool proofActorScreenshotWaitLogged = false;
+    static int proofActorScreenshotLastResolveFrame = -1;
+    static bool proofNeutralActorPreviewAttempted = false;
+    static bool proofNeutralActorPreviewReady = false;
+    static bool proofNeutralActorPreviewIsolationApplied = false;
+    static osg::ref_ptr<osg::Group> proofNeutralActorPreviewRoot;
+    static osg::ref_ptr<osg::Camera> proofNeutralActorPreviewComposite;
+    static std::vector<std::unique_ptr<MWRender::FalloutActorPreview>> proofNeutralActorPreviews;
+    static bool proofPinnedPlayerToActorView = false;
+    static osg::Vec3f proofPinnedPlayerPosition;
+    static osg::Vec3f proofPinnedPlayerRotation;
+    static int proofPinnedPlayerFirstFrame = -1;
+    static int proofPinnedPlayerLastLogFrame = -1000000;
+    static bool proofFirstPersonHidden = false;
+    static bool proofGuiHidden = false;
+    static bool proofLoadingGuiForceCleared = false;
+    static bool proofSkyDisabled = false;
+    static bool proofGodModeEnabled = false;
+    static bool proofDelayedStartupScriptExecuted = false;
+    static bool proofFNVBootstrapApplied = false;
+    static bool fnvNewGameGameplayUiUnlocked = false;
+    static bool proofFNVCameraResetApplied = false;
+    static bool proofRetailProjectionApplied = false;
+    static bool proofRetailProjectionAudited = false;
+    static bool proofFNVJamRouteHeadingApplied = false;
+    static bool worldViewerNonStaticStartCameraSettled = false;
+    static bool fnvFlatStartupCameraSettled = false;
+    static bool proofScreenshotWaitLogged = false;
+    static int proofPortraitClearFrames = 0;
+    static bool proofPortraitPreviousHeadResolved = false;
+    static osg::Vec3d proofPortraitPreviousHead;
+    static osg::Vec3d proofPortraitPreviousForward;
+    static int proofPortraitLastRejectLogFrame = -1000000;
+    static int proofWorldReadyFrames = 0;
+    static bool worldViewerTelemetryLogged = false;
+    static unsigned int worldViewerTelemetryLastFrame = 0;
+    static bool worldViewerCameraWaitLogged = false;
+    static bool playableSessionStarted = false;
+    static bool playableSessionFinished = false;
+    static bool playableSessionEndTelemetryPending = false;
+    static bool playableSessionCameraSwitched = false;
+    static bool playableSessionStartScreenshotPending = false;
+    static bool playableSessionMidpointScreenshotPending = false;
+    static bool playableSessionEndScreenshotPending = false;
+    static bool playableSessionQuitRequested = false;
+    static bool playableSessionActorAiStabilized = false;
+    static unsigned int playableSessionExitFrame = 0;
+    static int playableSessionOrbitScreenshotIndex = 0;
+    static unsigned int playableSessionOrbitNextFrame = 0;
+    static float playableSessionElapsed = 0.f;
+    static float playableSessionFirstPersonCameraDistance = std::numeric_limits<float>::quiet_NaN();
+    static osg::Vec3f playableSessionPlayerStart;
+    static osg::Vec3f playableSessionCameraSwitchPosition;
+    static osg::Vec3f playableSessionActorStart;
+    static float playableSessionActorStartDistance = std::numeric_limits<float>::quiet_NaN();
+    static MWWorld::Ptr playableSessionActor;
+    static int playableSessionActorCombatSuppressions = 0;
+    static int fnvInteractionPhase = 0;
+    static unsigned int fnvInteractionPhaseFrame = 0;
+    static osg::Timer_t fnvInteractionPhaseStartTime = 0;
+    static bool fnvInteractionGreetingAudioSeen = false;
+    static bool fnvInteractionTopicAudioSeen = false;
+    static bool fnvInteractionActorPass = false;
+    static bool fnvInteractionDialoguePass = false;
+    static bool fnvInteractionQuestPass = false;
+    static bool fnvInteractionDoorInPass = false;
+    static bool fnvInteractionInteriorActorsPass = false;
+    static bool fnvInteractionRadioPass = false;
+    static bool fnvInteractionDoorOutPass = false;
+    static MWWorld::Ptr fnvInteractionActor;
+    static osg::Vec3f fnvInteractionActorSettledPosition;
+    static MWWorld::Ptr fnvInteractionRadio;
+    static ESM::RefId fnvInteractionRadioSound;
+    static bool fnvInteractionQuestCaptureQueued = false;
+    static bool fnvInteractionRadioCaptureQueued = false;
+    static int authoredInteractionPhase = 0;
+    static unsigned int authoredInteractionPhaseFrame = 0;
+    static osg::Timer_t authoredInteractionPhaseStartTime = 0;
+    static bool authoredInteractionGreetingAudioSeen = false;
+    static bool authoredInteractionTopicAudioSeen = false;
+    static bool authoredInteractionActorPass = false;
+    static bool authoredInteractionDialoguePass = false;
+    static bool authoredInteractionDoorInPass = false;
+    static bool authoredInteractionInteriorActorsPass = false;
+    static bool authoredInteractionRadioPass = false;
+    static bool authoredInteractionDoorOutPass = false;
+    static MWWorld::Ptr authoredInteractionActor;
+    static osg::Vec3f authoredInteractionActorSettledPosition;
+    static MWWorld::Ptr authoredInteractionRadio;
+    static ESM::RefId authoredInteractionRadioSound;
+    static bool authoredInteractionRadioCaptureQueued = false;
+    static const bool fnvStripSniperCinematicEnabled
+        = proofEnvEnabled("OPENMW_FNV_STRIP_SNIPER_CINEMATIC");
+    static MWWorld::Ptr fnvStripSniperTarget;
+    static osg::Vec3f fnvStripSniperTargetPosition;
+    static osg::Vec3f fnvStripSniperTargetRotation;
+    static ESM::RefId fnvStripSniperAmmoId;
+    static bool fnvStripSniperSetupComplete = false;
+    static bool fnvStripSniperCombatArmed = false;
+    static bool fnvStripSniperCombatStopped = false;
+    static bool fnvStripSniperSlowTimeApplied = false;
+    static bool fnvStripSniperResultLogged = false;
+    static int fnvStripSniperTriggerFrame = -1;
+    static int fnvStripSniperReactionFrame = -1;
+    static bool fnvStripSniperReactionComplete = false;
+    static int fnvStripSniperLastTriggerWaitLogFrame = -1000000;
+    static int fnvStripSniperAmmoBefore = -1;
+    static float fnvStripSniperHealthBefore = std::numeric_limits<float>::quiet_NaN();
+    const auto parseProofFormId = [](std::string_view value) -> std::optional<ESM::FormId> {
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) value.remove_prefix(1);
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.remove_suffix(1);
+
+        constexpr std::string_view prefix = "FormId:0x";
+        constexpr std::string_view shortPrefix = "0x";
+        std::size_t offset = std::string_view::npos;
+        if (value.size() > prefix.size() && Misc::StringUtils::ciEqual(value.substr(0, prefix.size()), prefix))
+            offset = prefix.size();
+        else if (value.size() > shortPrefix.size() && Misc::StringUtils::ciEqual(value.substr(0, shortPrefix.size()), shortPrefix))
+            offset = shortPrefix.size();
+        else
+            return std::nullopt;
+
+        std::uint32_t formId = 0;
+        const auto result = std::from_chars(value.data() + offset, value.data() + value.size(), formId, 16);
+        if (result.ec != std::errc() || result.ptr != value.data() + value.size())
+        {
+            try {
+                formId = std::stoul(std::string(value.substr(offset)), nullptr, 16);
+            } catch (...) { return std::nullopt; }
+        }
+        return ESM::FormId::fromUint32(formId);
+    };
+    const auto makeProofRefId = [&](const char* value) {
+        const std::string_view ref(value);
+        if (std::optional<ESM::FormId> formId = parseProofFormId(ref))
+            return ESM::RefId::formIdRefId(*formId);
+        return ESM::RefId::stringRefId(ref);
+    };
+    const auto compactProofToken = [](std::string_view value) {
+        std::string compact;
+        compact.reserve(value.size());
+        for (char ch : Misc::StringUtils::lowerCase(value))
+        {
+            if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))
+                compact.push_back(ch);
+        }
+        return compact;
+    };
+    const auto resolveProofActor = [&](const char* value) {
+        const std::string_view target(value);
+        const ESM::RefId targetRefId = makeProofRefId(value);
+        const std::optional<ESM::FormId> targetFormId = parseProofFormId(target);
+        const bool targetIsActorBase = mWorld->getStore().get<ESM4::Npc>().search(targetRefId) != nullptr
+            || mWorld->getStore().get<ESM4::Creature>().search(targetRefId) != nullptr;
+        const bool forceBaseSpawn = targetIsActorBase
+            && proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_FORCE_BASE_SPAWN");
+        if (forceBaseSpawn && !proofForcedBaseSpawnActor.isEmpty()
+            && proofForcedBaseSpawnBase == targetRefId
+            && proofForcedBaseSpawnActor.getRefData().isEnabled())
+        {
+            return proofForcedBaseSpawnActor;
+        }
+        if (forceBaseSpawn && !proofActorBatchPrevious.isEmpty()
+            && proofActorBatchPrevious.getCellRef().getRefId() == targetRefId)
+        {
+            return proofActorBatchPrevious;
+        }
+
+        MWWorld::Ptr actor;
+        if (!forceBaseSpawn)
+            actor = mWorld->searchPtr(targetRefId, false, false);
+        if (!actor.isEmpty())
+            return actor;
+
+        const std::string targetCompact = compactProofToken(target);
+        const bool logActors = std::getenv("OPENMW_PROOF_LOG_ACTORS") != nullptr;
+        int scanned = 0;
+        int actors = 0;
+        MWWorld::Ptr found;
+
+        for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+        {
+            if (forceBaseSpawn)
+                break;
+            if (cellstore == nullptr)
+                continue;
+
+            cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                ++scanned;
+                if (ptr.isEmpty() || !ptr.getClass().isActor())
+                    return true;
+                ++actors;
+
+                const ESM::RefId baseId = ptr.getCellRef().getRefId();
+                const ESM::RefNum refNum = ptr.getCellRef().getRefNum();
+                std::string name;
+                try
+                {
+                    name = std::string(ptr.getClass().getName(ptr));
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 proof: actor name lookup failed for " << ptr.toString()
+                                        << ": " << e.what();
+                }
+
+                const std::string baseDebug = baseId.toDebugString();
+                const std::string refDebug = refNum.toString("FormId:");
+                const std::string baseCompact = compactProofToken(baseDebug);
+                const std::string refCompact = compactProofToken(refDebug);
+                const std::string nameCompact = compactProofToken(name);
+                const ESM::Position& pos = ptr.getRefData().getPosition();
+
+                if (logActors)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 proof: active actor ref=" << refDebug << " base=" << baseDebug
+                                     << " name=\"" << name << "\" pos=(" << pos.pos[0] << "," << pos.pos[1]
+                                     << "," << pos.pos[2] << ") rot=(" << pos.rot[0] << "," << pos.rot[1]
+                                     << "," << pos.rot[2] << ") ptr=" << ptr.toString();
+                }
+
+                const bool formIdMatchesRef = targetFormId.has_value() && refNum == *targetFormId;
+                const bool refIdMatchesBase = baseId == targetRefId;
+                const bool tokenMatches = !targetCompact.empty()
+                    && (targetCompact == baseCompact || targetCompact == refCompact || targetCompact == nameCompact
+                        || (!nameCompact.empty()
+                            && (targetCompact.find(nameCompact) != std::string::npos
+                                || nameCompact.find(targetCompact) != std::string::npos)));
+                if (formIdMatchesRef || refIdMatchesBase || tokenMatches)
+                {
+                    found = ptr;
+                    Log(Debug::Info) << "FNV/ESM4 proof: active-cell actor match target \"" << value
+                                     << "\" ref=" << refDebug << " base=" << baseDebug << " name=\"" << name
+                                     << "\" ptr=" << ptr.toString() << " pos=(" << pos.pos[0] << ","
+                                     << pos.pos[1] << "," << pos.pos[2] << ") rot=(" << pos.rot[0] << ","
+                                     << pos.rot[1] << "," << pos.rot[2] << ") scanned=" << scanned
+                                     << " actors=" << actors;
+                    return false;
+                }
+                return true;
+            });
+
+            if (!found.isEmpty())
+                break;
+        }
+
+        if (found.isEmpty())
+        {
+            if (forceBaseSpawn)
+                Log(Debug::Info) << "FNV/ESM4 proof: forcing isolated base-record spawn for \"" << value << "\"";
+            else
+                Log(Debug::Warning) << "FNV/ESM4 proof: active-cell actor lookup failed for \"" << value
+                                    << "\" scanned=" << scanned << " actors=" << actors;
+
+            if (std::getenv("OPENMW_PROOF_PLACE_ACTOR_IF_MISSING") != nullptr)
+            {
+                try
+                {
+                    MWWorld::Ptr player = MWMechanics::getPlayer();
+                    MWWorld::CellStore* store = nullptr;
+                    ESM::RefId worldspace = ESM::Cell::sDefaultWorldspaceId;
+                    ESM::Position pos;
+                    if (!player.isEmpty() && player.isInCell())
+                    {
+                        const ESM::Position& playerPos = player.getRefData().getPosition();
+                        pos.pos[0] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_X", playerPos.pos[0] + 96.f);
+                        pos.pos[1] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_Y", playerPos.pos[1]);
+                        pos.pos[2] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_Z", playerPos.pos[2]);
+                        pos.rot[0] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_X", 0.f);
+                        pos.rot[1] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Y", 0.f);
+                        pos.rot[2] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Z", 0.f);
+
+                        MWWorld::CellStore* playerCell = player.getCell();
+                        if (playerCell != nullptr && playerCell->isExterior())
+                        {
+                            worldspace = playerCell->getCell()->getWorldSpace();
+                            store = &mWorld->getWorldModel().getExterior(
+                                ESM::positionToExteriorCellLocation(pos.pos[0], pos.pos[1], worldspace));
+                        }
+                        else
+                            store = playerCell;
+                    }
+                    else
+                    {
+                        pos.pos[0] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_X", 0.f);
+                        pos.pos[1] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_Y", 0.f);
+                        pos.pos[2] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_Z", 0.f);
+                        pos.rot[0] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_X", 0.f);
+                        pos.rot[1] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Y", 0.f);
+                        pos.rot[2] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Z", 0.f);
+                        const auto& activeCells = mWorld->getWorldScene().getActiveCells();
+                        if (!activeCells.empty())
+                            store = *activeCells.begin();
+                    }
+
+                    if (store == nullptr)
+                        throw std::runtime_error("no active cell available for proof placement");
+
+                    ESM::RefId placementRefId = targetRefId;
+                    if (placementRefId.is<ESM::StringRefId>())
+                    {
+                        const std::string_view editorId = placementRefId.getRefIdString();
+                        ESM::RefId resolvedId = findEsm4EditorId<ESM4::Npc>(mWorld->getStore(), editorId);
+                        if (resolvedId.empty())
+                            resolvedId = findEsm4EditorId<ESM4::Creature>(mWorld->getStore(), editorId);
+                        if (!resolvedId.empty())
+                        {
+                            placementRefId = resolvedId;
+                            Log(Debug::Info) << "FNV/ESM4 proof: resolved string base target \"" << editorId
+                                             << "\" to form id " << resolvedId.toDebugString();
+                        }
+                    }
+
+                    if (const char* placementFormId = std::getenv("OPENMW_PROOF_PLACE_ACTOR_FORM_ID"))
+                    {
+                        if (std::optional<ESM::FormId> formId = parseProofFormId(placementFormId))
+                        {
+                            placementRefId = ESM::RefId::formIdRefId(*formId);
+                            Log(Debug::Info) << "FNV/ESM4 proof: using inventory form id " << placementFormId
+                                             << " for missing actor target \"" << value << "\" base="
+                                             << targetRefId.toDebugString();
+                        }
+                        else
+                            Log(Debug::Warning) << "FNV/ESM4 proof: ignored invalid inventory form id \""
+                                                << placementFormId << "\" for missing actor target \"" << value << "\"";
+                    }
+
+                    // A clean base-record portrait can otherwise overlap the authored
+                    // quest reference for the same NPC. Retire only same-base actors,
+                    // leaving the rest of the authored cell intact as background.
+                    if (forceBaseSpawn && proofEnvEnabled("OPENMW_PROOF_HIDE_EXISTING_ACTOR_BASE"))
+                    {
+                        std::vector<MWWorld::Ptr> duplicates;
+                        for (MWWorld::CellStore* activeCell : mWorld->getWorldScene().getActiveCells())
+                        {
+                            if (activeCell == nullptr)
+                                continue;
+                            activeCell->forEach([&](const MWWorld::Ptr& candidate) {
+                                if (!candidate.isEmpty() && candidate.getClass().isActor()
+                                    && candidate.getCellRef().getRefId() == placementRefId
+                                    && candidate.getRefData().isEnabled())
+                                    duplicates.push_back(candidate);
+                                return true;
+                            });
+                        }
+                        for (const MWWorld::Ptr& duplicate : duplicates)
+                            mWorld->disable(duplicate);
+                        Log(Debug::Info) << "FNV/ESM4 proof: retired existing same-base actors target=\""
+                                         << value << "\" base=" << placementRefId.toDebugString()
+                                         << " count=" << duplicates.size();
+                    }
+
+                    MWWorld::ManualRef ref(mWorld->getStore(), placementRefId);
+                    ref.getPtr().mRef->mData.mPhysicsPostponed = !ref.getPtr().getClass().isActor();
+                    ref.getPtr().getCellRef().setPosition(pos);
+                    found = mWorld->placeObject(ref.getPtr(), store, pos);
+                    found.getClass().adjustPosition(found, true);
+                    if (forceBaseSpawn && !found.isEmpty())
+                    {
+                        proofForcedBaseSpawnActor = found;
+                        proofForcedBaseSpawnBase = targetRefId;
+                    }
+                    Log(Debug::Info) << "FNV/ESM4 proof: placed missing actor target \"" << value
+                                     << "\" base=" << placementRefId.toDebugString() << " requestedBase="
+                                     << targetRefId.toDebugString() << " pos=(" << pos.pos[0] << "," << pos.pos[1]
+                                     << "," << pos.pos[2] << ") rot=(" << pos.rot[0] << "," << pos.rot[1] << ","
+                                     << pos.rot[2] << ") ptr=" << found.toString();
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 proof: failed to place missing actor target \"" << value
+                                        << "\": " << e.what();
+                }
+            }
+        }
+        return found;
+    };
+
+    const auto failFNVSidecar = [&](FNVSidecar::ErrorCode code, std::string message) {
+        if (!proofSidecarEnabled || proofSidecarPhase == FNVSidecarOpenMwPhase::Failed)
+            return;
+        proofSidecarClient.setError(code, message);
+        proofSidecarPhase = FNVSidecarOpenMwPhase::Failed;
+        Log(Debug::Error) << "FNV sidecar OpenMW: fail-closed code=" << static_cast<std::uint32_t>(code)
+                          << " message=\"" << message << "\" frame=" << frameNumber;
+    };
+
+    const osg::Timer_t frameStart = mViewer->getStartTick();
+    const osg::Timer* const timer = osg::Timer::instance();
+    osg::Stats* const stats = mViewer->getViewerStats();
+    std::function<void(int)> setPlayableSessionFrontPortraitCamera;
+
+    worldViewerTrace(frameNumber, "frame.begin");
+    mEnvironment.setFrameDuration(frametime);
+    worldViewerTrace(frameNumber, "frame.duration-set");
+
+    try
+    {
+        // update input
+        worldViewerTrace(frameNumber, "input.begin");
+        {
+            ScopedProfile<UserStatsType::Input> profile(frameStart, frameNumber, *timer, *stats);
+            // Terminal-only audits drive their own deterministic world transitions and must not consume
+            // keyboard, mouse, or controller events from the unattended host. A physical Inventory press
+            // otherwise opens the Pip-Boy, pauses actor simulation, and can fight the audit's mode cleanup.
+            const bool isolateGoodspringsActorAuditInput
+                = proofEnvEnabled("OPENMW_FNV_GOODSPRINGS_ACTOR_AUDIT");
+            mInputManager->update(
+                frametime, isolateGoodspringsActorAuditInput, isolateGoodspringsActorAuditInput);
+        }
+        worldViewerTrace(frameNumber, "input.end");
+
+        // When the window is minimized, pause the game. Currently this *has* to be here to work around a MyGUI bug.
+        // If we are not currently rendering, then RenderItems will not be reused resulting in a memory leak upon
+        // changing widget textures (fixed in MyGUI 3.3.2), and destroyed widgets will not be deleted (not fixed yet,
+        // https://github.com/MyGUI/mygui/issues/21)
+        {
+            worldViewerTrace(frameNumber, "sound.begin");
+            ScopedProfile<UserStatsType::Sound> profile(frameStart, frameNumber, *timer, *stats);
+
+            static bool loggedHiddenVrWindow = false;
+            if (!mWindowManager->isWindowVisible() && VR::getVR() && !loggedHiddenVrWindow)
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VR mirror window hidden; keeping world simulation running";
+                loggedHiddenVrWindow = true;
+            }
+
+            const bool backgroundPlayableSession = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_BACKGROUND");
+            if (!mWindowManager->isWindowVisible() && !VR::getVR() && !backgroundPlayableSession)
+            {
+                mSoundManager->pausePlayback();
+                return false;
+            }
+            else
+                mSoundManager->resumePlayback();
+
+            static bool backgroundPlayableSessionLogged = false;
+            if (!mWindowManager->isWindowVisible() && !VR::getVR() && backgroundPlayableSession
+                && !backgroundPlayableSessionLogged)
+            {
+                backgroundPlayableSessionLogged = true;
+                Log(Debug::Info) << "Playable session: minimized/hidden window detected; keeping simulation and native "
+                                    "capture active without foreground input";
+            }
+
+            // sound
+            if (mUseSound)
+                mSoundManager->update(frametime);
+        }
+        worldViewerTrace(frameNumber, "sound.end");
+
+        {
+            worldViewerTrace(frameNumber, "lua-sync.begin");
+            ScopedProfile<UserStatsType::LuaSyncUpdate> profile(frameStart, frameNumber, *timer, *stats);
+            // Should be called after input manager update and before any change to the game world.
+            // It applies to the game world queued changes from the previous frame.
+            mLuaManager->synchronizedUpdate();
+        }
+        worldViewerTrace(frameNumber, "lua-sync.end");
+
+        // update game state
+        worldViewerTrace(frameNumber, "state.begin");
+        {
+            ScopedProfile<UserStatsType::State> profile(frameStart, frameNumber, *timer, *stats);
+            mStateManager->update(frametime);
+        }
+        worldViewerTrace(frameNumber, "state.end");
+
+        bool paused = mWorld->getTimeManager()->isPaused();
+
+        {
+            worldViewerTrace(frameNumber, "script.begin");
+            ScopedProfile<UserStatsType::Script> profile(frameStart, frameNumber, *timer, *stats);
+
+            if (mStateManager->getState() != MWBase::StateManager::State_NoGame)
+            {
+                if (!mWindowManager->containsMode(MWGui::GM_MainMenu) || !paused)
+                {
+                    if (mWorld->getScriptsEnabled())
+                    {
+                        // local scripts
+                        executeLocalScripts();
+
+                        // global scripts
+                        mScriptManager->getGlobalScripts().run();
+                    }
+
+                    mWorld->getWorldScene().markCellAsUnchanged();
+                }
+
+                if (!paused)
+                {
+                    double hours = (frametime * mWorld->getTimeManager()->getGameTimeScale()) / 3600.0;
+                    mWorld->advanceTime(hours, true);
+                    mWorld->rechargeItems(frametime, true);
+                }
+            }
+        }
+        worldViewerTrace(frameNumber, "script.end");
+
+        int requestedTimeSequenceIndex = -1;
+        for (std::size_t i = 0; i < worldViewerTimeSequence.size(); ++i)
+        {
+            if (frameNumber >= static_cast<unsigned>(worldViewerTimeSequence[i].mFrame))
+                requestedTimeSequenceIndex = static_cast<int>(i);
+        }
+        if (requestedTimeSequenceIndex >= 0 && requestedTimeSequenceIndex != worldViewerTimeSequenceIndex
+            && mWorld != nullptr && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            const WorldViewerTimeKeyframe& keyframe
+                = worldViewerTimeSequence[static_cast<std::size_t>(requestedTimeSequenceIndex)];
+            mWorld->setGlobalFloat(MWWorld::Globals::sGameHour, keyframe.mHour);
+            mWorld->advanceTime(0.0, false);
+            worldViewerTimeSequenceIndex = requestedTimeSequenceIndex;
+            Log(Debug::Info) << "World viewer sky sweep: applied time slot=" << requestedTimeSequenceIndex
+                             << " frame=" << frameNumber << " hour=" << keyframe.mHour;
+        }
+
+        const bool playableSessionRequested = proofEnvEnabled("OPENMW_PLAYABLE_SESSION");
+        const int playableSessionSettleFrames
+            = std::max(1, readProofInt("OPENMW_PLAYABLE_SESSION_SETTLE_FRAMES", 120));
+        const bool playableSessionReady = playableSessionRequested && !nativeFalloutSaveOwnsCamera()
+            && mWorld != nullptr
+            && mStateManager->getState() == MWBase::StateManager::State_Running && !paused
+            && proofWorldReadyFrames >= playableSessionSettleFrames;
+        const auto setPlayableSessionCamera = [&](MWRender::Camera::Mode mode) {
+            if (nativeFalloutSaveOwnsCamera())
+                return;
+
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWRender::Camera* camera = mWorld->getCamera();
+            if (player.isEmpty() || camera == nullptr)
+                return;
+
+            const float distance = mode == MWRender::Camera::Mode::FirstPerson
+                ? 0.f
+                : readProofFloat("OPENMW_PLAYABLE_SESSION_CAMERA_DISTANCE", 192.f);
+            camera->attachTo(player);
+            camera->setMode(mode, true);
+            camera->setPreferredCameraDistance(distance);
+            camera->processViewChange();
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->updateCamera();
+        };
+        setPlayableSessionFrontPortraitCamera = [&](int orbitIndex) {
+            if (nativeFalloutSaveOwnsCamera())
+                return;
+
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWRender::Camera* camera = mWorld->getCamera();
+            if (player.isEmpty() || camera == nullptr)
+                return;
+
+            const bool closeup = orbitIndex >= 4;
+            MWWorld::Ptr focalActor = player;
+            if (closeup && orbitIndex == 5 && !playableSessionActor.isEmpty())
+                focalActor = playableSessionActor;
+
+            const auto resolveRenderedFaceCenter = [](const MWWorld::Ptr& actor, osg::Vec3f& center) {
+                if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
+                    return false;
+                FalloutProofFaceBoundsVisitor visitor;
+                actor.getRefData().getBaseNode()->accept(visitor);
+                if (visitor.getHeadMatched() == 0)
+                    return false;
+                const osg::Vec3d head = visitor.getHeadCenter();
+                if (!std::isfinite(head.x()) || !std::isfinite(head.y()) || !std::isfinite(head.z()))
+                    return false;
+                center.set(static_cast<float>(head.x()), static_cast<float>(head.y()), static_cast<float>(head.z()));
+                return true;
+            };
+
+            osg::Vec3f focal;
+            osg::Vec3f focalFace;
+            const bool focalFaceResolved = resolveRenderedFaceCenter(focalActor, focalFace);
+            std::string_view focalSource = "reference-height";
+            if (closeup && focalFaceResolved)
+            {
+                focal = focalFace;
+                focalSource = "rendered-face";
+            }
+            else if (!closeup && proofEnvEnabled("OPENMW_PLAYABLE_SESSION_PORTRAIT_CENTER_ACTOR_GROUP")
+                && !playableSessionActor.isEmpty())
+            {
+                osg::Vec3f playerFace;
+                osg::Vec3f actorFace;
+                const bool playerFaceResolved = resolveRenderedFaceCenter(player, playerFace);
+                const bool actorFaceResolved = resolveRenderedFaceCenter(playableSessionActor, actorFace);
+                if (playerFaceResolved && actorFaceResolved)
+                {
+                    focal = (playerFace + actorFace) * 0.5f;
+                    focalSource = "rendered-face-group";
+                }
+                else
+                {
+                    const osg::Vec3f playerPosition = player.getRefData().getPosition().asVec3();
+                    const osg::Vec3f actorPosition = playableSessionActor.getRefData().getPosition().asVec3();
+                    focal = (playerPosition + actorPosition) * 0.5f
+                        + osg::Vec3f(0.f, 0.f,
+                            readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_FOCAL_HEIGHT", 112.f));
+                    focalSource = "reference-height-group";
+                }
+            }
+            else
+            {
+                const char* closeupFocalHeightEnv = orbitIndex == 4
+                    ? "OPENMW_PLAYABLE_SESSION_PLAYER_CLOSEUP_FOCAL_HEIGHT"
+                    : "OPENMW_PLAYABLE_SESSION_ACTOR_CLOSEUP_FOCAL_HEIGHT";
+                const float focalHeight = closeup
+                    ? readProofFloat(closeupFocalHeightEnv,
+                        readProofFloat("OPENMW_PLAYABLE_SESSION_CLOSEUP_FOCAL_HEIGHT", 100.f))
+                    : readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_FOCAL_HEIGHT", 112.f);
+                focal = focalActor.getRefData().getPosition().asVec3() + osg::Vec3f(0.f, 0.f, focalHeight);
+            }
+            const float defaultDistance
+                = readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_DISTANCE", 112.f);
+            osg::Vec3f offset(
+                readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_OFFSET_X", 0.f),
+                readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_OFFSET_Y", defaultDistance),
+                readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_OFFSET_Z", 0.f));
+            if (closeup)
+            {
+                const float frontSign = offset.y() < 0.f ? -1.f : 1.f;
+                const char* closeupDistanceEnv = orbitIndex == 4
+                    ? "OPENMW_PLAYABLE_SESSION_PLAYER_CLOSEUP_DISTANCE"
+                    : "OPENMW_PLAYABLE_SESSION_ACTOR_CLOSEUP_DISTANCE";
+                const char* closeupOffsetZEnv = orbitIndex == 4
+                    ? "OPENMW_PLAYABLE_SESSION_PLAYER_CLOSEUP_OFFSET_Z"
+                    : "OPENMW_PLAYABLE_SESSION_ACTOR_CLOSEUP_OFFSET_Z";
+                const float closeupDistance = readProofFloat(closeupDistanceEnv,
+                    readProofFloat("OPENMW_PLAYABLE_SESSION_CLOSEUP_DISTANCE", 90.f));
+                const float facing = focalActor.getRefData().getPosition().rot[2];
+                // Actor transforms rotate their local +Y axis around -Z. Put the
+                // proof camera on that authored forward axis so a close-up is a
+                // real face check instead of an accidental rear/side view.
+                offset.set(-frontSign * closeupDistance * std::sin(facing),
+                    -frontSign * closeupDistance * std::cos(facing),
+                    readProofFloat(closeupOffsetZEnv,
+                        readProofFloat("OPENMW_PLAYABLE_SESSION_CLOSEUP_OFFSET_Z", 4.f)));
+                const char* closeupYawOffsetEnv = orbitIndex == 4
+                    ? "OPENMW_PLAYABLE_SESSION_PLAYER_CLOSEUP_YAW_OFFSET_DEGREES"
+                    : "OPENMW_PLAYABLE_SESSION_ACTOR_CLOSEUP_YAW_OFFSET_DEGREES";
+                const float yawOffset = osg::DegreesToRadians(readProofFloat(closeupYawOffsetEnv, 0.f));
+                if (std::abs(yawOffset) > 0.0001f)
+                {
+                    const float originalX = offset.x();
+                    const float originalY = offset.y();
+                    offset.x() = originalX * std::cos(yawOffset) - originalY * std::sin(yawOffset);
+                    offset.y() = originalX * std::sin(yawOffset) + originalY * std::cos(yawOffset);
+                }
+            }
+            else if (orbitIndex > 0)
+            {
+                const float planarDistance = std::max(defaultDistance,
+                    std::sqrt(offset.x() * offset.x() + offset.y() * offset.y()));
+                const float frontSign = offset.y() < 0.f ? -1.f : 1.f;
+                if (orbitIndex == 1)
+                    offset.x() = -offset.x();
+                else if (orbitIndex == 2)
+                    offset.set(0.f, frontSign * planarDistance, offset.z());
+                else
+                    offset.set(0.f, -frontSign * planarDistance, offset.z());
+            }
+            osg::Vec3f cameraPosition = focal + offset;
+            if (closeup && proofEnvEnabled("OPENMW_PLAYABLE_SESSION_PORTRAIT_RENDER_RAYCAST"))
+            {
+                const char* target = orbitIndex == 4 ? "level-one player"
+                                                     : std::getenv("OPENMW_PLAYABLE_SESSION_ACTOR");
+                selectProofActorCameraByOrbitRays(*mWorld, focalActor, target, focal, cameraPosition);
+            }
+            if (!closeup && proofEnvEnabled("OPENMW_PLAYABLE_SESSION_PORTRAIT_RAYCAST"))
+            {
+                // The imported worlds frequently place foliage, signs, shields, or architecture between a
+                // mathematically valid proof camera and its subjects. Reuse the rendering/ground ray sampler
+                // used by source-driven world-viewer starts so native evidence selects a clear authored angle.
+                const osg::Vec3d resolved = resolveWorldViewerOrbitCamera(
+                    *mWorld, osg::Vec3d(cameraPosition), osg::Vec3d(focal));
+                cameraPosition.set(static_cast<float>(resolved.x()), static_cast<float>(resolved.y()),
+                    static_cast<float>(resolved.z()));
+            }
+            osg::Vec3f direction = focal - cameraPosition;
+            if (direction.length2() <= 0.0001f)
+                direction.set(0.f, -1.f, 0.f);
+            direction.normalize();
+            const float horizontal = std::sqrt(
+                direction.x() * direction.x() + direction.y() * direction.y());
+            const float yaw = std::atan2(-direction.x(), direction.y());
+            const float pitch = std::atan2(direction.z(), horizontal);
+
+            camera->attachTo(player);
+            camera->setMode(MWRender::Camera::Mode::Static, true);
+            camera->setStaticPosition(cameraPosition);
+            camera->setYaw(yaw, true);
+            camera->setPitch(pitch, true);
+            camera->processViewChange();
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->updateCamera();
+            float focalScreenX = std::numeric_limits<float>::quiet_NaN();
+            float focalScreenY = std::numeric_limits<float>::quiet_NaN();
+            if (const osg::Camera* renderCamera = mViewer != nullptr ? mViewer->getCamera() : nullptr)
+            {
+                if (const osg::Viewport* viewport = renderCamera->getViewport();
+                    viewport != nullptr && viewport->width() > 0.0 && viewport->height() > 0.0)
+                {
+                    const osg::Vec3d window = osg::Vec3d(focal) * renderCamera->getViewMatrix()
+                        * renderCamera->getProjectionMatrix() * viewport->computeWindowMatrix();
+                    focalScreenX = static_cast<float>((window.x() - viewport->x()) / viewport->width());
+                    focalScreenY = static_cast<float>((window.y() - viewport->y()) / viewport->height());
+                }
+            }
+            Log(Debug::Info) << "Playable session: framed native portrait camera orbitIndex=" << orbitIndex
+                             << " mode=static pos=("
+                             << cameraPosition.x() << "," << cameraPosition.y() << "," << cameraPosition.z()
+                             << ") focal=(" << focal.x() << "," << focal.y() << "," << focal.z()
+                             << ") yaw=" << camera->getYaw() << " pitch=" << camera->getPitch()
+                             << " focalActorRotZ=" << focalActor.getRefData().getPosition().rot[2]
+                             << " focalSource=" << focalSource << " faceResolved=" << focalFaceResolved
+                             << " focalScreen=(" << focalScreenX << "," << focalScreenY << ")";
+        };
+        const auto setPlayableSessionMovement
+            = [&](const MWWorld::Ptr& player, float side, float forward, bool run) {
+                  MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
+                  movement.mPosition[0] = side;
+                  movement.mPosition[1] = forward;
+                  movement.mPosition[2] = 0.f;
+                  player.getClass().getCreatureStats(player).setMovementFlag(
+                      MWMechanics::CreatureStats::Flag_Run, run);
+                  player.getClass().getCreatureStats(player).setMovementFlag(
+                      MWMechanics::CreatureStats::Flag_Sneak, false);
+
+                  if (MWBase::LuaManager::ActorControls* controls = mLuaManager->getActorControls(player))
+                  {
+                      controls->mDisableAI = false;
+                      controls->mMovement = forward;
+                      controls->mSideMovement = side;
+                      controls->mJump = false;
+                      controls->mRun = run;
+                      controls->mSneak = false;
+                      controls->mChanged = true;
+                  }
+              };
+        const auto resolvePlayableSessionActor = [&]() {
+            const char* target = std::getenv("OPENMW_PLAYABLE_SESSION_ACTOR");
+            if (target != nullptr && *target != '\0')
+                return resolveProofActor(target);
+
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWWorld::Ptr nearest;
+            float nearestDistance2 = std::numeric_limits<float>::max();
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (ptr.isEmpty() || ptr == player || !ptr.getClass().isActor())
+                        return true;
+                    const float distance2 = (ptr.getRefData().getPosition().asVec3()
+                                                - player.getRefData().getPosition().asVec3())
+                                                .length2();
+                    if (distance2 < nearestDistance2)
+                    {
+                        nearestDistance2 = distance2;
+                        nearest = ptr;
+                    }
+                    return true;
+                });
+            }
+            return nearest;
+        };
+        const auto applyPlayableSessionSafeActorState = [&]() {
+            if (playableSessionActor.isEmpty()
+                || !proofEnvEnabled("OPENMW_PLAYABLE_SESSION_NEUTRALIZE_ACTOR"))
+                return;
+
+            MWMechanics::CreatureStats& actorStats
+                = playableSessionActor.getClass().getCreatureStats(playableSessionActor);
+            actorStats.setAiSetting(MWMechanics::AiSetting::Fight, 0);
+            if (actorStats.getAiSequence().isInCombat())
+            {
+                actorStats.getAiSequence().stopCombat();
+                actorStats.setAttackingOrSpell(false);
+                ++playableSessionActorCombatSuppressions;
+                Log(Debug::Info) << "Playable session: suppressed false safe-start combat package actor="
+                                 << playableSessionActor.toString() << " count="
+                                 << playableSessionActorCombatSuppressions;
+            }
+        };
+
+        if (playableSessionReady && !playableSessionStarted)
+        {
+            playableSessionStarted = true;
+            playableSessionOrbitScreenshotIndex = 0;
+            playableSessionOrbitNextFrame = 0;
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            if (proofEnvEnabled("OPENMW_PLAYABLE_SESSION_FORCE_LEVEL_ONE"))
+            {
+                player.getClass().getCreatureStats(player).setLevel(1);
+                if (player.getClass().isNpc())
+                    player.getClass().getNpcStats(player).setLevelProgress(0);
+            }
+
+            playableSessionPlayerStart = player.getRefData().getPosition().asVec3();
+            playableSessionCameraSwitchPosition = playableSessionPlayerStart;
+            playableSessionActor = resolvePlayableSessionActor();
+            logProofActorRenderBounds(player, "Player", "playable-session-start");
+            if (!playableSessionActor.isEmpty())
+            {
+                const char* actorTarget = std::getenv("OPENMW_PLAYABLE_SESSION_ACTOR");
+                logProofActorRenderBounds(playableSessionActor,
+                    actorTarget != nullptr ? actorTarget : "nearest", "playable-session-start");
+                playableSessionActorStart = playableSessionActor.getRefData().getPosition().asVec3();
+                playableSessionActorStartDistance
+                    = (playableSessionActorStart - playableSessionPlayerStart).length();
+                if (proofEnvEnabled("OPENMW_PLAYABLE_SESSION_NEUTRALIZE_ACTOR"))
+                {
+                    applyPlayableSessionSafeActorState();
+                    Log(Debug::Info) << "Playable session: enabled safe-start hostility guard without freezing actor="
+                                     << playableSessionActor.toString();
+                }
+            }
+
+            setPlayableSessionCamera(MWRender::Camera::Mode::ThirdPerson);
+            playableSessionStartScreenshotPending
+                = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_CAPTURE_SCREENSHOTS");
+            const MWRender::Camera* camera = mWorld->getCamera();
+            osg::Vec3f cameraPosition;
+            if (camera != nullptr)
+            {
+                const osg::Vec3d position = camera->getPosition();
+                cameraPosition.set(
+                    static_cast<float>(position.x()), static_cast<float>(position.y()), static_cast<float>(position.z()));
+            }
+            const float cameraDistance = camera != nullptr
+                ? (cameraPosition - playableSessionPlayerStart).length()
+                : std::numeric_limits<float>::quiet_NaN();
+            const int level = player.getClass().getCreatureStats(player).getLevel();
+            const char* sessionId = std::getenv("OPENMW_PLAYABLE_SESSION_ID");
+            Log(Debug::Info) << "Playable session telemetry: phase=start id=\""
+                             << (sessionId != nullptr ? sessionId : "default") << "\" frame=" << frameNumber
+                             << " level=" << level << " playerPos=(" << playableSessionPlayerStart.x() << ","
+                             << playableSessionPlayerStart.y() << "," << playableSessionPlayerStart.z()
+                             << ") cameraMode=" << (camera != nullptr ? static_cast<int>(camera->getMode()) : -1)
+                             << " cameraDistance=" << cameraDistance << " actorResolved="
+                             << (!playableSessionActor.isEmpty() ? 1 : 0) << " actor=\""
+                             << (!playableSessionActor.isEmpty() ? playableSessionActor.toString() : std::string())
+                             << "\" actorDistance=" << playableSessionActorStartDistance;
+        }
+
+        if (playableSessionStarted && !playableSessionFinished && !playableSessionEndTelemetryPending
+            && !nativeFalloutSaveOwnsCamera())
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const float duration
+                = std::max(0.25f, readProofFloat("OPENMW_PLAYABLE_SESSION_DURATION_SECONDS", 4.f));
+            const bool validateCameras = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_VALIDATE_CAMERAS");
+            if (validateCameras && !playableSessionCameraSwitched && playableSessionElapsed >= duration * 0.5f)
+            {
+                playableSessionCameraSwitched = true;
+                playableSessionCameraSwitchPosition = player.getRefData().getPosition().asVec3();
+                setPlayableSessionCamera(MWRender::Camera::Mode::FirstPerson);
+                if (const MWRender::Camera* camera = mWorld->getCamera())
+                {
+                    const osg::Vec3f cameraPosition = camera->getPosition();
+                    playableSessionFirstPersonCameraDistance
+                        = (cameraPosition - playableSessionCameraSwitchPosition).length();
+                }
+                playableSessionMidpointScreenshotPending
+                    = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_CAPTURE_SCREENSHOTS");
+                Log(Debug::Info) << "Playable session telemetry: phase=camera-switch frame=" << frameNumber
+                                 << " mode=first-person playerPos=(" << playableSessionCameraSwitchPosition.x()
+                                 << "," << playableSessionCameraSwitchPosition.y() << ","
+                                 << playableSessionCameraSwitchPosition.z() << ") cameraDistance="
+                                 << playableSessionFirstPersonCameraDistance;
+            }
+
+            if (playableSessionElapsed < duration)
+            {
+                setPlayableSessionMovement(player,
+                    readProofFloat("OPENMW_PLAYABLE_SESSION_STRAFE", 0.f),
+                    readProofFloat("OPENMW_PLAYABLE_SESSION_FORWARD", 1.f),
+                    proofEnvEnabled("OPENMW_PLAYABLE_SESSION_RUN"));
+                playableSessionElapsed += std::clamp(frametime, 0.f, 0.1f);
+            }
+            else
+            {
+                setPlayableSessionMovement(player, 0.f, 0.f, false);
+                if (validateCameras)
+                {
+                    if (proofEnvEnabled("OPENMW_PLAYABLE_SESSION_FRONT_PORTRAIT"))
+                        setPlayableSessionFrontPortraitCamera(0);
+                    else
+                        setPlayableSessionCamera(MWRender::Camera::Mode::ThirdPerson);
+                }
+                playableSessionEndTelemetryPending = true;
+            }
+        }
+
+        if (!playableSessionActorAiStabilized
+            && proofEnvEnabled("OPENMW_PLAYABLE_SESSION_STABILIZE_ACTOR_AI")
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            playableSessionActorAiStabilized = true;
+            const bool wasActive = mMechanicsManager->isAIActive();
+            if (wasActive)
+                mMechanicsManager->toggleAI();
+            Log(Debug::Info) << "Playable session: stabilized nearby actors by disabling autonomous AI"
+                             << " previousActive=" << wasActive
+                             << " currentActive=" << mMechanicsManager->isAIActive();
+        }
+
+        // Apply scripted tour walking before the mechanics tick consumes player controls.
+        if (proofFalloutTourPhase >= 0 && mWorld != nullptr
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            constexpr unsigned tourWalkFrames = 120;
+            const unsigned tourPhaseElapsed = frameNumber - proofFalloutTourPhaseFrame;
+            const float forward
+                = proofFalloutTourPhase == 6 && tourPhaseElapsed < tourWalkFrames ? 0.65f : 0.f;
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
+            movement.mPosition[0] = 0.f;
+            movement.mPosition[1] = forward;
+            movement.mPosition[2] = 0.f;
+            player.getClass().getCreatureStats(player).setMovementFlag(
+                MWMechanics::CreatureStats::Flag_Run, false);
+            if (mLuaManager != nullptr)
+            {
+                if (MWBase::LuaManager::ActorControls* controls = mLuaManager->getActorControls(player))
+                {
+                    controls->mDisableAI = false;
+                    controls->mMovement = forward;
+                    controls->mSideMovement = 0.f;
+                    controls->mJump = false;
+                    controls->mRun = false;
+                    controls->mSneak = false;
+                    controls->mChanged = true;
+                }
+            }
+        }
+
+        // update mechanics
+        {
+            worldViewerTrace(frameNumber, "mechanics.begin");
+            ScopedProfile<UserStatsType::Mechanics> profile(frameStart, frameNumber, *timer, *stats);
+
+            if (mStateManager->getState() != MWBase::StateManager::State_NoGame)
+            {
+                mMechanicsManager->update(frametime, paused);
+            }
+
+            if (mStateManager->getState() == MWBase::StateManager::State_Running)
+            {
+                MWWorld::Ptr player = mWorld->getPlayerPtr();
+                if (!paused && player.getClass().getCreatureStats(player).isDead())
+                    mStateManager->endGame();
+            }
+        }
+        worldViewerTrace(frameNumber, "mechanics.end");
+
+        applyPlayableSessionSafeActorState();
+
+        // update physics
+        {
+            worldViewerTrace(frameNumber, "physics.begin");
+            ScopedProfile<UserStatsType::Physics> profile(frameStart, frameNumber, *timer, *stats);
+
+            if (mStateManager->getState() != MWBase::StateManager::State_NoGame)
+            {
+                mWorld->updatePhysics(frametime, paused, frameStart, frameNumber, *stats);
+            }
+        }
+        worldViewerTrace(frameNumber, "physics.end");
+
+        // update world
+        {
+            worldViewerTrace(frameNumber, "world-update.begin");
+            ScopedProfile<UserStatsType::World> profile(frameStart, frameNumber, *timer, *stats);
+
+            if (mStateManager->getState() != MWBase::StateManager::State_NoGame)
+            {
+                mWorld->update(frametime, paused);
+            }
+        }
+        worldViewerTrace(frameNumber, "world-update.end");
+
+        if (proofEnvEnabled("OPENMW_FNV_RETAIL_POSE_REPLAY") && mWorld != nullptr
+            && mStateManager->getState() != MWBase::StateManager::State_NoGame)
+        {
+            const char* snapshotPathEnv = std::getenv("OPENMW_FNV_RETAIL_POSE_SNAPSHOT");
+            const char* targetRefEnv = std::getenv("OPENMW_FNV_RETAIL_POSE_TARGET_REF");
+            static std::string loadedSnapshotPath;
+            static std::string failedSnapshotPath;
+            static std::shared_ptr<FalloutRetailPoseSnapshot> snapshot;
+            static bool actorMissingLogged = false;
+            static bool rootApplyLogged = false;
+
+            const std::string snapshotPath = snapshotPathEnv != nullptr ? snapshotPathEnv : "";
+            if (!snapshotPath.empty() && snapshotPath != loadedSnapshotPath && snapshotPath != failedSnapshotPath)
+            {
+                try
+                {
+                    snapshot = loadFalloutRetailPoseSnapshot(snapshotPath);
+                    loadedSnapshotPath = snapshotPath;
+                    failedSnapshotPath.clear();
+                    actorMissingLogged = false;
+                    rootApplyLogged = false;
+                    Log(Debug::Info) << "FNV/ESM4 retail pose snapshot loaded: path=\"" << snapshotPath
+                                     << "\" nodes=" << snapshot->mNodes.size() << " rootBits="
+                                     << formatProofFloatBits(snapshot->mRootBits);
+                }
+                catch (const std::exception& e)
+                {
+                    snapshot.reset();
+                    failedSnapshotPath = snapshotPath;
+                    Log(Debug::Error) << "FNV/ESM4 retail pose snapshot load failed: path=\"" << snapshotPath
+                                      << "\" error=\"" << e.what() << "\"";
+                }
+            }
+
+            if (snapshot != nullptr && targetRefEnv != nullptr && *targetRefEnv != '\0')
+            {
+                MWWorld::Ptr actor = resolveProofActor(targetRefEnv);
+                if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
+                {
+                    if (!actorMissingLogged)
+                    {
+                        actorMissingLogged = true;
+                        Log(Debug::Error) << "FNV/ESM4 retail pose replay target unresolved: target=\""
+                                          << targetRefEnv << "\"";
+                    }
+                }
+                else
+                {
+                    actorMissingLogged = false;
+                    osg::Node* actorRoot = actor.getRefData().getBaseNode();
+                    std::string attachedSnapshotPath;
+                    if (!actorRoot->getUserValue("fnvRetailPoseSnapshotPath", attachedSnapshotPath)
+                        || attachedSnapshotPath != snapshot->mPath)
+                    {
+                        const int applyFrame = readProofInt("OPENMW_FNV_RETAIL_POSE_APPLY_FRAME", 0);
+                        const int auditFrame = readProofInt("OPENMW_FNV_RETAIL_POSE_AUDIT_FRAME", -1);
+                        actorRoot->addUpdateCallback(
+                            new FalloutRetailPoseReplayCallback(snapshot, applyFrame, auditFrame));
+                        actorRoot->setUserValue("fnvRetailPoseSnapshotPath", snapshot->mPath);
+                        Log(Debug::Info) << "FNV/ESM4 retail pose replay attached: target=\"" << targetRefEnv
+                                         << "\" applyFrame=" << applyFrame << " auditFrame=" << auditFrame;
+                    }
+
+                    const int applyFrame = readProofInt("OPENMW_FNV_RETAIL_POSE_APPLY_FRAME", 0);
+                    if (frameNumber >= static_cast<unsigned int>(std::max(0, applyFrame)))
+                    {
+                        const osg::Vec3f expectedPosition(proofFloatFromBits(snapshot->mRootBits[0]),
+                            proofFloatFromBits(snapshot->mRootBits[1]), proofFloatFromBits(snapshot->mRootBits[2]));
+                        const osg::Vec3f expectedRotation(proofFloatFromBits(snapshot->mRootBits[3]),
+                            proofFloatFromBits(snapshot->mRootBits[4]), proofFloatFromBits(snapshot->mRootBits[5]));
+                        const ESM::Position before = actor.getRefData().getPosition();
+                        std::array<std::uint32_t, 6> beforeBits = {
+                            std::bit_cast<std::uint32_t>(before.pos[0]), std::bit_cast<std::uint32_t>(before.pos[1]),
+                            std::bit_cast<std::uint32_t>(before.pos[2]), std::bit_cast<std::uint32_t>(before.rot[0]),
+                            std::bit_cast<std::uint32_t>(before.rot[1]), std::bit_cast<std::uint32_t>(before.rot[2])
+                        };
+                        if (beforeBits[0] != snapshot->mRootBits[0] || beforeBits[1] != snapshot->mRootBits[1]
+                            || beforeBits[2] != snapshot->mRootBits[2])
+                        {
+                            actor = mWorld->moveObject(actor, expectedPosition);
+                        }
+                        if (beforeBits[3] != snapshot->mRootBits[3] || beforeBits[4] != snapshot->mRootBits[4]
+                            || beforeBits[5] != snapshot->mRootBits[5])
+                        {
+                            mWorld->rotateObject(actor, expectedRotation);
+                        }
+
+                        const ESM::Position& after = actor.getRefData().getPosition();
+                        const std::array<std::uint32_t, 6> afterBits = {
+                            std::bit_cast<std::uint32_t>(after.pos[0]), std::bit_cast<std::uint32_t>(after.pos[1]),
+                            std::bit_cast<std::uint32_t>(after.pos[2]), std::bit_cast<std::uint32_t>(after.rot[0]),
+                            std::bit_cast<std::uint32_t>(after.rot[1]), std::bit_cast<std::uint32_t>(after.rot[2])
+                        };
+                        const int auditFrame = readProofInt("OPENMW_FNV_RETAIL_POSE_AUDIT_FRAME", -1);
+                        if (!rootApplyLogged || static_cast<int>(frameNumber) == auditFrame)
+                        {
+                            rootApplyLogged = true;
+                            const bool pass = afterBits == snapshot->mRootBits;
+                            Log(pass ? Debug::Info : Debug::Error)
+                                << "FNV/ESM4 retail root replay: frame=" << frameNumber << " target=\""
+                                << targetRefEnv << "\" beforeBits=" << formatProofFloatBits(beforeBits)
+                                << " expectedBits=" << formatProofFloatBits(snapshot->mRootBits)
+                                << " afterBits=" << formatProofFloatBits(afterBits)
+                                << " status=" << (pass ? "pass" : "fail");
+                        }
+                    }
+                }
+            }
+        }
+
+        // update GUI
+        {
+            worldViewerTrace(frameNumber, "gui.begin");
+            ScopedProfile<UserStatsType::Gui> profile(frameStart, frameNumber, *timer, *stats);
+            mWindowManager->update(frametime);
+        }
+        worldViewerTrace(frameNumber, "gui.end");
+    }
+    catch (const std::exception& e)
+    {
+        Log(Debug::Error) << "Error in frame: " << e.what();
+        worldViewerTrace(frameNumber, "frame.exception-caught");
+    }
+
+    worldViewerTrace(frameNumber, "stats.begin");
+    const bool reportResource = stats->collectStats("resource");
+
+    if (reportResource)
+        stats->setAttribute(frameNumber, "UnrefQueue", mUnrefQueue->getSize());
+
+    mUnrefQueue->flush(*mWorkQueue);
+
+    if (reportResource)
+    {
+        stats->setAttribute(frameNumber, "FrameNumber", frameNumber);
+
+        mResourceSystem->reportStats(frameNumber, stats);
+
+        stats->setAttribute(frameNumber, "WorkQueue", mWorkQueue->getNumItems());
+        stats->setAttribute(frameNumber, "WorkThread", mWorkQueue->getNumActiveThreads());
+
+        mMechanicsManager->reportStats(frameNumber, *stats);
+        mWorld->reportStats(frameNumber, *stats);
+        mLuaManager->reportStats(frameNumber, *stats);
+    }
+    worldViewerTrace(frameNumber, "stats.end");
+
+    worldViewerTrace(frameNumber, "stereo.begin");
+    mStereoManager->updateSettings(Settings::camera().mNearClip, Settings::camera().mViewingDistance);
+    worldViewerTrace(frameNumber, "stereo.end");
+
+    worldViewerTrace(frameNumber, "osg-event.begin");
+    mViewer->eventTraversal();
+    worldViewerTrace(frameNumber, "osg-event.end");
+    worldViewerTrace(frameNumber, "osg-update.begin");
+    if (viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_SKIP_OSG_UPDATE_TRAVERSAL"))
+    {
+        Log(Debug::Info) << "World viewer trace: frame=" << frameNumber
+                         << " phase=\"osg-update.skipped\" reason=\"proof static scene\"";
+        std::fflush(stdout);
+        std::fflush(stderr);
+    }
+    else
+    {
+        auditWorldViewerOsgUpdateCallbacks(mViewer->getSceneData(), frameNumber);
+        mViewer->updateTraversal();
+    }
+    worldViewerTrace(frameNumber, "osg-update.end");
+
+    // update GUI by world data
+    {
+        worldViewerTrace(frameNumber, "window-world-sync.begin");
+        ScopedProfile<UserStatsType::WindowManager> profile(frameStart, frameNumber, *timer, *stats);
+        mWorld->updateWindowManager();
+    }
+    worldViewerTrace(frameNumber, "window-world-sync.end");
+
+    if (VR::getVR())
+    {
+        if (mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            auto playerPtr = MWMechanics::getPlayer();
+            auto playerAnim = MWBase::Environment::get().getWorld()->getAnimation(playerPtr);
+            if (playerAnim)
+                static_cast<MWVR::VRAnimation*>(playerAnim)->updateSpace();
+        }
+        if (VR::getShouldRecenterZ() || VR::getShouldRecenterXY())
+        {
+            MWBase::Environment::get().getLuaManager()->vrRecentered(
+                VR::getShouldRecenterZ(), VR::getShouldRecenterXY());
+            VR::setShouldRecenterXY(false);
+            VR::setShouldRecenterZ(false);
+        }
+        mLuaManager->onVRFrame();
+        VR::Session::instance().updateSpaces();
+    }
+
+    // Stock OpenMW releases Lua here because the remaining stock work is render-only.  The
+    // background proof paths below also perform controlled scene/camera mutations, so defer
+    // their Lua update until immediately before rendering.  Lua then overlaps only the cull
+    // traversal, matching the worker's threading contract.
+    const bool deferProofLuaWorker = proofEnvEnabled("OPENMW_FNV_INTERACTION_AUDIT")
+        || proofEnvEnabled("OPENMW_AUTHORED_INTERACTION_AUDIT")
+        || proofEnvEnabled("OPENMW_PLAYABLE_SESSION_BACKGROUND")
+        || proofEnvEnabled("OPENMW_PROOF_DELAY_STARTUP_SCRIPT") || fnvPipBoyShowcaseEnabled
+        || fnvGameplayStartPlacementEnabled;
+    if (!deferProofLuaWorker)
+    {
+        worldViewerTrace(frameNumber, "lua-worker-allow.begin");
+        mLuaWorker->allowUpdate(frameStart, frameNumber, *stats);
+        worldViewerTrace(frameNumber, "lua-worker-allow.end");
+    }
+
+    if (proofEnvEnabled("OPENMW_PROOF_HIDE_FIRST_PERSON"))
+    {
+        const uint32_t mask = mViewer->getCamera()->getCullMask() & ~MWRender::Mask_FirstPerson;
+        mViewer->getCamera()->setCullMask(mask);
+        mViewer->getCamera()->setCullMaskLeft(mask);
+        mViewer->getCamera()->setCullMaskRight(mask);
+        if (!proofFirstPersonHidden)
+        {
+            proofFirstPersonHidden = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: hidden first-person render mask for clean proof capture";
+        }
+    }
+
+    if (proofEnvEnabled("OPENMW_PROOF_HIDE_PLAYER_VISUAL"))
+    {
+        static bool proofPlayerMaskHidden = false;
+        const uint32_t mask = mViewer->getCamera()->getCullMask() & ~MWRender::Mask_Player;
+        mViewer->getCamera()->setCullMask(mask);
+        mViewer->getCamera()->setCullMaskLeft(mask);
+        mViewer->getCamera()->setCullMaskRight(mask);
+        if (mWorld != nullptr)
+        {
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            if (!player.isEmpty() && player.getRefData().getBaseNode() != nullptr)
+                player.getRefData().getBaseNode()->setNodeMask(0);
+        }
+        if (!proofPlayerMaskHidden)
+        {
+            proofPlayerMaskHidden = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: hidden player render mask and base node for clean proof capture";
+        }
+    }
+
+    if (proofEnvEnabled("OPENMW_PROOF_HIDE_WORLD_VISUAL"))
+    {
+        static bool proofWorldMaskHidden = false;
+        const uint32_t worldMask = MWRender::Mask_Static | MWRender::Mask_Object | MWRender::Mask_Terrain
+            | MWRender::Mask_Groundcover | MWRender::Mask_Water | MWRender::Mask_SimpleWater
+            | MWRender::Mask_Sky | MWRender::Mask_Sun | MWRender::Mask_WeatherParticles;
+        const uint32_t mask = mViewer->getCamera()->getCullMask() & ~worldMask;
+        mViewer->getCamera()->setCullMask(mask);
+        mViewer->getCamera()->setCullMaskLeft(mask);
+        mViewer->getCamera()->setCullMaskRight(mask);
+        if (!proofWorldMaskHidden)
+        {
+            proofWorldMaskHidden = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: hidden world render masks for actor proof capture";
+        }
+    }
+
+    if (!proofGuiHidden && std::getenv("OPENMW_PROOF_HIDE_GUI") != nullptr)
+    {
+        mWindowManager->setHudVisibility(false);
+        const uint32_t mask = mViewer->getCamera()->getCullMask() & ~MWRender::VisMask::Mask_GUI;
+        mViewer->getCamera()->setCullMask(mask);
+        mViewer->getCamera()->setCullMaskLeft(mask);
+        mViewer->getCamera()->setCullMaskRight(mask);
+        proofGuiHidden = true;
+        Log(Debug::Info) << "FNV/ESM4 proof: hidden GUI/HUD for clean proof capture";
+    }
+    if (!proofSkyDisabled && std::getenv("OPENMW_PROOF_DISABLE_SKY") != nullptr)
+    {
+        bool skyEnabled = mWorld->toggleSky();
+        if (skyEnabled)
+            skyEnabled = mWorld->toggleSky();
+        proofSkyDisabled = true;
+        Log(Debug::Info) << "FNV/ESM4 proof: disabled sky for clean proof capture finalEnabled=" << skyEnabled;
+    }
+
+    const bool proofRunning = mStateManager->getState() == MWBase::StateManager::State_Running;
+    const bool proofForceClearLoadingGui = std::getenv("OPENMW_PROOF_FORCE_CLEAR_LOADING_GUI") != nullptr;
+    if (!proofLoadingGuiForceCleared && proofForceClearLoadingGui && proofRunning)
+    {
+        proofLoadingGuiForceCleared = true;
+        Log(Debug::Info)
+            << "FNV/ESM4 proof: logically cleared loading GUI for world-viewer proof without mutating Lua UI modes";
+    }
+    const bool proofLoadingGuiRaw = mWindowManager->containsMode(MWGui::GM_Loading)
+        || mWindowManager->containsMode(MWGui::GM_LoadingWallpaper)
+        || mWindowManager->containsMode(MWGui::GM_MainMenu);
+    const bool proofLoadingGui = proofLoadingGuiRaw && !(proofForceClearLoadingGui && proofLoadingGuiForceCleared);
+    const bool proofWorldReady = proofRunning && !proofLoadingGui;
+    if (proofWorldReady)
+        ++proofWorldReadyFrames;
+    else
+        proofWorldReadyFrames = 0;
+
+    if (proofWorldReady && !nativeFalloutSaveOwnsCamera() && mWorld != nullptr
+        && std::getenv("OPENMW_FNV_RETAIL_PROJECTION_REPLAY") != nullptr)
+    {
+        const osg::Matrixf retailProjection = makeFalloutRetailProjectionMatrix();
+        mWorld->getRenderingManager()->overrideProjectionMatrix(retailProjection,
+            proofFloatFromBits(FalloutRetailVerticalFovBits), proofFloatFromBits(FalloutRetailNearClipBits),
+            proofFloatFromBits(FalloutRetailFarClipBits));
+        if (!proofRetailProjectionApplied)
+        {
+            proofRetailProjectionApplied = true;
+            Log(Debug::Info) << "FNV/ESM4 retail projection replay: applied source=retail-d3d9-draw-sequences-938-939"
+                             << " viewport=2048x1280 baseHorizontalFov=75"
+                             << " verticalFovBits="
+                             << formatProofFloatBits(FalloutRetailVerticalFovBitArray)
+                             << " nearFarBits=" << formatProofFloatBits(FalloutRetailNearFarBits)
+                             << " retailD3DBits=" << formatProofFloatBits(FalloutRetailD3DProjectionBits)
+                             << " expectedOpenGLBits=" << formatProofFloatBits(FalloutRetailOpenGLProjectionBits);
+        }
+    }
+
+    if (proofEnvEnabled("OPENMW_PROOF_HIDE_WORLD_OCCLUDERS"))
+    {
+        static bool proofWorldOccludersHidden = false;
+        const uint32_t occluderMask
+            = MWRender::Mask_Static | MWRender::Mask_Object | MWRender::Mask_Groundcover;
+        const uint32_t mask = mViewer->getCamera()->getCullMask() & ~occluderMask;
+        mViewer->getCamera()->setCullMask(mask);
+        mViewer->getCamera()->setCullMaskLeft(mask);
+        mViewer->getCamera()->setCullMaskRight(mask);
+        if (!proofWorldOccludersHidden)
+        {
+            proofWorldOccludersHidden = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: hidden static/object/groundcover occluders while preserving terrain, sky, lighting, and actors";
+        }
+    }
+
+    const int proofRetailProjectionAuditFrame
+        = readProofInt("OPENMW_FNV_RETAIL_PROJECTION_AUDIT_FRAME", 420);
+    if (!proofRetailProjectionAudited && proofRetailProjectionApplied
+        && static_cast<int>(frameNumber) >= proofRetailProjectionAuditFrame)
+    {
+        proofRetailProjectionAudited = true;
+        const std::array<std::uint32_t, 16> actualBits
+            = getProofMatrixBits(mViewer->getCamera()->getProjectionMatrix());
+        const osg::Viewport* viewport = mViewer->getCamera()->getViewport();
+        const int viewportWidth = viewport != nullptr ? static_cast<int>(viewport->width()) : 0;
+        const int viewportHeight = viewport != nullptr ? static_cast<int>(viewport->height()) : 0;
+        const auto* renderingManager = mWorld->getRenderingManager();
+        const std::uint32_t actualFovBits
+            = std::bit_cast<std::uint32_t>(renderingManager->getFieldOfView());
+        const std::uint32_t actualNearBits
+            = std::bit_cast<std::uint32_t>(renderingManager->getNearClipDistance());
+        const std::uint32_t actualFarBits
+            = std::bit_cast<std::uint32_t>(renderingManager->getViewDistance());
+        const std::array<std::uint32_t, 1> actualFovBitArray = { actualFovBits };
+        const std::array<std::uint32_t, 2> actualNearFarBits = { actualNearBits, actualFarBits };
+        const bool passed = viewportWidth == 2048 && viewportHeight == 1280
+            && actualBits == FalloutRetailOpenGLProjectionBits && actualFovBits == FalloutRetailVerticalFovBits
+            && actualNearBits == FalloutRetailNearClipBits && actualFarBits == FalloutRetailFarClipBits;
+        Log(passed ? Debug::Info : Debug::Error)
+            << "FNV/ESM4 retail projection audit: frame=" << frameNumber
+            << " viewport=" << viewportWidth << "x" << viewportHeight
+            << " fovBits=" << formatProofFloatBits(actualFovBitArray)
+            << " nearFarBits=" << formatProofFloatBits(actualNearFarBits)
+            << " expectedOpenGLBits=" << formatProofFloatBits(FalloutRetailOpenGLProjectionBits)
+            << " actualOpenGLBits=" << formatProofFloatBits(actualBits)
+            << " status=" << (passed ? "pass" : "fail");
+    }
+
+    worldViewerTrace(frameNumber, "proof-world-ready-evaluated");
+    if (proofWorldReady && mWorld != nullptr)
+    {
+        worldViewerTrace(frameNumber, "dry-start.begin");
+        enforceWorldViewerDryStart(*mWorld);
+        worldViewerTrace(frameNumber, "dry-start.end");
+    }
+
+    const bool proofActorStaticCameraOwnsView = proofActorCameraAligned
+        && std::getenv("OPENMW_PROOF_ALIGN_PLAYER_TO_ACTOR") != nullptr
+        && std::getenv("OPENMW_PROOF_ACTOR_VIEW_STATIC_CAMERA") != nullptr;
+    if (proofWorldReady && !nativeFalloutSaveOwnsCamera() && mWorld != nullptr && !VR::getVR()
+        && !proofActorStaticCameraOwnsView)
+    {
+        worldViewerTrace(frameNumber, "static-camera.begin");
+        enforceWorldViewerStaticCamera(*mWorld, frameNumber);
+        worldViewerTrace(frameNumber, "static-camera.end");
+    }
+    else if (proofActorStaticCameraOwnsView)
+    {
+        static bool proofActorStaticCameraSuppressedSurveyLogged = false;
+        if (!proofActorStaticCameraSuppressedSurveyLogged)
+        {
+            proofActorStaticCameraSuppressedSurveyLogged = true;
+            Log(Debug::Info)
+                << "FNV/ESM4 proof: suppressing static survey camera after actor camera alignment frame="
+                << frameNumber;
+        }
+    }
+
+    if (viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TELEMETRY") && proofRunning && mWorld != nullptr)
+    {
+        worldViewerTrace(frameNumber, "periodic-telemetry.begin");
+        const int telemetryInterval = readProofInt("OPENMW_WORLD_VIEWER_TELEMETRY_INTERVAL", 30);
+        const bool telemetryDue = !worldViewerTelemetryLogged || telemetryInterval <= 0
+            || frameNumber >= worldViewerTelemetryLastFrame + static_cast<unsigned int>(telemetryInterval);
+        if (telemetryDue)
+        {
+            logWorldViewerTelemetry(*mWorld, *mViewer, frameNumber, static_cast<int>(mStateManager->getState()),
+                proofLoadingGui, proofWorldReady, proofWorldReadyFrames);
+            worldViewerTelemetryLastFrame = frameNumber;
+            worldViewerTelemetryLogged = true;
+        }
+        worldViewerTrace(frameNumber, "periodic-telemetry.end");
+    }
+
+    if (playableSessionEndTelemetryPending && mWorld != nullptr)
+    {
+        MWWorld::Ptr player = mWorld->getPlayerPtr();
+        const osg::Vec3f endPosition = player.getRefData().getPosition().asVec3();
+        const auto horizontalDistance = [](const osg::Vec3f& lhs, const osg::Vec3f& rhs) {
+            const float x = lhs.x() - rhs.x();
+            const float y = lhs.y() - rhs.y();
+            return std::sqrt(x * x + y * y);
+        };
+        const float totalDistance = horizontalDistance(endPosition, playableSessionPlayerStart);
+        const float thirdPersonDistance = playableSessionCameraSwitched
+            ? horizontalDistance(playableSessionCameraSwitchPosition, playableSessionPlayerStart)
+            : totalDistance;
+        const float firstPersonDistance = playableSessionCameraSwitched
+            ? horizontalDistance(endPosition, playableSessionCameraSwitchPosition)
+            : 0.f;
+        const float verticalDrift = std::abs(endPosition.z() - playableSessionPlayerStart.z());
+        const float averageSpeed = playableSessionElapsed > 0.f ? totalDistance / playableSessionElapsed : 0.f;
+
+        float actorDrift = std::numeric_limits<float>::quiet_NaN();
+        float actorEndDistance = std::numeric_limits<float>::quiet_NaN();
+        bool actorInCombat = false;
+        if (!playableSessionActor.isEmpty())
+        {
+            const osg::Vec3f actorEnd = playableSessionActor.getRefData().getPosition().asVec3();
+            actorDrift = (actorEnd - playableSessionActorStart).length();
+            actorEndDistance = (actorEnd - endPosition).length();
+            actorInCombat = playableSessionActor.getClass()
+                                .getCreatureStats(playableSessionActor)
+                                .getAiSequence()
+                                .isInCombat();
+        }
+
+        const MWRender::Camera* camera = mWorld->getCamera();
+        osg::Vec3f cameraEndPosition;
+        if (camera != nullptr)
+        {
+            const osg::Vec3d position = camera->getPosition();
+            cameraEndPosition.set(
+                static_cast<float>(position.x()), static_cast<float>(position.y()), static_cast<float>(position.z()));
+        }
+        const float cameraEndDistance = camera != nullptr
+            ? (cameraEndPosition - endPosition).length()
+            : std::numeric_limits<float>::quiet_NaN();
+        const int level = player.getClass().getCreatureStats(player).getLevel();
+        const bool validateCameras = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_VALIDATE_CAMERAS");
+        const bool requireActor = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_REQUIRE_ACTOR");
+        const float minimumDistance
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MIN_DISTANCE", 64.f));
+        const float minimumSegmentDistance
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MIN_CAMERA_SEGMENT_DISTANCE", 24.f));
+        const float minimumSpeed
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MIN_SPEED", 20.f));
+        const float maximumSpeed
+            = std::max(minimumSpeed, readProofFloat("OPENMW_PLAYABLE_SESSION_MAX_SPEED", 600.f));
+        const float maximumVerticalDrift
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MAX_VERTICAL_DRIFT", 512.f));
+        const float maximumFirstPersonCameraDistance = std::max(
+            0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MAX_FIRST_PERSON_CAMERA_DISTANCE", 512.f));
+        const float maximumActorDrift
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MAX_ACTOR_DRIFT", 256.f));
+        const float maximumActorDistance
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MAX_ACTOR_DISTANCE", 3072.f));
+        const bool levelPass = level == 1;
+        const bool movementPass = totalDistance >= minimumDistance && averageSpeed >= minimumSpeed
+            && averageSpeed <= maximumSpeed && verticalDrift <= maximumVerticalDrift;
+        const bool cameraPass = !validateCameras
+            || (playableSessionCameraSwitched && thirdPersonDistance >= minimumSegmentDistance
+                && firstPersonDistance >= minimumSegmentDistance
+                && std::isfinite(playableSessionFirstPersonCameraDistance)
+                && playableSessionFirstPersonCameraDistance <= maximumFirstPersonCameraDistance);
+        const bool actorResolvedPass = !requireActor || !playableSessionActor.isEmpty();
+        const bool actorStabilityPass = !requireActor
+            || (!playableSessionActor.isEmpty() && std::isfinite(actorDrift)
+                && actorDrift <= maximumActorDrift && actorEndDistance <= maximumActorDistance && !actorInCombat);
+        const bool sessionPass
+            = levelPass && movementPass && cameraPass && actorResolvedPass && actorStabilityPass;
+
+        const char* sessionId = std::getenv("OPENMW_PLAYABLE_SESSION_ID");
+        Log(Debug::Info) << "Playable session telemetry: phase=end id=\""
+                         << (sessionId != nullptr ? sessionId : "default") << "\" frame=" << frameNumber
+                         << " elapsed=" << playableSessionElapsed << " level=" << level << " playerStart=("
+                         << playableSessionPlayerStart.x() << "," << playableSessionPlayerStart.y() << ","
+                         << playableSessionPlayerStart.z() << ") playerEnd=(" << endPosition.x() << ","
+                         << endPosition.y() << "," << endPosition.z() << ") distance=" << totalDistance
+                         << " averageSpeed=" << averageSpeed << " verticalDrift=" << verticalDrift
+                         << " thirdPersonDistance=" << thirdPersonDistance << " firstPersonDistance="
+                         << firstPersonDistance << " firstPersonCameraDistance="
+                         << playableSessionFirstPersonCameraDistance << " cameraEndMode="
+                         << (camera != nullptr ? static_cast<int>(camera->getMode()) : -1)
+                         << " cameraEndDistance=" << cameraEndDistance << " actorResolved="
+                         << (!playableSessionActor.isEmpty() ? 1 : 0) << " actorStartDistance="
+                         << playableSessionActorStartDistance << " actorEndDistance=" << actorEndDistance
+                         << " actorDrift=" << actorDrift << " actorInCombat=" << (actorInCombat ? 1 : 0)
+                         << " actorCombatSuppressions=" << playableSessionActorCombatSuppressions
+                         << " levelPass=" << (levelPass ? 1 : 0) << " movementPass="
+                         << (movementPass ? 1 : 0) << " cameraPass=" << (cameraPass ? 1 : 0)
+                         << " actorResolvedPass=" << (actorResolvedPass ? 1 : 0) << " actorStabilityPass="
+                         << (actorStabilityPass ? 1 : 0) << " result=" << (sessionPass ? "pass" : "fail");
+
+        playableSessionEndTelemetryPending = false;
+        playableSessionFinished = true;
+        playableSessionEndScreenshotPending
+            = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_CAPTURE_SCREENSHOTS");
+        if (!playableSessionEndScreenshotPending)
+            playableSessionExitFrame = frameNumber + 2;
+    }
+
+    if (!proofDelayedStartupScriptExecuted && std::getenv("OPENMW_PROOF_DELAY_STARTUP_SCRIPT") != nullptr
+        && !mStartupScript.empty() && proofWorldReady)
+    {
+        // The console script can change cells and rebuild the active-object lists.  At this
+        // point in the frame the Lua worker has already been released, so mutating the scene
+        // concurrently with nearby.* list iteration races the worker (and can recurse through
+        // sol/Lua error handling until the worker stack overflows).  Finish this frame's Lua
+        // update before executing the one-shot world mutation.
+        mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+        Log(Debug::Info) << "FNV/ESM4 proof: executing delayed startup script after world load";
+        mWindowManager->executeInConsole(mStartupScript);
+        proofDelayedStartupScriptExecuted = true;
+    }
+
+    if (!fnvNewGameGameplayUiUnlocked && proofWorldReady && !nativeFalloutSaveOwnsCamera()
+        && hasFalloutNvContent(mContentFiles) && mWindowManager != nullptr)
+    {
+        // Fallout's normal New Game does not run Morrowind character creation.
+        // Leaving WindowManager in its generic new-game state keeps mAllowed at
+        // GW_None, which makes both the real P-key Pip-Boy and ordinary inventory
+        // appear to do nothing. Finish the UI handoff when the actual FNV world is
+        // live, just as a restored game does.
+        mWindowManager->setNewGame(false);
+        fnvNewGameGameplayUiUnlocked = true;
+        Log(Debug::Info) << "FNV new-game UI: enabled gameplay inventory/map/stats controls source=normal-world-ready";
+    }
+
+    if (!fnvGameplayStartPlacementApplied && fnvGameplayStartPlacementEnabled && proofWorldReady
+        && mWorld != nullptr)
+    {
+        // This uses the same Lua-worker handoff as the delayed startup script: a
+        // post-New-Game cell change rebuilds active-object lists and must not race
+        // nearby.* iteration in the worker.
+        mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+        fnvGameplayStartPlacementPassed = applyFNVGameplayStartPlacement(*mWorld);
+        fnvGameplayStartPlacementApplied = true;
+    }
+
+    const bool proofFNVBootstrapProfile = std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr;
+    const bool proofFNVBootstrapOutside = std::getenv("OPENMW_FNV_BOOTSTRAP_DOC_SENT") != nullptr;
+    if (!proofFNVBootstrapApplied && proofWorldReady && !nativeFalloutSaveOwnsCamera()
+        && (proofFNVBootstrapProfile || proofFNVBootstrapOutside))
+    {
+        try
+        {
+            applyFNVLevelOneCourierBootstrap(*mWorld, proofFNVBootstrapOutside, proofFNVBootstrapProfile);
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Error) << "FNV/ESM4 proof: level-1 Courier bootstrap failed: " << e.what();
+        }
+        proofFNVBootstrapApplied = true;
+    }
+
+    if (fnvRealSaveD01Enabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        const int d01RouteElapsed = proofWorldReadyFrames - fnvRealSaveD01FirstReadyFrame;
+        auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+        constexpr std::array<std::string_view, 5> d01Categories = { "WEAP", "APP", "AID", "MISC", "AMMO" };
+
+        if (d01RouteElapsed >= 0 && !fnvRealSaveD01Failed)
+        {
+            if (!mWorld->isFirstPerson())
+                mWorld->togglePOV(true);
+            if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+            {
+                mWindowManager->setFalloutPipBoyPresentation(true);
+                mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+            }
+            else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                mWindowManager->setFalloutPipBoyPresentation(true);
+
+            MWRender::RenderingManager* const renderingManager = mWorld->getRenderingManager();
+            if (fnvRealSaveD01PresentationReadyFrame < 0 && renderingManager != nullptr
+                && renderingManager->isFalloutPipBoyPresentationHeld())
+            {
+                fnvRealSaveD01PresentationReadyFrame = proofWorldReadyFrames;
+                Log(Debug::Info) << "FNV D01 inventory route: presentation=authored-held"
+                                 << " waitFrames=" << d01RouteElapsed
+                                 << " action=schedule-after-animation-completion status=pass";
+            }
+
+            if (physicalWindowManager == nullptr)
+            {
+                fnvRealSaveD01Failed = true;
+                Log(Debug::Error) << "FNV D01 inventory route: missing physical window manager status=fail";
+            }
+            else if (fnvRealSaveD01PresentationReadyFrame >= 0)
+            {
+                if (fnvRealSaveD01ActiveCategory < 0)
+                {
+                    const bool categorySelected
+                        = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey2);
+                    fnvRealSaveD01ActiveCategory = categorySelected ? 0 : -2;
+                    fnvRealSaveD01InteractionSettledFrame
+                        = categorySelected ? proofWorldReadyFrames + 30 : -1;
+                    Log(categorySelected ? Debug::Info : Debug::Error)
+                        << "FNV D01 inventory route: category=" << d01Categories[0]
+                        << " index=0 action=physical-pipboy-category-navigation"
+                        << " submenu=" << physicalWindowManager->getFalloutPipBoySubmenu()
+                        << " source=production-Pip-Boy-items-tab status="
+                        << (categorySelected ? "pass" : "fail");
+                    if (!categorySelected)
+                        fnvRealSaveD01Failed = true;
+                }
+                else if (fnvRealSaveD01ActiveCategory >= 0)
+                {
+                    const int category = fnvRealSaveD01ActiveCategory;
+                    if (fnvRealSaveD01InteractionSettledFrame >= 0
+                        && proofWorldReadyFrames >= fnvRealSaveD01InteractionSettledFrame
+                        && fnvRealSaveD01CapturedFrames == static_cast<std::size_t>(category))
+                    {
+                        if (mScreenCaptureHandler == nullptr)
+                        {
+                            fnvRealSaveD01Failed = true;
+                            Log(Debug::Error) << "FNV D01 native frame: missing ScreenCaptureHandler status=fail";
+                        }
+                        else
+                        {
+                            Log(Debug::Info) << "FNV D01 native frame: category="
+                                             << d01Categories[static_cast<std::size_t>(category)]
+                                             << " index=" << fnvRealSaveD01CapturedFrames
+                                             << " presentation=authored-held source=ScreenCaptureHandler";
+                            mScreenCaptureHandler->setFramesToCapture(1);
+                            mScreenCaptureHandler->captureNextFrame(*mViewer);
+                            ++fnvRealSaveD01CapturedFrames;
+                            fnvRealSaveD01NextActionFrame = proofWorldReadyFrames
+                                + std::max(30, fnvRealSaveD01FramesPerCategory - 30);
+                        }
+                    }
+
+                    if (!fnvRealSaveD01Failed && category < 4
+                        && fnvRealSaveD01CapturedFrames > static_cast<std::size_t>(category)
+                        && fnvRealSaveD01NextActionFrame >= 0
+                        && proofWorldReadyFrames >= fnvRealSaveD01NextActionFrame)
+                    {
+                        const bool categorySelected
+                            = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                        if (categorySelected)
+                        {
+                            ++fnvRealSaveD01ActiveCategory;
+                            fnvRealSaveD01InteractionSettledFrame = proofWorldReadyFrames + 30;
+                            fnvRealSaveD01NextActionFrame = -1;
+                        }
+                        Log(categorySelected ? Debug::Info : Debug::Error)
+                            << "FNV D01 inventory route: category="
+                            << d01Categories[static_cast<std::size_t>(category + 1)]
+                            << " index=" << category + 1
+                            << " action=single-physical-pipboy-category-step"
+                            << " submenu=" << physicalWindowManager->getFalloutPipBoySubmenu()
+                            << " interaction=single-paced-step status="
+                            << (categorySelected ? "pass" : "fail");
+                        if (!categorySelected)
+                            fnvRealSaveD01Failed = true;
+                    }
+                }
+            }
+        }
+
+        if (!fnvRealSaveD01Failed && fnvRealSaveD01CapturedFrames == d01Categories.size()
+            && fnvRealSaveD01ExitReadyFrame < 0)
+        {
+            fnvRealSaveD01ExitReadyFrame = proofWorldReadyFrames + 60;
+            MWGui::ItemModel* const model
+                = mWindowManager->getInventoryWindow() == nullptr ? nullptr : mWindowManager->getInventoryWindow()->getModel();
+            Log(Debug::Info) << "FNV D01 inventory: phase=complete categories=" << d01Categories.size()
+                             << " captured=" << fnvRealSaveD01CapturedFrames
+                             << " allRows=" << (model != nullptr ? model->getItemCount() : 0)
+                             << " source=production-Pip-Boy-items-tab status=pass"
+                             << " exitReadyFrame=" << fnvRealSaveD01ExitReadyFrame;
+        }
+        if (fnvRealSaveD01Failed)
+        {
+            Log(Debug::Error) << "FNV D01 inventory: phase=complete categories=" << d01Categories.size()
+                              << " captured=" << fnvRealSaveD01CapturedFrames
+                              << " source=production-Pip-Boy-items-tab status=fail";
+            mStateManager->requestQuit();
+            fnvRealSaveD01ExitReadyFrame = proofWorldReadyFrames;
+        }
+        else if (fnvRealSaveD01ExitReadyFrame >= 0
+            && proofWorldReadyFrames >= fnvRealSaveD01ExitReadyFrame)
+        {
+            Log(Debug::Info) << "FNV D01 inventory: clean quit after five production categories captured=5";
+            mStateManager->requestQuit();
+            fnvRealSaveD01ExitReadyFrame = std::numeric_limits<int>::max();
+        }
+    }
+
+    if (fnvRealSaveD02Enabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        const int d02Elapsed = proofWorldReadyFrames - fnvRealSaveD02FirstReadyFrame;
+        if (d02Elapsed >= 0 && fnvRealSaveD02WeaponStartFrame < 0)
+            fnvRealSaveD02WeaponStartFrame = proofWorldReadyFrames;
+        const int weaponIndex = d02Elapsed >= 0 ? fnvRealSaveD02CurrentWeapon : -1;
+        const int weaponElapsed = d02Elapsed >= 0 && fnvRealSaveD02WeaponStartFrame >= 0
+            ? proofWorldReadyFrames - fnvRealSaveD02WeaponStartFrame
+            : -1;
+        const auto failD02 = [&](std::string_view reason) {
+            if (!fnvRealSaveD02Failed)
+                Log(Debug::Error) << "FNV D02 weapon selection: source=production-pipboy-weapon-selection"
+                                  << " status=fail reason=" << reason;
+            fnvRealSaveD02Failed = true;
+        };
+        constexpr int d02CaptureDrainFrames = 30;
+        const auto pollD02NativeFrame = [&]() {
+            if (!fnvRealSaveD02ScreenshotPending)
+                return true;
+
+            const FNVSidecarScreenshot candidate = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+            if (isNewSidecarScreenshot(fnvRealSaveD02ScreenshotBaseline, candidate))
+            {
+                if (fnvRealSaveD02ScreenshotCandidate.mValid
+                    && fnvRealSaveD02ScreenshotCandidate.mPath == candidate.mPath
+                    && fnvRealSaveD02ScreenshotCandidate.mSize == candidate.mSize)
+                {
+                    ++fnvRealSaveD02ScreenshotStableFrames;
+                }
+                else
+                {
+                    fnvRealSaveD02ScreenshotCandidate = candidate;
+                    fnvRealSaveD02ScreenshotStableFrames = 1;
+                }
+            }
+
+            if (fnvRealSaveD02ScreenshotStableFrames >= 2)
+            {
+                Log(Debug::Info) << "FNV D02 native frame: index=" << fnvRealSaveD02ScreenshotWeaponIndex
+                                 << " form=" << fnvRealSaveD02ScreenshotForm
+                                 << " source=ScreenCaptureHandler retained=1 path=\""
+                                 << fnvRealSaveD02ScreenshotCandidate.mPath.string() << "\" bytes="
+                                 << fnvRealSaveD02ScreenshotCandidate.mSize;
+                ++fnvRealSaveD02CapturedFrames;
+                fnvRealSaveD02CapturedCurrent = true;
+                fnvRealSaveD02ScreenshotPending = false;
+                fnvRealSaveD02ScreenshotDeadlineFrame = -1;
+                fnvRealSaveD02ScreenshotWeaponIndex = -1;
+                fnvRealSaveD02ScreenshotForm.clear();
+                // Do not reopen the physical Pip-Boy until the asynchronously
+                // written native frame is stable and the close state has had a
+                // complete render boundary to drain.
+                fnvRealSaveD02NextActionFrame = proofWorldReadyFrames + d02CaptureDrainFrames;
+                return true;
+            }
+
+            if (fnvRealSaveD02ScreenshotDeadlineFrame >= 0
+                && proofWorldReadyFrames >= fnvRealSaveD02ScreenshotDeadlineFrame)
+            {
+                Log(Debug::Error) << "FNV D02 native frame: write-timeout index="
+                                  << fnvRealSaveD02ScreenshotWeaponIndex << " form="
+                                  << fnvRealSaveD02ScreenshotForm << " stableFrames="
+                                  << fnvRealSaveD02ScreenshotStableFrames
+                                  << " source=ScreenCaptureHandler";
+                fnvRealSaveD02ScreenshotPending = false;
+                failD02("native-frame-write-timeout");
+            }
+            return false;
+        };
+        const bool d02NativeFrameReady = pollD02NativeFrame();
+        const bool d02ReadyForNextAction = d02NativeFrameReady && !fnvRealSaveD02ScreenshotPending
+            && (fnvRealSaveD02NextActionFrame < 0 || proofWorldReadyFrames >= fnvRealSaveD02NextActionFrame);
+
+        // A completed native frame is the only transition that advances the
+        // roster. This preserves the physical Pip-Boy route while allowing a
+        // real authored pose to settle instead of letting a fixed slot clock
+        // race the first weapon's production controller.
+        bool d02AdvancedThisFrame = false;
+        if (d02Elapsed >= 0 && !fnvRealSaveD02Failed && d02ReadyForNextAction
+            && fnvRealSaveD02CapturedCurrent && fnvRealSaveD02CurrentWeapon < 9)
+        {
+            ++fnvRealSaveD02CurrentWeapon;
+            fnvRealSaveD02WeaponStartFrame = proofWorldReadyFrames;
+            fnvRealSaveD02ActiveWeapon = -1;
+            fnvRealSaveD02CapturedCurrent = false;
+            fnvRealSaveD02NextActionFrame = -1;
+            d02AdvancedThisFrame = true;
+            Log(Debug::Info) << "FNV D02 weapon selection: index=" << fnvRealSaveD02CurrentWeapon
+                             << " action=advance-after-stable-native-frame"
+                             << " source=production-pipboy-weapon-selection status=pass";
+        }
+
+        // weaponIndex and weaponElapsed were sampled before the advance above.
+        // Wait one engine frame so the next production activation uses the
+        // newly selected roster row and its fresh pacing origin.
+        if (d02Elapsed >= 0 && !fnvRealSaveD02Failed && d02ReadyForNextAction && !d02AdvancedThisFrame)
+        {
+            const bool needsPipBoyOpen = !fnvRealSaveD02MenuClosed || weaponIndex != fnvRealSaveD02ActiveWeapon;
+            if (needsPipBoyOpen)
+            {
+                if (!mWorld->isFirstPerson())
+                    mWorld->togglePOV(true);
+                if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                {
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+                    mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+                }
+                else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+            }
+
+            auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+            MWGui::InventoryWindow* const inventoryWindow = mWindowManager->getInventoryWindow();
+            if (physicalWindowManager == nullptr || inventoryWindow == nullptr
+                || inventoryWindow->getSortFilterModel() == nullptr)
+            {
+                failD02("missing-physical-inventory-model");
+            }
+            else
+            {
+                MWGui::SortFilterItemModel* const sortModel = inventoryWindow->getSortFilterModel();
+                if (fnvRealSaveD02Weapons.empty() && sortModel->getItemCount() > 0)
+                {
+                    for (MWGui::ItemModel::ModelIndex row = 0;
+                         row < static_cast<int>(sortModel->getItemCount()); ++row)
+                    {
+                        const MWGui::ItemStack& item = sortModel->getItem(row);
+                        if (item.mBase.getType() != ESM4::Weapon::sRecordId)
+                            continue;
+                        const ESM::RefId formId = item.mBase.getCellRef().getRefId();
+                        if (formId.empty()
+                            || std::find(fnvRealSaveD02Weapons.begin(), fnvRealSaveD02Weapons.end(), formId)
+                                != fnvRealSaveD02Weapons.end())
+                            continue;
+                        fnvRealSaveD02Weapons.push_back(formId);
+                    }
+                    if (fnvRealSaveD02Weapons.size() == 10)
+                    {
+                        Log(Debug::Info) << "FNV D02 weapon roster: count=" << fnvRealSaveD02Weapons.size()
+                                         << " source=restored-save330-SortFilterItemModel status=pass";
+                        for (std::size_t row = 0; row < fnvRealSaveD02Weapons.size(); ++row)
+                            Log(Debug::Info) << "FNV D02 weapon roster row: index=" << row
+                                             << " form=" << fnvRealSaveD02Weapons[row]
+                                             << " source=restored-save330-SortFilterItemModel";
+                    }
+                    else if (fnvRealSaveD02Weapons.size() > 10)
+                    {
+                        failD02("weapon-roster-count-not-ten");
+                    }
+                }
+
+                if (!fnvRealSaveD02Failed && fnvRealSaveD02Weapons.size() != 10 && d02Elapsed >= 30)
+                    failD02("weapon-roster-not-restored");
+
+                if (!fnvRealSaveD02Failed && weaponIndex < static_cast<int>(fnvRealSaveD02Weapons.size()))
+                {
+                    const ESM::RefId target = fnvRealSaveD02Weapons[static_cast<std::size_t>(weaponIndex)];
+                    if (fnvRealSaveD02ActiveWeapon != weaponIndex)
+                    {
+                        const bool tabSelected
+                            = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey2);
+                        inventoryWindow->setFalloutPipBoyCategory(0);
+                        fnvRealSaveD02ActiveWeapon = tabSelected ? weaponIndex : -2;
+                        fnvRealSaveD02ActivationRequested = false;
+                        fnvRealSaveD02EquipmentBridgeObserved = false;
+                        fnvRealSaveD02ControllerSynchronized = false;
+                        fnvRealSaveD02ReloadCalled = false;
+                        fnvRealSaveD02ReloadRequested = false;
+                        fnvRealSaveD02MenuClosed = false;
+                        fnvRealSaveD02AuditLogged = false;
+                        fnvRealSaveD02CapturedCurrent = false;
+                        fnvRealSaveD02PoseSampleValid = false;
+                        fnvRealSaveD02PoseStableFrames = 0;
+                        fnvRealSaveD02PosePendingLogged = false;
+                        fnvRealSaveD02PoseSettledLogged = false;
+                        Log(tabSelected ? Debug::Info : Debug::Error)
+                            << "FNV D02 weapon selection: index=" << weaponIndex << " form=" << target
+                            << " action=physical-pipboy-items-weapons source=production-pipboy-navigation status="
+                            << (tabSelected ? "pass" : "fail");
+                        if (!tabSelected)
+                            failD02("items-tab-navigation-failed");
+                    }
+
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 15 && !fnvRealSaveD02ActivationRequested)
+                    {
+                        const bool activated = inventoryWindow->activateFalloutPipBoyItem(target);
+                        fnvRealSaveD02ActivationRequested = true;
+                        Log(activated ? Debug::Info : Debug::Error)
+                            << "FNV D02 weapon selection: index=" << weaponIndex << " form=" << target
+                            << " action=normal-inventory-row-activation source=InventoryWindow::onItemSelected status="
+                            << (activated ? "pass" : "fail");
+                        if (!activated)
+                            failD02("normal-inventory-row-activation-failed");
+                    }
+
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 25 && !fnvRealSaveD02EquipmentBridgeObserved)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        const bool exact = right != inventory.end() && right->getType() == ESM4::Weapon::sRecordId
+                            && right->getCellRef().getRefId() == target;
+                        if (exact)
+                        {
+                            fnvRealSaveD02EquipmentBridgeObserved = true;
+                            Log(Debug::Info) << "FNV D02 weapon selection: index=" << weaponIndex
+                                              << " form=" << target
+                                              << " action=production-equipped-right-slot-observed"
+                                              << " path=InventoryStore::Slot_CarriedRight"
+                                              << " source=InventoryWindow::onItemSelected->ActionEquip::executeImp status=pass";
+                        }
+                        else if (weaponElapsed >= 45)
+                        {
+                            failD02("production-equipped-right-slot-not-observed");
+                        }
+                    }
+
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 50 && !fnvRealSaveD02MenuClosed)
+                    {
+                        if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                        {
+                            failD02("inventory-menu-not-open-before-close");
+                        }
+                        else
+                        {
+                            mWindowManager->exitCurrentGuiMode();
+                            fnvRealSaveD02MenuClosed = !mWindowManager->containsMode(MWGui::GM_Inventory);
+                            Log(fnvRealSaveD02MenuClosed ? Debug::Info : Debug::Error)
+                                << "FNV D02 weapon selection: index=" << weaponIndex << " form=" << target
+                                << " action=production-exit-current-gui menuClosed=" << fnvRealSaveD02MenuClosed
+                                << " source=physical-pipboy status="
+                                << (fnvRealSaveD02MenuClosed ? "pass" : "fail");
+                            if (!fnvRealSaveD02MenuClosed)
+                                failD02("production-pipboy-close-failed");
+                        }
+                    }
+
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 60 && fnvRealSaveD02MenuClosed
+                        && fnvRealSaveD02EquipmentBridgeObserved && !fnvRealSaveD02ControllerSynchronized)
+                    {
+                        if (mMechanicsManager == nullptr)
+                        {
+                            failD02("mechanics-manager-unavailable-for-controller-sync");
+                        }
+                        else
+                        {
+                            // Normal ActionEquip has already placed the selected
+                            // ESM4 weapon in the Player's authoritative carried
+                            // right slot. Let the ordinary controller consume it
+                            // only after the Pip-Boy closes; do not synthesize
+                            // ammo, a slot, or any animation.
+                            mMechanicsManager->forceStateUpdate(mWorld->getPlayerPtr());
+                            fnvRealSaveD02ControllerSynchronized = true;
+                            Log(Debug::Info) << "FNV D02 weapon selection: index=" << weaponIndex
+                                             << " form=" << target
+                                             << " action=production-controller-state-update"
+                                             << " path=MechanicsManager::forceStateUpdate status=pass";
+                        }
+                    }
+
+                    if (!fnvRealSaveD02Failed && weaponElapsed >= 75 && fnvRealSaveD02ControllerSynchronized
+                        && !fnvRealSaveD02ReloadCalled)
+                    {
+                        fnvRealSaveD02ReloadCalled = true;
+                        if (mMechanicsManager != nullptr)
+                        {
+                            fnvRealSaveD02ReloadRequested = mMechanicsManager->reloadFalloutWeapon(mWorld->getPlayerPtr());
+                            Log(Debug::Info) << "FNV D02 production reload: index=" << weaponIndex
+                                             << " form=" << target << " requested="
+                                             << fnvRealSaveD02ReloadRequested
+                                             << " path=MechanicsManager::reloadFalloutWeapon";
+                        }
+                        else
+                        {
+                            failD02("mechanics-manager-unavailable-for-reload");
+                        }
+                    }
+
+                    // The captured hand/weapon pose is not a countdown.  It is
+                    // ready only when the ordinary first-person controller has
+                    // selected its existing aim source, the retail dynamic
+                    // mount has received a non-identity authored transform,
+                    // and that exact local state is observed unchanged across
+                    // two update frames.  This observes production state only;
+                    // it neither plays, rewinds, nor writes an animation.
+                    const auto observeD02FirstPersonPose = [&]() {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        MWRender::Animation* const firstPerson = mWorld->getFalloutWeaponAnimation(player, true);
+                        const std::string poseSource = firstPerson != nullptr
+                            ? firstPerson->getAnimationSourceName("weaponpose")
+                            : std::string();
+                        const std::string activeRightArm = firstPerson != nullptr
+                            ? std::string(firstPerson->getActiveGroup(MWRender::BoneGroup_RightArm))
+                            : std::string();
+                        const osg::Node* const weaponNode
+                            = firstPerson != nullptr ? firstPerson->getNode("Weapon") : nullptr;
+                        const auto* const weaponTransform = dynamic_cast<const osg::MatrixTransform*>(weaponNode);
+                        osg::Node* const weaponPart
+                            = firstPerson != nullptr ? firstPerson->getEquippedWeaponNode() : nullptr;
+                        const osg::Group* const weaponParent = weaponNode != nullptr && weaponNode->getNumParents() == 1
+                            ? weaponNode->getParent(0)
+                            : nullptr;
+                        const std::string weaponParentName
+                            = weaponParent != nullptr ? weaponParent->getName() : std::string();
+                        const bool directPart = weaponPart != nullptr && weaponPart->getNumParents() == 1
+                            && weaponPart->getParent(0) == weaponNode;
+                        const bool visible = firstPerson != nullptr && firstPerson->getWeaponsShown()
+                            && mWorld->isFirstPerson();
+                        const bool weaponPosePlaying
+                            = firstPerson != nullptr && firstPerson->isPlaying("weaponpose");
+                        const bool expectedMount = weaponParentName == "Bip01 Translate";
+                        const bool nonIdentity
+                            = weaponTransform != nullptr && !weaponTransform->getMatrix().isIdentity();
+                        const bool observed = !poseSource.empty() && weaponPosePlaying
+                            && activeRightArm == "weaponpose" && expectedMount && directPart && visible && nonIdentity;
+
+                        if (observed)
+                        {
+                            const osg::Matrix& matrix = weaponTransform->getMatrix();
+                            if (fnvRealSaveD02PoseSampleValid && matrix == fnvRealSaveD02PoseSample)
+                                ++fnvRealSaveD02PoseStableFrames;
+                            else
+                            {
+                                fnvRealSaveD02PoseSample = matrix;
+                                fnvRealSaveD02PoseSampleValid = true;
+                                fnvRealSaveD02PoseStableFrames = 1;
+                            }
+                        }
+                        else
+                        {
+                            fnvRealSaveD02PoseSampleValid = false;
+                            fnvRealSaveD02PoseStableFrames = 0;
+                        }
+
+                        const bool settled = observed && fnvRealSaveD02PoseStableFrames >= 2;
+                        if (!settled && !fnvRealSaveD02PosePendingLogged)
+                        {
+                            Log(Debug::Info) << "FNV D02 weapon pose gate: index=" << weaponIndex
+                                             << " form=" << target << " source=\"" << poseSource
+                                             << "\" activeRightArm=\"" << activeRightArm
+                                             << "\" weaponNodeParent=\"" << weaponParentName
+                                             << "\" directPart=" << directPart << " visible=" << visible
+                                             << " playing=" << weaponPosePlaying << " nonIdentity=" << nonIdentity
+                                             << " stableFrames=" << fnvRealSaveD02PoseStableFrames
+                                             << " action=observed-authored-first-person-pose status=pending";
+                            fnvRealSaveD02PosePendingLogged = true;
+                        }
+                        else if (settled && !fnvRealSaveD02PoseSettledLogged)
+                        {
+                            Log(Debug::Info) << "FNV D02 weapon pose gate: index=" << weaponIndex
+                                             << " form=" << target << " source=\"" << poseSource
+                                             << "\" activeRightArm=\"" << activeRightArm
+                                             << "\" weaponNodeParent=\"" << weaponParentName
+                                             << "\" directPart=" << directPart << " visible=" << visible
+                                             << " playing=" << weaponPosePlaying << " nonIdentity=" << nonIdentity
+                                             << " stableFrames=" << fnvRealSaveD02PoseStableFrames
+                                             << " action=observed-authored-first-person-pose status=pass";
+                            fnvRealSaveD02PoseSettledLogged = true;
+                        }
+                        return settled;
+                    };
+
+                    bool d02FirstPersonPoseReady = false;
+                    if (!fnvRealSaveD02Failed && fnvRealSaveD02MenuClosed && fnvRealSaveD02ControllerSynchronized
+                        && fnvRealSaveD02ReloadCalled && !fnvRealSaveD02AuditLogged)
+                    {
+                        d02FirstPersonPoseReady = observeD02FirstPersonPose();
+                    }
+
+                    if (!fnvRealSaveD02Failed && fnvRealSaveD02MenuClosed && fnvRealSaveD02ControllerSynchronized
+                        && fnvRealSaveD02ReloadCalled && d02FirstPersonPoseReady && !fnvRealSaveD02AuditLogged)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const bool menuActuallyClosed = !mWindowManager->containsMode(MWGui::GM_Inventory);
+                        const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        const bool rightExact
+                            = right != inventory.end() && right->getCellRef().getRefId() == target;
+                        const ESM4::Weapon* weapon = right != inventory.end()
+                            && right->getType() == ESM4::Weapon::sRecordId
+                            ? right->get<ESM4::Weapon>()->mBase
+                            : nullptr;
+                        std::vector<ESM::FormId> ammoCandidates;
+                        if (weapon != nullptr)
+                        {
+                            if (mWorld->getStore().get<ESM4::Ammunition>().search(weapon->mAmmo) != nullptr)
+                                ammoCandidates.push_back(weapon->mAmmo);
+                            else if (const ESM4::FormIdList* list
+                                = mWorld->getStore().get<ESM4::FormIdList>().search(weapon->mAmmo))
+                                ammoCandidates = list->mObjects;
+                        }
+                        const std::optional<ESM::RefId> selectedAmmo
+                            = inventory.getFalloutAmmoSelection(target);
+                        const std::optional<int> loaded = inventory.getFalloutLoadedAmmo(target);
+                        const bool hasCompatibleReserve = std::find_if(
+                            ammoCandidates.begin(), ammoCandidates.end(), [&](ESM::FormId id) {
+                                return inventory.count(ESM::RefId::formIdRefId(id)) > 0;
+                            })
+                            != ammoCandidates.end();
+                        const bool selectedAmmoCompatible = selectedAmmo.has_value()
+                            && std::find_if(ammoCandidates.begin(), ammoCandidates.end(), [&](ESM::FormId id) {
+                                   return ESM::RefId::formIdRefId(id) == *selectedAmmo;
+                               })
+                                != ammoCandidates.end();
+                        // A weapon restored without a compatible reserve must
+                        // take the ordinary reload rejection path. Do not make
+                        // that real Save330 state pass by inventing an AMMO
+                        // selection or a magazine.
+                        const bool ammoCompatible = ammoCandidates.empty()
+                            ? !selectedAmmo.has_value()
+                            : selectedAmmo.has_value() ? selectedAmmoCompatible : !hasCompatibleReserve;
+                        const char* const ammoState = ammoCandidates.empty()
+                            ? "not-required"
+                            : selectedAmmo.has_value()
+                                ? (selectedAmmoCompatible ? (hasCompatibleReserve ? "selected-reserve" : "selected-empty")
+                                                          : "incompatible-selection")
+                                : (hasCompatibleReserve ? "missing-selection" : "canonical-no-reserve");
+                        const bool reloadPolicyPass = !hasCompatibleReserve
+                            || (fnvRealSaveD02ReloadRequested && loaded.has_value() && *loaded > 0);
+                        // The pose gate above accepts only the normal held
+                        // weaponpose after any production reload transition has
+                        // relinquished the right arm. Audit that authoritative
+                        // result directly; no elapsed-frame fallback is allowed
+                        // to turn a pending reload into a capture.
+                        {
+                            const MWRender::Camera* camera = mWorld->getCamera();
+                            const int cameraMode = camera == nullptr ? -1 : static_cast<int>(camera->getMode());
+                            const MWMechanics::DrawState drawState
+                                = player.getClass().getCreatureStats(player).getDrawState();
+                            const bool hudWeapon = rightExact && mWorld->isFirstPerson()
+                                && cameraMode == static_cast<int>(MWRender::Camera::Mode::FirstPerson)
+                                && drawState == MWMechanics::DrawState::Weapon;
+                            const std::string model = weapon != nullptr ? weapon->mModel : std::string();
+                            const std::string firstPersonModel
+                                = weapon != nullptr ? weapon->mFirstPersonModel : std::string();
+                            const bool auditPass = fnvRealSaveD02MenuClosed && menuActuallyClosed && rightExact
+                                && weapon != nullptr && ammoCompatible
+                                && cameraMode == static_cast<int>(MWRender::Camera::Mode::FirstPerson) && hudWeapon
+                                && !model.empty() && reloadPolicyPass;
+                            Log(auditPass ? Debug::Info : Debug::Error)
+                                << "FNV D02 weapon: index=" << weaponIndex << " form=" << target
+                                << " menuClosed=" << fnvRealSaveD02MenuClosed
+                                << " menuActuallyClosed=" << menuActuallyClosed << " right="
+                                << (right == inventory.end() ? ESM::RefId() : right->getCellRef().getRefId())
+                                << " ammo=" << (selectedAmmo ? selectedAmmo->toDebugString() : std::string("none"))
+                                << " ammoCompatible=" << ammoCompatible << " ammoState=" << ammoState
+                                << " hasCompatibleReserve=" << hasCompatibleReserve << " loaded="
+                                << (loaded ? *loaded : 0) << " reserve="
+                                << (selectedAmmo ? inventory.count(*selectedAmmo) : 0)
+                                << " model=\"" << model << "\" firstPersonModel=\"" << firstPersonModel
+                                << "\" hudWeapon=" << hudWeapon << " cameraMode=" << cameraMode
+                                << " reloadRequested=" << fnvRealSaveD02ReloadRequested
+                                << " reloadPolicyPass=" << reloadPolicyPass
+                                << " path=production-pipboy-close-audit status=" << (auditPass ? "pass" : "fail");
+                            fnvRealSaveD02AuditLogged = true;
+                            if (!auditPass)
+                                failD02("live-weapon-close-audit-failed");
+                            else if (mScreenCaptureHandler == nullptr)
+                                failD02("missing-ScreenCaptureHandler");
+                            else if (fnvRealSaveD02ScreenshotPending)
+                            {
+                                failD02("overlapping-native-frame-write");
+                            }
+                            else
+                            {
+                                Log(Debug::Info) << "FNV D02 native frame request: index=" << weaponIndex
+                                                 << " form=" << target << " source=ScreenCaptureHandler";
+                                fnvRealSaveD02ScreenshotBaseline = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+                                fnvRealSaveD02ScreenshotCandidate = {};
+                                fnvRealSaveD02ScreenshotStableFrames = 0;
+                                fnvRealSaveD02ScreenshotPending = true;
+                                fnvRealSaveD02ScreenshotDeadlineFrame = proofWorldReadyFrames + 600;
+                                fnvRealSaveD02ScreenshotWeaponIndex = weaponIndex;
+                                fnvRealSaveD02ScreenshotForm = target.toString();
+                                mScreenCaptureHandler->setFramesToCapture(1);
+                                mScreenCaptureHandler->captureNextFrame(*mViewer);
+                            }
+                        }
+                    }
+
+                }
+            }
+        }
+
+        if (fnvRealSaveD02Failed)
+        {
+            Log(Debug::Error) << "FNV D02 weapon selection: phase=complete weapons="
+                              << fnvRealSaveD02Weapons.size() << " captured=" << fnvRealSaveD02CapturedFrames
+                              << " source=production-pipboy-weapon-selection status=fail";
+            mStateManager->requestQuit();
+            fnvRealSaveD02ExitReadyFrame = std::numeric_limits<int>::max();
+        }
+        else if (fnvRealSaveD02Weapons.size() == 10 && fnvRealSaveD02CapturedFrames == 10
+            && fnvRealSaveD02ExitReadyFrame < 0)
+        {
+            fnvRealSaveD02ExitReadyFrame = proofWorldReadyFrames + 60;
+            Log(Debug::Info) << "FNV D02 weapon selection: phase=complete weapons=10 captured=10"
+                             << " source=production-pipboy-weapon-selection status=pass exitReadyFrame="
+                             << fnvRealSaveD02ExitReadyFrame;
+        }
+        else if (fnvRealSaveD02ExitReadyFrame >= 0 && proofWorldReadyFrames >= fnvRealSaveD02ExitReadyFrame)
+        {
+            Log(Debug::Info) << "FNV D02 weapon selection: clean quit after ten production weapon audits";
+            mStateManager->requestQuit();
+            fnvRealSaveD02ExitReadyFrame = std::numeric_limits<int>::max();
+        }
+    }
+
+    if (fnvRealSaveC04Enabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        if (!fnvRealSaveC04MarkerParsed)
+        {
+            const char* markerText = std::getenv("OPENMW_FNV_REAL_SAVE_C04_MARKER");
+            const std::string_view configuredMarker
+                = markerText != nullptr && *markerText != '\0' ? std::string_view(markerText)
+                                                                 : std::string_view("FormId:0x03008885");
+            fnvRealSaveC04Marker = parseProofFormId(configuredMarker);
+            fnvRealSaveC04MarkerParsed = true;
+            if (!fnvRealSaveC04Marker)
+            {
+                fnvRealSaveC04Phase = -1;
+                Log(Debug::Error) << "FNV C04 natural Pip-Boy path: invalid marker=\"" << configuredMarker
+                                  << "\"";
+            }
+            else
+            {
+                Log(Debug::Info) << "FNV C04 natural Pip-Boy path: marker=" << *fnvRealSaveC04Marker
+                                 << " source=restored-save330-state";
+            }
+        }
+
+        if (fnvRealSaveC04Phase >= 0 && fnvRealSaveC04Marker)
+        {
+            const int c04Elapsed = proofWorldReadyFrames - fnvRealSaveC04FirstReadyFrame;
+            constexpr int c04RaiseSettleFrames = 90;
+            constexpr int c04ToggleReturnSettleFrames = 130;
+            constexpr int c04SurfaceSettleFrames = 15;
+            // Record the MAP action only after its native UI update has crossed
+            // a complete update/render boundary. Retail does not add a
+            // separate right-hand manipulation pose for this action.
+            constexpr int c04ActionInputSettleFrames = 2;
+            constexpr int c04CaptureDrainFrames = 30;
+            auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+            const ESM4::Reference* marker
+                = mWorld->getStore().get<ESM4::Reference>().search(*fnvRealSaveC04Marker);
+            const auto pollC04NativeFrame = [&]() {
+                if (!fnvRealSaveC04ScreenshotPending)
+                    return true;
+
+                const FNVSidecarScreenshot candidate = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+                if (isNewSidecarScreenshot(fnvRealSaveC04ScreenshotBaseline, candidate))
+                {
+                    if (fnvRealSaveC04ScreenshotCandidate.mValid
+                        && fnvRealSaveC04ScreenshotCandidate.mPath == candidate.mPath
+                        && fnvRealSaveC04ScreenshotCandidate.mSize == candidate.mSize)
+                    {
+                        ++fnvRealSaveC04ScreenshotStableFrames;
+                    }
+                    else
+                    {
+                        fnvRealSaveC04ScreenshotCandidate = candidate;
+                        fnvRealSaveC04ScreenshotStableFrames = 1;
+                    }
+                }
+
+                if (fnvRealSaveC04ScreenshotStableFrames >= 2)
+                {
+                    Log(Debug::Info) << "FNV C04 native frame: retained state=" << fnvRealSaveC04ScreenshotState
+                                     << " index=" << fnvRealSaveC04CapturedFrames << " path=\""
+                                     << fnvRealSaveC04ScreenshotCandidate.mPath.string() << "\" bytes="
+                                     << fnvRealSaveC04ScreenshotCandidate.mSize << " source=ScreenCaptureHandler";
+                    ++fnvRealSaveC04CapturedFrames;
+                    fnvRealSaveC04ScreenshotPending = false;
+                    fnvRealSaveC04ScreenshotDeadlineFrame = -1;
+                    fnvRealSaveC04ScreenshotState.clear();
+                    // A ScreenCaptureHandler write can take longer than the
+                    // fixed route schedule.  Restart the state-local settle
+                    // window after every retained native frame so a focused
+                    // map or confirmation is rendered before its own request.
+                    fnvRealSaveC04NextActionFrame = proofWorldReadyFrames + c04CaptureDrainFrames;
+                    return true;
+                }
+
+                if (fnvRealSaveC04ScreenshotDeadlineFrame >= 0
+                    && proofWorldReadyFrames >= fnvRealSaveC04ScreenshotDeadlineFrame)
+                {
+                    Log(Debug::Error) << "FNV C04 native frame: write-timeout state="
+                                      << fnvRealSaveC04ScreenshotState << " stableFrames="
+                                      << fnvRealSaveC04ScreenshotStableFrames << " source=ScreenCaptureHandler";
+                    fnvRealSaveC04ScreenshotPending = false;
+                    fnvRealSaveC04Phase = -1;
+                }
+                return false;
+            };
+            const bool c04NativeFrameReady = pollC04NativeFrame();
+            const auto advanceC04Phase = [&](int phase, int settleFrames = 0) {
+                fnvRealSaveC04Phase = phase;
+                fnvRealSaveC04NextActionFrame = phase < 0
+                    ? -1
+                    : proofWorldReadyFrames + std::max(0, settleFrames);
+            };
+            const auto queueC04Frame = [&](const char* state, bool captureAfterActionInput = false) {
+                if (mScreenCaptureHandler == nullptr)
+                {
+                    Log(Debug::Error) << "FNV C04 native frame: state=" << state
+                                      << " source=ScreenCaptureHandler status=fail";
+                    fnvRealSaveC04Phase = -1;
+                    return;
+                }
+                if (fnvRealSaveC04ScreenshotPending)
+                {
+                    Log(Debug::Error) << "FNV C04 native frame: overlapping write state=" << state
+                                      << " pending=" << fnvRealSaveC04ScreenshotState
+                                      << " source=ScreenCaptureHandler status=fail";
+                    fnvRealSaveC04Phase = -1;
+                    return;
+                }
+                Log(Debug::Info) << "FNV C04 native frame: state=" << state
+                                 << " index=" << fnvRealSaveC04CapturedFrames
+                                 << " captureAfterActionInput=" << (captureAfterActionInput ? 1 : 0)
+                                 << " source=ScreenCaptureHandler";
+                fnvRealSaveC04ScreenshotBaseline = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+                fnvRealSaveC04ScreenshotCandidate = {};
+                fnvRealSaveC04ScreenshotStableFrames = 0;
+                fnvRealSaveC04ScreenshotPending = true;
+                fnvRealSaveC04ScreenshotState = state;
+                fnvRealSaveC04ScreenshotDeadlineFrame = proofWorldReadyFrames + 600;
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+            };
+
+            if (fnvRealSaveC04Phase == 0 && c04Elapsed >= 0)
+            {
+                if (!mWorld->isFirstPerson())
+                    mWorld->togglePOV(true);
+                if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                {
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+                    mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+                }
+                else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+
+                mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+                const bool mapPaneSelected = physicalWindowManager != nullptr
+                    && physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey4);
+                Log(mapPaneSelected ? Debug::Info : Debug::Error)
+                    << "FNV C04 natural map selection: phase=map-pane-selected pane="
+                    << mWindowManager->getFalloutPipBoyActivePane()
+                    << " physical=" << (mWindowManager->isFalloutPipBoyPhysicalPresentation() ? 1 : 0)
+                    << " action=MAP path=physical-pipboy-production status="
+                    << (mapPaneSelected ? "pass" : "fail");
+                // Let the normal raise complete into its retail held/waver
+                // pose before the player changes from DATA to WORLD.  That
+                // gives the physical glass and the reaching hand a stable
+                // production surface instead of capturing the mid-raise pose.
+                advanceC04Phase(mapPaneSelected ? 1 : -1,
+                    mapPaneSelected ? c04RaiseSettleFrames : 0);
+            }
+
+            if (fnvRealSaveC04Phase == 1 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && physicalWindowManager != nullptr)
+            {
+                // Save330's DATA/MAP pane opens on the authored world map. A
+                // real player toggles through LOCAL and back to WORLD with the
+                // physical scroll knob. Make that same device-local operation
+                // after the raise settles so the definitive WORLD contact has
+                // a fresh authored knob clip, rather than inheriting the MAP
+                // tab-button pulse from the opening action.
+                const bool localMapReady = !physicalWindowManager->isFalloutPipBoyWorldMap()
+                    || physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                const bool localMapConfirmed = localMapReady && !physicalWindowManager->isFalloutPipBoyWorldMap()
+                    && physicalWindowManager->getFalloutPipBoyActivePane() == 0;
+                Log(localMapConfirmed ? Debug::Info : Debug::Error)
+                    << "FNV C04 natural map selection: phase=world-map-local-reset pane="
+                    << physicalWindowManager->getFalloutPipBoyActivePane()
+                    << " worldMap=" << (physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                    << " action=MAP/WORLD path=physical-pipboy-production status="
+                    << (localMapConfirmed ? "pass" : "fail");
+                if (localMapConfirmed)
+                    advanceC04Phase(10, c04ToggleReturnSettleFrames);
+                else
+                    fnvRealSaveC04Phase = -1;
+            }
+
+            if (fnvRealSaveC04Phase == 10 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && physicalWindowManager != nullptr)
+            {
+                const bool worldMapSelected = physicalWindowManager->isFalloutPipBoyWorldMap()
+                    || physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                mWindowManager->refreshFalloutMapMarkers();
+                const std::uint8_t markerState = mWorld->getFalloutMapMarkerState(*fnvRealSaveC04Marker);
+                const bool markerReady = marker != nullptr && markerState == 2 && worldMapSelected
+                    && physicalWindowManager->getFalloutPipBoyActivePane() == 0;
+                Log(markerReady ? Debug::Info : Debug::Error)
+                    << "FNV C04 natural map selection: phase=world-map-opened marker=" << *fnvRealSaveC04Marker
+                    << " name=\"" << (marker != nullptr ? marker->mFullName : std::string()) << "\" state="
+                    << static_cast<int>(markerState) << " pane=" << physicalWindowManager->getFalloutPipBoyActivePane()
+                    << " worldMap=" << (physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                    << " rendered=1 path=physical-pipboy-production status=" << (markerReady ? "pass" : "fail");
+                if (markerReady)
+                {
+                    // This final MAP/WORLD operation owns the visible retail
+                    // ScrollKnob contact and happens only after any earlier
+                    // action envelope has returned to zero.
+                    advanceC04Phase(8, 1);
+                }
+                else
+                    fnvRealSaveC04Phase = -1;
+            }
+
+            if (fnvRealSaveC04Phase == 8 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending && physicalWindowManager != nullptr)
+            {
+                const float interactionPulse = physicalWindowManager->getFalloutPipBoyInteractionPulse();
+                // The physical UI starts its pulse at one. Capture after the
+                // MAP action has reached its native UI state; this does not
+                // imply a separate hand pose or synthetic control contact.
+                if (interactionPulse >= 0.45f && interactionPulse <= 0.55f)
+                {
+                    Log(Debug::Info) << "FNV C04 natural Pip-Boy interaction: phase=world-map-toggle-contact"
+                                     << " pulse=" << interactionPulse
+                                     << " control=ScrollKnob scheduled=1 captureAfterActionInput=1"
+                                     << " source=production-map-action";
+                    advanceC04Phase(12, c04ActionInputSettleFrames);
+                }
+                else if (c04Elapsed >= 1800 && interactionPulse < 0.4f)
+                {
+                    Log(Debug::Error) << "FNV C04 natural Pip-Boy interaction: phase=world-map-toggle-contact"
+                                      << " pulse=" << interactionPulse
+                                      << " control=ScrollKnob source=production-map-action status=fail"
+                                      << " reason=contact-envelope-not-observed";
+                    fnvRealSaveC04Phase = -1;
+                }
+            }
+
+            if (fnvRealSaveC04Phase == 12 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending && physicalWindowManager != nullptr)
+            {
+                // This request follows the live skeleton solve and one full
+                // render boundary. It remains on the exact MAP/WORLD action
+                // pulseâ€”there is no synthetic hand mesh, input, or UI state.
+                const float interactionPulse = physicalWindowManager->getFalloutPipBoyInteractionPulse();
+                Log(Debug::Info) << "FNV C04 natural Pip-Boy interaction: phase=world-map-toggle-contact"
+                                 << " pulse=" << interactionPulse
+                                 << " control=ScrollKnob dispatched=1 captureAfterActionInput=1"
+                                 << " source=production-map-action";
+                queueC04Frame("map-world-toggle-contact", true);
+                if (fnvRealSaveC04Phase >= 0)
+                    advanceC04Phase(9);
+            }
+
+            if (fnvRealSaveC04Phase == 9 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending && physicalWindowManager != nullptr)
+            {
+                // The contact frame is a real MAP/WORLD transition.  Do not
+                // manufacture a different overview with an overlay or a
+                // duplicate idle screenshot: a player can pan this exact
+                // world-map view through the production ScrollKnob route.
+                // The focused-marker phase below recentres the same canonical
+                // marker before it captures the selection proof.
+                const float panBefore = physicalWindowManager->getFalloutPipBoyMapPanX();
+                const bool panHandled = physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                const float panAfter = physicalWindowManager->getFalloutPipBoyMapPanX();
+                const bool overviewPanPass = panHandled && physicalWindowManager->isFalloutPipBoyWorldMap()
+                    && physicalWindowManager->getFalloutPipBoyActivePane() == 0 && panAfter > panBefore;
+                Log(overviewPanPass ? Debug::Info : Debug::Error)
+                    << "FNV C04 natural map selection: phase=world-map-overview-pan pane="
+                    << physicalWindowManager->getFalloutPipBoyActivePane()
+                    << " worldMap=" << (physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                    << " action=MAP-PAN-RIGHT panBefore=" << panBefore << " panAfter=" << panAfter
+                    << " path=physical-pipboy-production status=" << (overviewPanPass ? "pass" : "fail");
+                if (overviewPanPass)
+                    advanceC04Phase(11, c04SurfaceSettleFrames);
+                else
+                    fnvRealSaveC04Phase = -1;
+            }
+
+            if (fnvRealSaveC04Phase == 11 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                queueC04Frame("map-world-overview");
+                if (fnvRealSaveC04Phase >= 0)
+                    advanceC04Phase(2);
+            }
+
+            if (fnvRealSaveC04Phase == 2 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                const bool focused = mWindowManager->focusFalloutMapMarker(*fnvRealSaveC04Marker, 1.6f);
+                const std::uint8_t markerState = mWorld->getFalloutMapMarkerState(*fnvRealSaveC04Marker);
+                const bool selectionPass = focused && marker != nullptr && markerState == 2;
+                Log(selectionPass ? Debug::Info : Debug::Error)
+                    << "FNV C04 natural map selection: phase=marker-focused marker=" << *fnvRealSaveC04Marker
+                    << " name=\"" << (marker != nullptr ? marker->mFullName : std::string()) << "\" state="
+                    << static_cast<int>(markerState) << " selected=" << (focused ? 1 : 0)
+                    << " tooltipNameMatchesFormId=" << (selectionPass ? 1 : 0)
+                    << " pane=" << mWindowManager->getFalloutPipBoyActivePane()
+                    << " worldMap=" << (physicalWindowManager != nullptr
+                            && physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                    << " path=production-map-focus status=" << (selectionPass ? "pass" : "fail");
+                if (selectionPass)
+                {
+                    physicalWindowManager->setFalloutPipBoyMapSelection(marker->mFullName, *fnvRealSaveC04Marker);
+                    // Let the production map-focus and physical terminal redraw settle before
+                    // asking ScreenCaptureHandler for the proof frame.  The handler captures
+                    // the next rendered frame, while the asynchronous file write may complete
+                    // several frames later.
+                    advanceC04Phase(6, c04SurfaceSettleFrames);
+                }
+                else
+                    fnvRealSaveC04Phase = -1;
+            }
+
+            if (fnvRealSaveC04Phase == 6 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                queueC04Frame("map-marker-focused");
+                if (fnvRealSaveC04Phase >= 0)
+                    advanceC04Phase(3);
+            }
+
+            if (fnvRealSaveC04Phase == 3 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                const bool requested = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC04Marker);
+                const std::string confirmationText
+                    = "Fast travel to " + (marker != nullptr ? marker->mFullName : std::string()) + "?";
+                Log(requested ? Debug::Info : Debug::Error)
+                    << "FNV C04 confirmation: opened=" << (requested ? 1 : 0)
+                    << " marker=" << *fnvRealSaveC04Marker << " name=\""
+                    << (marker != nullptr ? marker->mFullName : std::string()) << "\" text=\""
+                    << confirmationText << "\" confirmed=0 path=production-map-confirmation status="
+                    << (requested ? "pass" : "fail");
+                if (requested)
+                {
+                    if (physicalWindowManager != nullptr)
+                        physicalWindowManager->setFalloutPipBoyMapConfirmation(confirmationText);
+                    // As above, retain the exact production confirmation title on the physical
+                    // surface for a settled native frame instead of racing the UI redraw.
+                    advanceC04Phase(7, c04SurfaceSettleFrames);
+                }
+                else
+                    fnvRealSaveC04Phase = -1;
+            }
+
+            if (fnvRealSaveC04Phase == 7 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                queueC04Frame("map-confirmation-open");
+                if (fnvRealSaveC04Phase >= 0)
+                    advanceC04Phase(4);
+            }
+
+            if (fnvRealSaveC04Phase == 4 && proofWorldReadyFrames >= fnvRealSaveC04NextActionFrame
+                && c04NativeFrameReady
+                && !fnvRealSaveC04ScreenshotPending)
+            {
+                if (fnvRealSaveC04CapturedFrames != 4)
+                {
+                    Log(Debug::Error) << "FNV C04 natural Pip-Boy path: phase=complete marker="
+                                      << *fnvRealSaveC04Marker << " captured=" << fnvRealSaveC04CapturedFrames
+                                      << " confirmed=0 travelExecuted=0 status=fail";
+                    fnvRealSaveC04Phase = -1;
+                }
+                else if (fnvRealSaveC04ExitReadyFrame < 0)
+                {
+                    fnvRealSaveC04ExitReadyFrame = proofWorldReadyFrames + 60;
+                    Log(Debug::Info) << "FNV C04 native frame: drain-begins captured="
+                                     << fnvRealSaveC04CapturedFrames << " exitReadyFrame="
+                                     << fnvRealSaveC04ExitReadyFrame;
+                }
+                else if (proofWorldReadyFrames >= fnvRealSaveC04ExitReadyFrame)
+                {
+                    Log(Debug::Info) << "FNV C04 natural Pip-Boy path: phase=complete marker="
+                                     << *fnvRealSaveC04Marker << " captured=" << fnvRealSaveC04CapturedFrames
+                                     << " confirmed=0 travelExecuted=0 status=pass";
+                    mStateManager->requestQuit();
+                    fnvRealSaveC04Phase = 5;
+                }
+            }
+        }
+    }
+
+    if ((fnvRealSaveC05Enabled || fnvRealSaveC07Enabled) && proofWorldReady && mWorld != nullptr
+        && mWindowManager != nullptr)
+    {
+        if (!fnvRealSaveC05MarkerParsed)
+        {
+            const char* markerText = fnvRealSaveC07Enabled ? std::getenv("OPENMW_FNV_REAL_SAVE_C07_MARKER")
+                                                            : std::getenv("OPENMW_FNV_REAL_SAVE_C05_MARKER");
+            const std::string_view configuredMarker
+                = markerText != nullptr && *markerText != '\0' ? std::string_view(markerText)
+                                                                 : std::string_view("FormId:0x03008885");
+            fnvRealSaveC05Marker = parseProofFormId(configuredMarker);
+            fnvRealSaveC05MarkerParsed = true;
+            if (!fnvRealSaveC05Marker)
+            {
+                fnvRealSaveC05Phase = -1;
+                Log(Debug::Error) << "FNV C05 natural Pip-Boy travel: invalid marker=\"" << configuredMarker
+                                  << "\"";
+            }
+            else
+            {
+                Log(Debug::Info) << "FNV C05 natural Pip-Boy travel: marker=" << *fnvRealSaveC05Marker
+                                 << " source=restored-save330-state";
+                if (fnvRealSaveC07Enabled)
+                    Log(Debug::Info) << "FNV C07 persistence: phase="
+                                     << (fnvRealSaveC07First ? "first" : "reload")
+                                     << " marker=" << *fnvRealSaveC05Marker
+                                     << " source=production-map-travel-handler";
+            }
+        }
+
+        if (fnvRealSaveC05Phase >= 0 && fnvRealSaveC05Marker)
+        {
+            const int c05Elapsed = proofWorldReadyFrames - fnvRealSaveC05FirstReadyFrame;
+            auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+            const ESM4::Reference* marker
+                = mWorld->getStore().get<ESM4::Reference>().search(*fnvRealSaveC05Marker);
+            const ESM4::Cell* destinationCell
+                = marker == nullptr ? nullptr : mWorld->getStore().get<ESM4::Cell>().search(marker->mParent);
+            const ESM4::World* destinationWorld = destinationCell == nullptr
+                ? nullptr
+                : mWorld->getStore().get<ESM4::World>().search(destinationCell->mParent);
+            const auto queueC05Frame = [&](const char* state) {
+                if (mScreenCaptureHandler == nullptr)
+                {
+                    Log(Debug::Error) << "FNV C05 native frame: state=" << state
+                                      << " source=ScreenCaptureHandler status=fail";
+                    fnvRealSaveC05Phase = -1;
+                    return;
+                }
+                Log(Debug::Info) << "FNV C05 native frame: state=" << state
+                                 << " index=" << fnvRealSaveC05CapturedFrames
+                                 << " source=ScreenCaptureHandler";
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+                ++fnvRealSaveC05CapturedFrames;
+            };
+            const auto playerControlsEnabled = [&]() {
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                if (mLuaManager == nullptr || player.isEmpty())
+                    return true;
+                if (MWBase::LuaManager::ActorControls* controls = mLuaManager->getActorControls(player))
+                    return !controls->mDisableAI;
+                return true;
+            };
+
+            if (fnvRealSaveC05Phase == 0 && c05Elapsed >= 0)
+            {
+                if (fnvRealSaveC07Enabled && fnvRealSaveC07Reload)
+                {
+                    const MWWorld::Ptr reloadPlayer = mWorld->getPlayerPtr();
+                    const MWWorld::CellStore* reloadCell
+                        = reloadPlayer.isInCell() ? reloadPlayer.getCell() : nullptr;
+                    const ESM::Position reloadPosition
+                        = reloadPlayer.isEmpty() ? ESM::Position{} : reloadPlayer.getRefData().getPosition();
+                    const MWRender::Camera* reloadCamera = mWorld->getCamera();
+                    Log(Debug::Info) << "FNV C07 persistence: phase=reload-before-map marker="
+                                     << *fnvRealSaveC05Marker << " markerState="
+                                     << static_cast<int>(mWorld->getFalloutMapMarkerState(*fnvRealSaveC05Marker))
+                                     << " mapOpen=0 cell=\""
+                                     << (reloadCell != nullptr ? reloadCell->getCell()->getId() : ESM::RefId{})
+                                     << "\" worldspace=\""
+                                     << (reloadCell != nullptr ? reloadCell->getCell()->getWorldSpace() : ESM::RefId{})
+                                     << "\" pos=(" << reloadPosition.pos[0] << "," << reloadPosition.pos[1] << ","
+                                     << reloadPosition.pos[2] << ") hour=" << mWorld->getTimeStamp().getHour()
+                                     << " cameraMode=" << (reloadCamera != nullptr ? static_cast<int>(reloadCamera->getMode()) : -1)
+                                     << " path=production-cold-reload status=pass";
+                }
+                if (!mWorld->isFirstPerson())
+                    mWorld->togglePOV(true);
+                if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                {
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+                    mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+                }
+                else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+
+                mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+                const bool mapPaneSelected = physicalWindowManager != nullptr
+                    && physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey4);
+                Log(mapPaneSelected ? Debug::Info : Debug::Error)
+                    << "FNV C05 natural map travel: phase=map-pane-selected pane="
+                    << mWindowManager->getFalloutPipBoyActivePane()
+                    << " physical=" << (mWindowManager->isFalloutPipBoyPhysicalPresentation() ? 1 : 0)
+                    << " action=MAP path=physical-pipboy-production status="
+                    << (mapPaneSelected ? "pass" : "fail");
+                fnvRealSaveC05Phase = mapPaneSelected ? 1 : -1;
+            }
+
+            if (fnvRealSaveC05Phase == 1 && c05Elapsed >= 30 && physicalWindowManager != nullptr)
+            {
+                const bool worldMapSelected = physicalWindowManager->isFalloutPipBoyWorldMap()
+                    || physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                mWindowManager->refreshFalloutMapMarkers();
+                const std::uint8_t markerState = mWorld->getFalloutMapMarkerState(*fnvRealSaveC05Marker);
+                const bool focused = marker != nullptr && mWindowManager->focusFalloutMapMarker(*fnvRealSaveC05Marker, 1.6f);
+                const bool mapReady = marker != nullptr && destinationCell != nullptr && destinationWorld != nullptr
+                    && markerState == 2 && worldMapSelected && focused
+                    && physicalWindowManager->getFalloutPipBoyActivePane() == 0;
+                Log(mapReady ? Debug::Info : Debug::Error)
+                    << "FNV C05 natural map travel: phase=map-before-confirmation marker="
+                    << *fnvRealSaveC05Marker << " name=\""
+                    << (marker != nullptr ? marker->mFullName : std::string()) << "\" state="
+                    << static_cast<int>(markerState) << " selected=" << (focused ? 1 : 0)
+                    << " pane=" << physicalWindowManager->getFalloutPipBoyActivePane()
+                    << " worldMap=" << (physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                    << " path=production-map-focus status=" << (mapReady ? "pass" : "fail");
+                if (mapReady)
+                {
+                    if (fnvRealSaveC07Enabled && fnvRealSaveC07Reload)
+                    {
+                        const MWWorld::Ptr reloadPlayer = mWorld->getPlayerPtr();
+                        const MWWorld::CellStore* reloadCell
+                            = reloadPlayer.isInCell() ? reloadPlayer.getCell() : nullptr;
+                        const ESM::Position reloadPosition
+                            = reloadPlayer.isEmpty() ? ESM::Position{} : reloadPlayer.getRefData().getPosition();
+                        Log(Debug::Info) << "FNV C07 persistence: phase=reload-map-reopened marker="
+                                         << *fnvRealSaveC05Marker << " name=\""
+                                         << (marker != nullptr ? marker->mFullName : std::string())
+                                         << "\" markerState=" << static_cast<int>(markerState)
+                                         << " mapOpen=1 worldMap="
+                                         << (physicalWindowManager->isFalloutPipBoyWorldMap() ? 1 : 0)
+                                         << " selected=" << (focused ? 1 : 0) << " cell=\""
+                                         << (reloadCell != nullptr ? reloadCell->getCell()->getId() : ESM::RefId{})
+                                         << "\" worldspace=\""
+                                         << (reloadCell != nullptr ? reloadCell->getCell()->getWorldSpace() : ESM::RefId{})
+                                         << "\" pos=(" << reloadPosition.pos[0] << "," << reloadPosition.pos[1] << ","
+                                         << reloadPosition.pos[2] << ") hour=" << mWorld->getTimeStamp().getHour()
+                                         << " cameraMode="
+                                         << (mWorld->getCamera() != nullptr ? static_cast<int>(mWorld->getCamera()->getMode()) : -1)
+                                         << " path=production-map-reopen status=pass";
+                    }
+                    queueC05Frame("map-travel-before-confirmation");
+                    fnvRealSaveC05Phase = 2;
+                }
+                else
+                    fnvRealSaveC05Phase = -1;
+            }
+
+            if (fnvRealSaveC05Phase == 2 && c05Elapsed >= 60)
+            {
+                const bool requested = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC05Marker);
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                const MWWorld::CellStore* playerCell = player.isInCell() ? player.getCell() : nullptr;
+                const ESM::Position beforePosition = player.isEmpty() ? ESM::Position{} : player.getRefData().getPosition();
+                fnvRealSaveC05BeforeObserved = requested && playerCell != nullptr && destinationCell != nullptr
+                    && destinationWorld != nullptr;
+                if (fnvRealSaveC05BeforeObserved)
+                {
+                    fnvRealSaveC05BeforeHour = mWorld->getTimeStamp().getHour();
+                    fnvRealSaveC05BeforeX = beforePosition.pos[0];
+                    fnvRealSaveC05BeforeY = beforePosition.pos[1];
+                    fnvRealSaveC05BeforeZ = beforePosition.pos[2];
+                    fnvRealSaveC05BeforeGridX = playerCell->isExterior() ? playerCell->getCell()->getGridX() : 0;
+                    fnvRealSaveC05BeforeGridY = playerCell->isExterior() ? playerCell->getCell()->getGridY() : 0;
+                    fnvRealSaveC05BeforeCell = playerCell->getCell()->getId().toDebugString();
+                    fnvRealSaveC05BeforeWorldspace = playerCell->getCell()->getWorldSpace().toDebugString();
+                }
+                const std::string confirmationText
+                    = "Fast travel to " + (marker != nullptr ? marker->mFullName : std::string()) + "?";
+                Log(requested ? Debug::Info : Debug::Error)
+                    << "FNV C05 confirmation: opened=" << (requested ? 1 : 0)
+                    << " marker=" << *fnvRealSaveC05Marker << " name=\""
+                    << (marker != nullptr ? marker->mFullName : std::string()) << "\" text=\""
+                    << confirmationText << "\" confirmed=0 beforeCell=\""
+                    << (playerCell != nullptr ? playerCell->getCell()->getId() : ESM::RefId{})
+                    << "\" beforeWorldspace=\""
+                    << (playerCell != nullptr ? playerCell->getCell()->getWorldSpace() : ESM::RefId{})
+                    << "\" beforeGrid=(" << fnvRealSaveC05BeforeGridX << "," << fnvRealSaveC05BeforeGridY
+                    << ") beforePos=(" << beforePosition.pos[0] << "," << beforePosition.pos[1] << ","
+                    << beforePosition.pos[2] << ") beforeHour=" << fnvRealSaveC05BeforeHour
+                    << " path=production-map-confirmation status=" << (requested ? "pass" : "fail");
+                if (requested)
+                {
+                    if (physicalWindowManager != nullptr)
+                        physicalWindowManager->setFalloutPipBoyMapConfirmation(confirmationText);
+                    fnvRealSaveC05Phase = 3;
+                }
+                else
+                    fnvRealSaveC05Phase = -1;
+            }
+
+            if (fnvRealSaveC05Phase == 3 && c05Elapsed >= 75)
+            {
+                queueC05Frame("map-travel-confirmation");
+                fnvRealSaveC05Phase = 4;
+            }
+
+            if (fnvRealSaveC05Phase == 4 && c05Elapsed >= 105)
+            {
+                mWindowManager->confirmFalloutFastTravel();
+                Log(Debug::Info) << "FNV C05 confirmation: confirmed=1 marker=" << *fnvRealSaveC05Marker
+                                 << " path=production-confirmation-handler status=pass";
+                fnvRealSaveC05Phase = 5;
+            }
+
+            if (fnvRealSaveC05Phase == 5)
+            {
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                const MWWorld::CellStore* playerCell = player.isInCell() ? player.getCell() : nullptr;
+                const ESM::Position position = player.isEmpty() ? ESM::Position{} : player.getRefData().getPosition();
+                const bool cellMatches = playerCell != nullptr && destinationCell != nullptr
+                    && playerCell->getCell()->getId() == destinationCell->mId;
+                const bool worldspaceMatches = playerCell != nullptr && destinationWorld != nullptr
+                    && playerCell->getCell()->getWorldSpace() == destinationWorld->mId;
+                const bool gridMatches = playerCell != nullptr && destinationCell != nullptr
+                    && !playerCell->isExterior() == !destinationCell->isExterior()
+                    && (!playerCell->isExterior() || (playerCell->getCell()->getGridX() == destinationCell->mX
+                            && playerCell->getCell()->getGridY() == destinationCell->mY));
+                const float dx = marker == nullptr ? 1e9f : position.pos[0] - marker->mPos.pos[0];
+                const float dy = marker == nullptr ? 1e9f : position.pos[1] - marker->mPos.pos[1];
+                const float dz = marker == nullptr ? 1e9f : position.pos[2] - marker->mPos.pos[2];
+                const bool positionMatches = dx * dx + dy * dy + dz * dz <= 256.f * 256.f;
+                const double afterHour = mWorld->getTimeStamp().getHour();
+                const bool timeAdvanced = fnvRealSaveC05BeforeObserved && afterHour > fnvRealSaveC05BeforeHour + 0.001;
+                const bool sameDestinationCell = fnvRealSaveC05BeforeObserved && destinationCell != nullptr
+                    && fnvRealSaveC05BeforeCell == destinationCell->mId.toDebugString();
+                const bool menuClosed = !mWindowManager->containsMode(MWGui::GM_Inventory);
+                const bool controlsEnabled = playerControlsEnabled();
+                const bool travelCleared = !mWorld->isPlayerTraveling();
+                const bool arrived = fnvRealSaveC05BeforeObserved && cellMatches && worldspaceMatches && gridMatches
+                    && positionMatches && (timeAdvanced || (fnvRealSaveC07Reload && sameDestinationCell))
+                    && menuClosed && controlsEnabled && travelCleared;
+                if (arrived)
+                {
+                    queueC05Frame("map-travel-destination");
+                    Log(Debug::Info) << "FNV C05 natural Pip-Boy travel: phase=arrived marker="
+                                     << *fnvRealSaveC05Marker << " destinationCell="
+                                     << (destinationCell != nullptr ? destinationCell->mId : ESM::RefId{})
+                                     << " destinationWorldspace="
+                                     << (destinationWorld != nullptr ? destinationWorld->mId : ESM::RefId{})
+                                     << " destinationGrid=("
+                                     << (destinationCell != nullptr ? destinationCell->mX : 0) << ","
+                                     << (destinationCell != nullptr ? destinationCell->mY : 0) << ") afterCell=\""
+                                     << (playerCell != nullptr ? playerCell->getCell()->getId() : ESM::RefId{})
+                                     << "\" afterWorldspace=\""
+                                     << (playerCell != nullptr ? playerCell->getCell()->getWorldSpace() : ESM::RefId{})
+                                     << "\" afterGrid=("
+                                     << (playerCell != nullptr && playerCell->isExterior()
+                                             ? playerCell->getCell()->getGridX()
+                                             : 0)
+                                     << ","
+                                     << (playerCell != nullptr && playerCell->isExterior()
+                                             ? playerCell->getCell()->getGridY()
+                                             : 0)
+                                     << ") afterPos=(" << position.pos[0] << "," << position.pos[1] << ","
+                                     << position.pos[2] << ") beforeHour=" << fnvRealSaveC05BeforeHour
+                                     << " afterHour=" << afterHour << " timeAdvanced=" << (timeAdvanced ? 1 : 0)
+                                     << " sameDestinationCell=" << (sameDestinationCell ? 1 : 0)
+                                     << " menuClosed=" << (menuClosed ? 1 : 0)
+                                     << " controlsEnabled=" << (controlsEnabled ? 1 : 0)
+                                     << " travelCleared=" << (travelCleared ? 1 : 0)
+                                     << " cellMatches=" << (cellMatches ? 1 : 0)
+                                     << " worldspaceMatches=" << (worldspaceMatches ? 1 : 0)
+                                     << " gridMatches=" << (gridMatches ? 1 : 0)
+                                     << " positionMatches=" << (positionMatches ? 1 : 0)
+                                     << " path=production-fast-travel status=pass";
+                    if (fnvRealSaveC07Enabled)
+                    {
+                        Log(Debug::Info) << "FNV C07 persistence: phase="
+                                         << (fnvRealSaveC07First ? "first-travel-arrived" : "second-travel-arrived")
+                                         << " marker=" << *fnvRealSaveC05Marker << " cell="
+                                         << (playerCell != nullptr ? playerCell->getCell()->getId() : ESM::RefId{})
+                                         << " worldspace="
+                                         << (playerCell != nullptr ? playerCell->getCell()->getWorldSpace() : ESM::RefId{})
+                                         << " pos=(" << position.pos[0] << "," << position.pos[1] << ","
+                                         << position.pos[2] << ") beforeHour=" << fnvRealSaveC05BeforeHour
+                                         << " afterHour=" << afterHour << " timeAdvanced=" << (timeAdvanced ? 1 : 0)
+                                         << " sameDestinationCell=" << (sameDestinationCell ? 1 : 0)
+                                         << " menuClosed=" << (menuClosed ? 1 : 0)
+                                         << " controlsEnabled=" << (controlsEnabled ? 1 : 0)
+                                         << " travelCleared=" << (travelCleared ? 1 : 0)
+                                         << " cameraMode="
+                                         << (mWorld->getCamera() != nullptr ? static_cast<int>(mWorld->getCamera()->getMode()) : -1)
+                                         << " path=production-persistence-travel status=pass";
+                    }
+                    fnvRealSaveC05Phase = 6;
+                }
+                else if (c05Elapsed >= 600)
+                {
+                    Log(Debug::Error) << "FNV C05 natural Pip-Boy travel: phase=arrived marker="
+                                      << *fnvRealSaveC05Marker << " status=fail"
+                                      << " cellMatches=" << (cellMatches ? 1 : 0)
+                                      << " worldspaceMatches=" << (worldspaceMatches ? 1 : 0)
+                                      << " gridMatches=" << (gridMatches ? 1 : 0)
+                                      << " positionMatches=" << (positionMatches ? 1 : 0)
+                                      << " timeAdvanced=" << (timeAdvanced ? 1 : 0)
+                                      << " menuClosed=" << (menuClosed ? 1 : 0)
+                                      << " controlsEnabled=" << (controlsEnabled ? 1 : 0)
+                                      << " travelCleared=" << (travelCleared ? 1 : 0);
+                    fnvRealSaveC05Phase = -1;
+                }
+            }
+
+            if (fnvRealSaveC05Phase == 6)
+            {
+                if (fnvRealSaveC05CapturedFrames != 3)
+                {
+                    Log(Debug::Error) << "FNV C05 natural Pip-Boy travel: phase=complete marker="
+                                      << *fnvRealSaveC05Marker << " captured=" << fnvRealSaveC05CapturedFrames
+                                      << " status=fail";
+                    fnvRealSaveC05Phase = -1;
+                }
+                else if (fnvRealSaveC05ExitReadyFrame < 0)
+                {
+                    fnvRealSaveC05ExitReadyFrame = proofWorldReadyFrames + 60;
+                    Log(Debug::Info) << "FNV C05 native frame: drain-begins captured="
+                                     << fnvRealSaveC05CapturedFrames << " exitReadyFrame="
+                                     << fnvRealSaveC05ExitReadyFrame;
+                }
+                else if (proofWorldReadyFrames >= fnvRealSaveC05ExitReadyFrame)
+                {
+                    if (fnvRealSaveC07Enabled && fnvRealSaveC07First && !fnvRealSaveC07SaveRequested)
+                    {
+                        const std::string saveName = "Save330 C07 Travel Persistence";
+                        mStateManager->quickSave(saveName);
+                        fnvRealSaveC07SaveRequested = true;
+                        fnvRealSaveC07SaveFrame = static_cast<int>(proofWorldReadyFrames);
+                        fnvRealSaveC05ExitReadyFrame = proofWorldReadyFrames + 60;
+                        fnvRealSaveC05Phase = 8;
+                        Log(Debug::Info) << "FNV C07 persistence: phase=save-requested marker="
+                                         << *fnvRealSaveC05Marker << " name=\"" << saveName
+                                         << "\" saveFrame=" << fnvRealSaveC07SaveFrame
+                                         << " arrivedBeforeSave=1 path=production-state-manager-quick-save status=pass";
+                    }
+                    else
+                    {
+                        Log(Debug::Info) << "FNV C05 natural Pip-Boy travel: phase=complete marker="
+                                         << *fnvRealSaveC05Marker << " captured=" << fnvRealSaveC05CapturedFrames
+                                         << " confirmed=1 travelExecuted=1 status=pass";
+                        if (fnvRealSaveC07Enabled)
+                            Log(Debug::Info) << "FNV C07 persistence: phase=second-travel-complete marker="
+                                             << *fnvRealSaveC05Marker << " captured="
+                                             << fnvRealSaveC05CapturedFrames << " confirmed=1 travelExecuted=1"
+                                             << " path=production-confirmation-handler status=pass";
+                        mStateManager->requestQuit();
+                        fnvRealSaveC05Phase = 7;
+                    }
+                }
+            }
+            if (fnvRealSaveC05Phase == 8 && fnvRealSaveC07SaveRequested
+                && proofWorldReadyFrames >= static_cast<unsigned>(fnvRealSaveC05ExitReadyFrame))
+            {
+                Log(Debug::Info) << "FNV C07 persistence: phase=save-complete marker="
+                                 << *fnvRealSaveC05Marker << " saveFrame=" << fnvRealSaveC07SaveFrame
+                                 << " cleanQuitRequested=1 path=production-state-manager-quick-save status=pass";
+                mStateManager->requestQuit();
+                fnvRealSaveC05Phase = 9;
+            }
+        }
+    }
+
+    if (fnvRealSaveC06Enabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        if (!fnvRealSaveC06MarkerParsed)
+        {
+            const char* markerText = std::getenv("OPENMW_FNV_REAL_SAVE_C06_MARKER");
+            const std::string_view configuredMarker
+                = markerText != nullptr && *markerText != '\0' ? std::string_view(markerText)
+                                                                 : std::string_view("FormId:0x03008885");
+            fnvRealSaveC06Marker = parseProofFormId(configuredMarker);
+            const auto& references = mWorld->getStore().get<ESM4::Reference>();
+            for (std::size_t index = 0; index < references.getSize(); ++index)
+            {
+                const ESM4::Reference* candidate = references.at(index);
+                if (candidate != nullptr && candidate->mIsMapMarker && !candidate->mFullName.empty()
+                    && mWorld->getFalloutMapMarkerState(candidate->mId) == 0)
+                {
+                    fnvRealSaveC06HiddenMarker = candidate->mId;
+                    break;
+                }
+            }
+            fnvRealSaveC06MarkerParsed = true;
+            if (!fnvRealSaveC06Marker || !fnvRealSaveC06HiddenMarker)
+            {
+                fnvRealSaveC06Phase = -1;
+                Log(Debug::Error) << "FNV C06 rejection matrix: missing configured or hidden marker status=fail";
+            }
+            else
+            {
+                Log(Debug::Info) << "FNV C06 rejection matrix: marker=" << *fnvRealSaveC06Marker
+                                 << " hiddenMarker=" << *fnvRealSaveC06HiddenMarker
+                                 << " source=restored-save330-state harness=production-rejection-only";
+            }
+        }
+
+        if (fnvRealSaveC06Phase >= 0 && fnvRealSaveC06Marker && fnvRealSaveC06HiddenMarker)
+        {
+            const int c06Elapsed = proofWorldReadyFrames - fnvRealSaveC06FirstReadyFrame;
+            auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+            const ESM4::Reference* marker
+                = mWorld->getStore().get<ESM4::Reference>().search(*fnvRealSaveC06Marker);
+            const ESM4::Reference* hiddenMarker
+                = mWorld->getStore().get<ESM4::Reference>().search(*fnvRealSaveC06HiddenMarker);
+            const auto queueC06Frame = [&](const char* state) {
+                if (mScreenCaptureHandler == nullptr || !fnvRealSaveC06PendingFrameState.empty())
+                {
+                    Log(Debug::Error) << "FNV C06 native frame: state=" << state
+                                      << " source=ScreenCaptureHandler pending="
+                                      << (!fnvRealSaveC06PendingFrameState.empty() ? 1 : 0) << " status=fail";
+                    fnvRealSaveC06Phase = -1;
+                    return;
+                }
+                fnvRealSaveC06PendingFrameState = state;
+                fnvRealSaveC06PendingFrameReadyFrame = proofWorldReadyFrames + 2;
+                Log(Debug::Info) << "FNV C06 native frame: state=" << state
+                                 << " scheduled=1 captureAfterUiSettle=1 readyFrame="
+                                 << fnvRealSaveC06PendingFrameReadyFrame;
+            };
+            const auto dispatchC06Frame = [&]() {
+                if (fnvRealSaveC06PendingFrameState.empty()
+                    || proofWorldReadyFrames < fnvRealSaveC06PendingFrameReadyFrame)
+                    return;
+                if (mScreenCaptureHandler == nullptr)
+                {
+                    Log(Debug::Error) << "FNV C06 native frame: state=" << fnvRealSaveC06PendingFrameState
+                                      << " source=ScreenCaptureHandler status=fail";
+                    fnvRealSaveC06Phase = -1;
+                    return;
+                }
+                Log(Debug::Info) << "FNV C06 native frame: state=" << fnvRealSaveC06PendingFrameState
+                                 << " index=" << fnvRealSaveC06CapturedFrames
+                                 << " source=ScreenCaptureHandler captureAfterUiSettle=1";
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+                ++fnvRealSaveC06CapturedFrames;
+                fnvRealSaveC06PendingFrameState.clear();
+                fnvRealSaveC06PendingFrameReadyFrame = -1;
+            };
+            const auto uiUsable = [&]() {
+                return physicalWindowManager != nullptr && mWindowManager->containsMode(MWGui::GM_Inventory)
+                    && physicalWindowManager->getFalloutPipBoyActivePane() == 0
+                    && mWindowManager->isFalloutPipBoyPhysicalPresentation();
+            };
+            const auto captureBaseline = [&]() {
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                const MWWorld::CellStore* playerCell = player.isInCell() ? player.getCell() : nullptr;
+                if (player.isEmpty() || playerCell == nullptr)
+                    return false;
+                fnvRealSaveC06BaselineObserved = true;
+                fnvRealSaveC06BaselineHour = mWorld->getTimeStamp().getHour();
+                fnvRealSaveC06BaselinePosition = player.getRefData().getPosition();
+                fnvRealSaveC06BaselineCell = playerCell->getCell()->getId();
+                fnvRealSaveC06BaselineWorldspace = playerCell->getCell()->getWorldSpace();
+                fnvRealSaveC06BaselineGridX = playerCell->isExterior() ? playerCell->getCell()->getGridX() : 0;
+                fnvRealSaveC06BaselineGridY = playerCell->isExterior() ? playerCell->getCell()->getGridY() : 0;
+                return true;
+            };
+            const auto logRejectedCase = [&](std::string_view caseName, std::string_view reason,
+                                             bool requestOpened, bool confirmationAttempted, bool cancelled,
+                                             bool expectedRequest) {
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                const MWWorld::CellStore* playerCell = player.isInCell() ? player.getCell() : nullptr;
+                const ESM::Position position = player.isEmpty() ? ESM::Position{} : player.getRefData().getPosition();
+                const double hour = mWorld->getTimeStamp().getHour();
+                const float dx = position.pos[0] - fnvRealSaveC06BaselinePosition.pos[0];
+                const float dy = position.pos[1] - fnvRealSaveC06BaselinePosition.pos[1];
+                const float dz = position.pos[2] - fnvRealSaveC06BaselinePosition.pos[2];
+                const bool positionUnchanged = fnvRealSaveC06BaselineObserved
+                    && dx * dx + dy * dy + dz * dz <= 1.f
+                    && playerCell != nullptr && playerCell->getCell()->getId() == fnvRealSaveC06BaselineCell
+                    && playerCell->getCell()->getWorldSpace() == fnvRealSaveC06BaselineWorldspace
+                    && (!playerCell->isExterior() || (playerCell->getCell()->getGridX() == fnvRealSaveC06BaselineGridX
+                            && playerCell->getCell()->getGridY() == fnvRealSaveC06BaselineGridY));
+                const bool timeUnchanged = fnvRealSaveC06BaselineObserved && std::abs(hour - fnvRealSaveC06BaselineHour) <= 0.001;
+                const bool pass = requestOpened == expectedRequest && positionUnchanged && timeUnchanged && uiUsable();
+                Log(pass ? Debug::Info : Debug::Error)
+                    << "FNV C06 rejection: case=" << caseName << " expectedReason=\"" << reason
+                    << "\" requestOpened=" << (requestOpened ? 1 : 0)
+                    << " confirmationAttempted=" << (confirmationAttempted ? 1 : 0)
+                    << " cancelled=" << (cancelled ? 1 : 0)
+                    << " positionUnchanged=" << (positionUnchanged ? 1 : 0)
+                    << " timeUnchanged=" << (timeUnchanged ? 1 : 0)
+                    << " menuOpen=" << (mWindowManager->containsMode(MWGui::GM_Inventory) ? 1 : 0)
+                    << " uiUsable=" << (uiUsable() ? 1 : 0)
+                    << " beforeHour=" << fnvRealSaveC06BaselineHour << " afterHour=" << hour
+                    << " path=production-map-rejection status=" << (pass ? "pass" : "fail");
+                return pass;
+            };
+
+            dispatchC06Frame();
+
+            if (fnvRealSaveC06Phase == 0 && c06Elapsed >= 0)
+            {
+                if (!mWorld->isFirstPerson())
+                    mWorld->togglePOV(true);
+                if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                {
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+                    mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+                }
+                else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                    mWindowManager->setFalloutPipBoyPresentation(true);
+                mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+                const bool mapPaneSelected = physicalWindowManager != nullptr
+                    && physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_QuickKey4);
+                Log(mapPaneSelected ? Debug::Info : Debug::Error)
+                    << "FNV C06 rejection matrix: phase=map-pane-selected pane="
+                    << mWindowManager->getFalloutPipBoyActivePane()
+                    << " physical=" << (mWindowManager->isFalloutPipBoyPhysicalPresentation() ? 1 : 0)
+                    << " path=physical-pipboy-production status=" << (mapPaneSelected ? "pass" : "fail");
+                fnvRealSaveC06Phase = mapPaneSelected ? 1 : -1;
+            }
+
+            if (fnvRealSaveC06Phase == 1 && c06Elapsed >= 30 && physicalWindowManager != nullptr)
+            {
+                const bool worldMapSelected = physicalWindowManager->isFalloutPipBoyWorldMap()
+                    || physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                mWindowManager->refreshFalloutMapMarkers();
+                const bool focused = marker != nullptr && mWindowManager->focusFalloutMapMarker(*fnvRealSaveC06Marker, 1.6f);
+                const bool ready = worldMapSelected && focused && mWorld->getFalloutMapMarkerState(*fnvRealSaveC06Marker) == 2
+                    && uiUsable();
+                Log(ready ? Debug::Info : Debug::Error)
+                    << "FNV C06 rejection matrix: phase=map-ready marker=" << *fnvRealSaveC06Marker
+                    << " name=\"" << (marker != nullptr ? marker->mFullName : std::string())
+                    << "\" hiddenMarker=" << *fnvRealSaveC06HiddenMarker
+                    << " state=" << static_cast<int>(mWorld->getFalloutMapMarkerState(*fnvRealSaveC06Marker))
+                    << " worldMap=" << (worldMapSelected ? 1 : 0) << " selected=" << (focused ? 1 : 0)
+                    << " path=production-map-focus status=" << (ready ? "pass" : "fail");
+                if (ready && captureBaseline())
+                    fnvRealSaveC06Phase = 2;
+                else
+                    fnvRealSaveC06Phase = -1;
+            }
+
+            if (fnvRealSaveC06Phase == 2 && c06Elapsed >= 45)
+            {
+                const bool requestOpened = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC06Marker);
+                if (requestOpened && physicalWindowManager != nullptr)
+                    physicalWindowManager->setFalloutPipBoyMapConfirmation("Fast travel to Southern Passage?");
+                if (mWindowManager->getConfirmationDialog() != nullptr)
+                    mWindowManager->getConfirmationDialog()->exit();
+                if (physicalWindowManager != nullptr)
+                    physicalWindowManager->setFalloutPipBoyMapSelection("Southern Passage", *fnvRealSaveC06Marker);
+                const bool pass = logRejectedCase("cancelled", "cancelled", requestOpened, false, true, true);
+                queueC06Frame("rejection-cancelled");
+                fnvRealSaveC06Phase = pass ? 3 : -1;
+            }
+
+            if (fnvRealSaveC06Phase == 3 && c06Elapsed >= 75)
+            {
+                mWorld->getFalloutPlayerRuntimeState().setFastTravelProofOverrides(false, false);
+                const bool disabledApplied = mWorld->getFalloutPlayerRuntimeState().setScriptedFastTravel(false);
+                const bool requestOpened = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC06Marker);
+                if (requestOpened && physicalWindowManager != nullptr)
+                    physicalWindowManager->setFalloutPipBoyMapConfirmation("Fast travel is currently unavailable from this location.");
+                Log(disabledApplied && requestOpened ? Debug::Info : Debug::Error)
+                    << "FNV C06 rejection matrix: case=disabled-travel setup="
+                    << (disabledApplied ? 1 : 0) << " requestOpened=" << (requestOpened ? 1 : 0)
+                    << " path=production-map-confirmation status=" << (disabledApplied && requestOpened ? "pass" : "fail");
+                if (disabledApplied && requestOpened)
+                {
+                    mWindowManager->confirmFalloutFastTravel();
+                    if (physicalWindowManager != nullptr)
+                        physicalWindowManager->setFalloutPipBoyMapConfirmation("Fast travel is currently unavailable from this location.");
+                    const bool pass = logRejectedCase("disabled-travel", "Fast travel is currently unavailable from this location.", true, true, false, true);
+                    mWorld->getFalloutPlayerRuntimeState().setScriptedFastTravel(true, true, false);
+                    queueC06Frame("rejection-disabled-travel");
+                    fnvRealSaveC06Phase = pass ? 4 : -1;
+                }
+                else
+                    fnvRealSaveC06Phase = -1;
+            }
+
+            if (fnvRealSaveC06Phase == 4 && c06Elapsed >= 105)
+            {
+                mWorld->getFalloutPlayerRuntimeState().setFastTravelProofOverrides(true, false);
+                const bool requestOpened = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC06Marker);
+                if (requestOpened)
+                {
+                    mWindowManager->confirmFalloutFastTravel();
+                    if (physicalWindowManager != nullptr)
+                        physicalWindowManager->setFalloutPipBoyMapConfirmation("You cannot fast travel when enemies are nearby.");
+                }
+                const bool pass = logRejectedCase("enemies-nearby", "You cannot fast travel when enemies are nearby.", requestOpened,
+                    requestOpened, false, true);
+                mWorld->getFalloutPlayerRuntimeState().setFastTravelProofOverrides(false, false);
+                queueC06Frame("rejection-enemies-nearby");
+                fnvRealSaveC06Phase = pass ? 5 : -1;
+            }
+
+            if (fnvRealSaveC06Phase == 5 && c06Elapsed >= 135)
+            {
+                const bool requestOpened = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC06HiddenMarker);
+                if (physicalWindowManager != nullptr)
+                    physicalWindowManager->setFalloutPipBoyMapConfirmation("You have not discovered that location.");
+                const bool pass = logRejectedCase("undiscovered", "You have not discovered that location.", requestOpened,
+                    false, false, false);
+                queueC06Frame("rejection-undiscovered");
+                fnvRealSaveC06Phase = pass ? 6 : -1;
+            }
+
+            if (fnvRealSaveC06Phase == 6 && c06Elapsed >= 165)
+            {
+                mWorld->getFalloutPlayerRuntimeState().setFastTravelProofOverrides(false, true);
+                const bool requestOpened = mWindowManager->requestFalloutFastTravel(*fnvRealSaveC06Marker);
+                if (requestOpened)
+                {
+                    mWindowManager->confirmFalloutFastTravel();
+                    if (physicalWindowManager != nullptr)
+                        physicalWindowManager->setFalloutPipBoyMapConfirmation("The map marker has no authored exterior destination.");
+                }
+                const bool pass = logRejectedCase("invalid-destination", "The map marker has no authored exterior destination.",
+                    requestOpened, requestOpened, false, true);
+                mWorld->getFalloutPlayerRuntimeState().setFastTravelProofOverrides(false, false);
+                queueC06Frame("rejection-invalid-destination");
+                fnvRealSaveC06Phase = pass ? 7 : -1;
+            }
+
+            if (fnvRealSaveC06Phase == 7)
+            {
+                if (!fnvRealSaveC06PendingFrameState.empty())
+                {
+                    // The final invalid-destination UI state is still settling
+                    // for its named native frame.
+                }
+                else if (fnvRealSaveC06CapturedFrames != 5)
+                {
+                    Log(Debug::Error) << "FNV C06 rejection matrix: phase=complete captured="
+                                      << fnvRealSaveC06CapturedFrames << " status=fail";
+                    fnvRealSaveC06Phase = -1;
+                }
+                else if (fnvRealSaveC06ExitReadyFrame < 0)
+                {
+                    fnvRealSaveC06ExitReadyFrame = proofWorldReadyFrames + 60;
+                    Log(Debug::Info) << "FNV C06 native frame: drain-begins captured="
+                                     << fnvRealSaveC06CapturedFrames << " exitReadyFrame="
+                                     << fnvRealSaveC06ExitReadyFrame;
+                }
+                else if (proofWorldReadyFrames >= fnvRealSaveC06ExitReadyFrame)
+                {
+                    Log(Debug::Info) << "FNV C06 rejection matrix: phase=complete captured="
+                                     << fnvRealSaveC06CapturedFrames
+                                     << " allCasesPositionTimeUnchanged=1 uiUsable=1 status=pass";
+                    mStateManager->requestQuit();
+                    fnvRealSaveC06Phase = 8;
+                }
+            }
+        }
+    }
+
+    if (fnvPipBoyShowcaseEnabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr
+        && (!fnvGameplayStartPlacementEnabled
+            || (fnvGameplayStartPlacementApplied && fnvGameplayStartPlacementPassed)))
+    {
+        if (!fnvPipBoyShowcaseLoadoutApplied)
+        {
+            fnvPipBoyShowcaseLoadoutPassed = !fnvPipBoyShowcaseLoadoutEnabled
+                || applyFNVPipBoyShowcaseLoadout(*mWorld);
+            fnvPipBoyShowcaseLoadoutApplied = true;
+            Log(fnvPipBoyShowcaseLoadoutPassed ? Debug::Info : Debug::Error)
+                << "FNV Pip-Boy showcase: live authored-data preparation="
+                << (fnvPipBoyShowcaseLoadoutPassed ? "pass" : "fail") << " fallbackItems=0";
+        }
+
+        const int showcaseElapsed = proofWorldReadyFrames - fnvPipBoyShowcaseFirstReadyFrame;
+        if (showcaseElapsed >= 0)
+        {
+            const std::size_t showcaseStateIndex = static_cast<std::size_t>(
+                showcaseElapsed / fnvPipBoyShowcaseFramesPerPane);
+            const std::size_t showcaseStateCount = fnvPipBoyMiscOnly
+                ? fnvPipBoyMiscStateIndices.size()
+                : (fnvPipBoyAmmoOnly ? fnvPipBoyAmmoStateIndices.size()
+                : (fnvPipBoyAidOnly ? fnvPipBoyAidStateIndices.size()
+                : (fnvPipBoyApparelOnly ? fnvPipBoyApparelStateIndices.size()
+                : (fnvPipBoyLifecycleOnly ? fnvPipBoyLifecycleStateIndices.size()
+                                           : fnvPipBoyShowcaseStates.size()))));
+            if (showcaseStateIndex < showcaseStateCount)
+            {
+                const std::size_t authoredStateIndex = fnvPipBoyMiscOnly
+                    ? fnvPipBoyMiscStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyAmmoOnly ? fnvPipBoyAmmoStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyAidOnly ? fnvPipBoyAidStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyApparelOnly ? fnvPipBoyApparelStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyLifecycleOnly ? fnvPipBoyLifecycleStateIndices[showcaseStateIndex]
+                                              : showcaseStateIndex))));
+                FnvPipBoyShowcaseState state = fnvPipBoyShowcaseStates[authoredStateIndex];
+                if (fnvPipBoyLifecycleOnly)
+                {
+                    // Keep the presentation rig alive while proving navigation.
+                    // Equipping rebuilds the first-person weapon attachment, so
+                    // activate only the authored checkpoints whose state delta
+                    // is asserted: 9mm equip, Stimpak use, and final rifle equip.
+                    state.mActivateSelection = state.mActivateSelection
+                        && (showcaseStateIndex == 1 || showcaseStateIndex == 3 || showcaseStateIndex == 6);
+                    if (showcaseStateIndex == 2)
+                        state.mName = "ITEMS-WEAP-VARMINT-SCROLL";
+                    else if (showcaseStateIndex == 6)
+                        state.mName = "ITEMS-WEAP-VARMINT-EQUIP";
+                }
+                if (fnvPipBoyShowcaseActivePane != showcaseStateIndex)
+                {
+                    if (state.mPane < 0)
+                    {
+                        if (mWindowManager->containsMode(MWGui::GM_Inventory))
+                            mInputManager->executeAction(MWInput::A_FalloutPipBoy);
+                        MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        mMechanicsManager->forceStateUpdate(player);
+                        // The apparel checkpoint uses the ordinary POV transition so the
+                        // retained native frame shows the live player body, not just slot text.
+                        if (state.mPane == -2 && mWorld->isFirstPerson())
+                            mWorld->togglePOV(false);
+                        fnvPipBoyShowcaseReloadRequested = false;
+                        fnvPipBoyShowcaseFireRequested = false;
+                        fnvPipBoyShowcaseFireObserved = false;
+                        fnvPipBoyShowcaseLoadedBeforeFire = 0;
+                        fnvPipBoyShowcaseFireRequestFrame = -1;
+                        fnvPipBoyShowcaseReloadWaitLogged = false;
+                        fnvPipBoyShowcaseWeaponPoseWaitLogged = false;
+                        fnvPipBoyShowcaseWeaponPoseSampleValid = false;
+                        fnvPipBoyShowcaseWeaponPoseStableFrames = 0;
+                        fnvPipBoyShowcasePostFireRecoveryFrames = 0;
+                        fnvPipBoyShowcaseActivePane = showcaseStateIndex;
+                        Log(Debug::Info) << "FNV Pip-Boy showcase: opened live state=" << state.mName
+                                         << " pane=world readyFrame=" << proofWorldReadyFrames
+                                         << " source="
+                                         << (state.mPane == -2 ? "live-third-person-equipment"
+                                                              : "selected-live-weapon");
+                    }
+                    else
+                    {
+                        if (!mWorld->isFirstPerson())
+                            mWorld->togglePOV(true);
+                        if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                            mInputManager->executeAction(MWInput::A_FalloutPipBoy);
+                        else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
+                        {
+                            // Close the analog inventory first, then use the
+                            // player's bound physical Pip-Boy action to reopen.
+                            mInputManager->executeAction(MWInput::A_Inventory);
+                            mInputManager->executeAction(MWInput::A_FalloutPipBoy);
+                        }
+
+                        auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
+                        if (physicalWindowManager == nullptr)
+                        {
+                            Log(Debug::Error) << "FNV Pip-Boy showcase: missing physical window manager for state="
+                                              << state.mName;
+                        }
+                        else
+                        {
+                            if (authoredStateIndex == 13 && !fnvPipBoyShowcaseStimpakDamageStaged)
+                            {
+                                MWWorld::Ptr player = mWorld->getPlayerPtr();
+                                MWMechanics::CreatureStats& stats
+                                    = player.getClass().getCreatureStats(player);
+                                MWMechanics::DynamicStat<float> health = stats.getHealth();
+                                const float before = health.getCurrent();
+                                health.setCurrent(std::max(1.f, health.getModified() - 25.f));
+                                stats.setHealth(health);
+                                fnvPipBoyShowcaseStimpakDamageStaged = true;
+                                Log(Debug::Info) << "FNV Pip-Boy showcase: staged production Stimpak test health="
+                                                 << before << "->" << health.getCurrent();
+                            }
+                            const int selectPaneAction = state.mPane == 0 ? MWInput::A_QuickKey4
+                                : state.mPane == 1                    ? MWInput::A_QuickKey2
+                                : state.mPane == 2                    ? MWInput::A_QuickKey3
+                                                                      : MWInput::A_QuickKey1;
+                            mInputManager->executeAction(selectPaneAction);
+                            if (state.mPane == 0)
+                            {
+                                if (physicalWindowManager->isFalloutPipBoyWorldMap() != state.mWorldMap)
+                                    mInputManager->executeAction(MWInput::A_Activate);
+                                for (int index = 0; index < state.mZoomInCount; ++index)
+                                    mInputManager->executeAction(MWInput::A_ZoomIn);
+                                for (int index = 0; index < state.mPanRightCount; ++index)
+                                    mInputManager->executeAction(MWInput::A_MoveRight);
+                                for (int index = 0; index < state.mPanDownCount; ++index)
+                                    mInputManager->executeAction(MWInput::A_MoveBackward);
+                            }
+                            if (authoredStateIndex == 26)
+                            {
+                                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                                const MWWorld::InventoryStore& inventory
+                                    = player.getClass().getInventoryStore(player);
+                                const MWWorld::ConstContainerStoreIterator right
+                                    = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                                const ESM::RefId weaponId = right == inventory.end()
+                                    ? ESM::RefId() : right->getCellRef().getRefId();
+                                const std::optional<ESM::RefId> ammo = inventory.getFalloutAmmoSelection(weaponId);
+                                Log(Debug::Info) << "FNV Pip-Boy reopen audit: right=" << weaponId << " ammo="
+                                                 << (ammo ? ammo->toDebugString() : std::string("none"))
+                                                 << " loaded=" << inventory.getFalloutLoadedAmmo(weaponId).value_or(0)
+                                                 << " reserve=" << (ammo ? inventory.count(*ammo) : 0)
+                                                 << " source=production-input-dispatch";
+                            }
+                            else
+                            {
+                                for (int index = 0; index < state.mSubmenu; ++index)
+                                    mInputManager->executeAction(MWInput::A_MoveRight);
+                                for (int index = 0; index < state.mListOffset; ++index)
+                                    mInputManager->executeAction(MWInput::A_MoveBackward);
+                                if (state.mActivateSelection)
+                                    mInputManager->executeAction(MWInput::A_Activate);
+                            }
+                            fnvPipBoyShowcaseActivePane = showcaseStateIndex;
+                            Log(Debug::Info) << "FNV Pip-Boy showcase: opened live state=" << state.mName
+                                             << " pane=" << state.mPane << " submenu=" << state.mSubmenu
+                                             << " listOffset=" << state.mListOffset << " readyFrame="
+                                             << proofWorldReadyFrames << " source=physical-wrist-actions";
+                        }
+                    }
+                }
+
+                const int paneElapsed = showcaseElapsed % fnvPipBoyShowcaseFramesPerPane;
+                if (state.mPane == -1 && !fnvPipBoyShowcaseReloadRequested && paneElapsed >= 30)
+                {
+                    MWWorld::Ptr player = mWorld->getPlayerPtr();
+                    MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                    const MWWorld::ContainerStoreIterator right
+                        = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                    const ESM::RefId weaponId
+                        = right == inventory.end() ? ESM::RefId() : right->getCellRef().getRefId();
+                    const std::optional<ESM::RefId> ammo = inventory.getFalloutAmmoSelection(weaponId);
+                    const int loadedBefore = inventory.getFalloutLoadedAmmo(weaponId).value_or(0);
+                    const int reserveBefore = ammo ? inventory.count(*ammo) : 0;
+                    mInputManager->executeAction(MWInput::A_ToggleSpell);
+                    const bool reloadRequested = mMechanicsManager->isAttackingOrSpell(player);
+                    fnvPipBoyShowcaseReloadRequested = true;
+                    Log(Debug::Info) << "FNV Pip-Boy post-close reload: requested=" << reloadRequested
+                                     << " right=" << weaponId << " ammo="
+                                     << (ammo ? ammo->toDebugString() : std::string("none"))
+                                     << " loadedBefore=" << loadedBefore << " reserveBefore=" << reserveBefore;
+                }
+                if (state.mPane == -1 && fnvPipBoyShowcaseReloadRequested && !fnvPipBoyShowcaseFireObserved)
+                {
+                    MWWorld::Ptr player = mWorld->getPlayerPtr();
+                    MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                    const MWWorld::ContainerStoreIterator right
+                        = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                    const ESM::RefId weaponId
+                        = right == inventory.end() ? ESM::RefId() : right->getCellRef().getRefId();
+                    const int loadedNow = inventory.getFalloutLoadedAmmo(weaponId).value_or(0);
+                    const bool actionSettled = !mMechanicsManager->isAttackingOrSpell(player);
+                    MWRender::Animation* const fireAnimation = mWorld->getFalloutWeaponAnimation(player, true);
+                    const bool firePoseReady = fireAnimation != nullptr
+                        && fireAnimation->getAnimationSourceName("weaponpose")
+                            == "meshes/characters/_1stperson/2hraim.kf"
+                        && fireAnimation->isPlaying("weaponpose") && fireAnimation->getWeaponsShown()
+                        && fireAnimation->getActiveGroup(MWRender::BoneGroup_RightArm) == "weaponpose"
+                        && !fireAnimation->isPlaying("equip") && !fireAnimation->isPlaying("unequip")
+                        && !fireAnimation->isPlaying("reload");
+                    // The ordinary showcase slot is 150 frames and the final
+                    // acceptance gate requires 90 post-fire recovery frames.
+                    // Request as soon as reload has settled after frame 45 so
+                    // the authored attack can naturally return to weaponpose
+                    // before the frame-135 capture; requesting at frame 105
+                    // made the required final state unreachable.
+                    if (!fnvPipBoyShowcaseFireRequested && paneElapsed >= 45 && actionSettled && firePoseReady
+                        && loadedNow > 0)
+                    {
+                        fnvPipBoyShowcaseFireRequested = true;
+                        fnvPipBoyShowcaseLoadedBeforeFire = loadedNow;
+                        fnvPipBoyShowcaseFireRequestFrame = proofWorldReadyFrames;
+                        mInputManager->setFalloutUnattendedUseDown(true);
+                        Log(Debug::Info) << "FNV Pip-Boy post-close fire: requested=1 right=" << weaponId
+                                         << " loadedBefore=" << loadedNow
+                                         << " route=production-character-controller";
+                    }
+                    else if (!fnvPipBoyShowcaseFireRequested && paneElapsed == 150)
+                        Log(Debug::Info) << "FNV Pip-Boy post-close fire gate: actionSettled=" << actionSettled
+                                         << " poseReady=" << firePoseReady << " loaded=" << loadedNow
+                                         << " poseSource=\""
+                                         << (fireAnimation != nullptr
+                                                 ? fireAnimation->getAnimationSourceName("weaponpose")
+                                                 : std::string())
+                                         << "\" status=waiting";
+                    if (fnvPipBoyShowcaseFireRequested)
+                    {
+                        const int loadedAfterTrigger = inventory.getFalloutLoadedAmmo(weaponId).value_or(0);
+                        if (loadedAfterTrigger < fnvPipBoyShowcaseLoadedBeforeFire)
+                        {
+                            mInputManager->setFalloutUnattendedUseDown(false);
+                            fnvPipBoyShowcaseFireObserved = true;
+                            Log(Debug::Info) << "FNV Pip-Boy post-close fire audit: right=" << weaponId
+                                             << " loadedBefore=" << fnvPipBoyShowcaseLoadedBeforeFire
+                                             << " loadedAfter=" << loadedAfterTrigger
+                                             << " consumed="
+                                             << (fnvPipBoyShowcaseLoadedBeforeFire - loadedAfterTrigger)
+                                             << " holdFrames="
+                                             << (proofWorldReadyFrames - fnvPipBoyShowcaseFireRequestFrame)
+                                             << " status=pass";
+                        }
+                    }
+                }
+                bool finalWeaponActionSettled = true;
+                bool finalWeaponPoseSettled = true;
+                if (state.mPane == -1)
+                {
+                    const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                    finalWeaponActionSettled = fnvPipBoyShowcaseReloadRequested && fnvPipBoyShowcaseFireObserved
+                        && !mMechanicsManager->isAttackingOrSpell(player);
+                    if (paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && !finalWeaponActionSettled
+                        && !fnvPipBoyShowcaseReloadWaitLogged)
+                    {
+                        fnvPipBoyShowcaseReloadWaitLogged = true;
+                        Log(Debug::Info) << "FNV Pip-Boy post-close capture: waiting=1 actionSettled=0"
+                                         << " reason=authored-reload-active";
+                    }
+
+                    MWRender::Animation* const firstPerson = mWorld->getFalloutWeaponAnimation(player, true);
+                    const std::string poseSource = firstPerson != nullptr
+                        ? firstPerson->getAnimationSourceName("weaponpose")
+                        : std::string();
+                    const std::string activeRightArm = firstPerson != nullptr
+                        ? std::string(firstPerson->getActiveGroup(MWRender::BoneGroup_RightArm))
+                        : std::string();
+                    const osg::Node* const weaponNode
+                        = firstPerson != nullptr ? firstPerson->getNode("Weapon") : nullptr;
+                    const auto* const weaponTransform = dynamic_cast<const osg::MatrixTransform*>(weaponNode);
+                    osg::Node* const weaponPart
+                        = firstPerson != nullptr ? firstPerson->getEquippedWeaponNode() : nullptr;
+                    const osg::Group* const weaponParent = weaponNode != nullptr && weaponNode->getNumParents() == 1
+                        ? weaponNode->getParent(0)
+                        : nullptr;
+                    const bool directPart = weaponPart != nullptr && weaponPart->getNumParents() == 1
+                        && weaponPart->getParent(0) == weaponNode;
+                    const bool authoredTwoHandPose = poseSource.find("2hraim.kf") != std::string::npos;
+                    const bool poseObserved = finalWeaponActionSettled && authoredTwoHandPose
+                        && firstPerson != nullptr && firstPerson->isPlaying("weaponpose")
+                        && activeRightArm == "weaponpose" && weaponParent != nullptr
+                        && weaponParent->getName() == "Bip01 R Hand" && directPart
+                        && firstPerson->getWeaponsShown() && mWorld->isFirstPerson()
+                        && weaponTransform != nullptr && !weaponTransform->getMatrix().isIdentity();
+                    if (poseObserved)
+                    {
+                        const osg::Matrix& matrix = weaponTransform->getMatrix();
+                        if (fnvPipBoyShowcaseWeaponPoseSampleValid
+                            && matrix == fnvPipBoyShowcaseWeaponPoseSample)
+                            ++fnvPipBoyShowcaseWeaponPoseStableFrames;
+                        else
+                        {
+                            fnvPipBoyShowcaseWeaponPoseSample = matrix;
+                            fnvPipBoyShowcaseWeaponPoseSampleValid = true;
+                            fnvPipBoyShowcaseWeaponPoseStableFrames = 1;
+                        }
+                    }
+                    else
+                    {
+                        fnvPipBoyShowcaseWeaponPoseSampleValid = false;
+                        fnvPipBoyShowcaseWeaponPoseStableFrames = 0;
+                    }
+                    fnvPipBoyShowcasePostFireRecoveryFrames
+                        = fnvPipBoyShowcaseFireRequestFrame >= 0
+                        ? proofWorldReadyFrames - fnvPipBoyShowcaseFireRequestFrame
+                        : 0;
+                    // 2hraim is an authored animated idle, so exact matrix equality is diagnostic
+                    // only and cannot define rest. Require the completed weapon action plus a
+                    // sustained post-trigger recovery interval while the authored pose stays active.
+                    finalWeaponPoseSettled = poseObserved && fnvPipBoyShowcasePostFireRecoveryFrames >= 90;
+                    if (paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && !finalWeaponPoseSettled
+                        && !fnvPipBoyShowcaseWeaponPoseWaitLogged)
+                    {
+                        fnvPipBoyShowcaseWeaponPoseWaitLogged = true;
+                        Log(Debug::Info) << "FNV Pip-Boy post-close pose gate: source=\"" << poseSource
+                                         << "\" activeRightArm=\"" << activeRightArm
+                                         << "\" parent=\""
+                                         << (weaponParent != nullptr ? weaponParent->getName() : std::string())
+                                         << "\" directPart=" << directPart
+                                         << " playing="
+                                         << (firstPerson != nullptr && firstPerson->isPlaying("weaponpose"))
+                                         << " visible="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown()
+                                             && mWorld->isFirstPerson())
+                                         << " nonIdentity="
+                                         << (weaponTransform != nullptr && !weaponTransform->getMatrix().isIdentity())
+                                         << " stableFrames=" << fnvPipBoyShowcaseWeaponPoseStableFrames
+                                         << " postFireRecoveryFrames=" << fnvPipBoyShowcasePostFireRecoveryFrames
+                                         << " status=pending";
+                    }
+                }
+                if (fnvPipBoyShowcaseCapturedPanes == showcaseStateIndex
+                    && paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && finalWeaponActionSettled
+                    && finalWeaponPoseSettled
+                    && mScreenCaptureHandler != nullptr)
+                {
+                    if (state.mPane == -1)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        const ESM::RefId weaponId = right == inventory.end()
+                            ? ESM::RefId()
+                            : right->getCellRef().getRefId();
+                        const std::optional<ESM::RefId> ammo = inventory.getFalloutAmmoSelection(weaponId);
+                        Log(Debug::Info) << "FNV Pip-Boy post-close audit: right=" << weaponId << " ammo="
+                                         << (ammo ? ammo->toDebugString() : std::string("none")) << " loadedAfter="
+                                         << inventory.getFalloutLoadedAmmo(weaponId).value_or(0) << " reserveAfter="
+                                         << (ammo ? inventory.count(*ammo) : 0)
+                                         << " actionSettled=1 poseSettled=1 poseSource=\""
+                                         << (mWorld->getFalloutWeaponAnimation(player, true) != nullptr
+                                                 ? mWorld->getFalloutWeaponAnimation(player, true)
+                                                       ->getAnimationSourceName("weaponpose")
+                                                 : std::string())
+                                         << "\" poseStableFrames=" << fnvPipBoyShowcaseWeaponPoseStableFrames
+                                         << " postFireRecoveryFrames=" << fnvPipBoyShowcasePostFireRecoveryFrames;
+                    }
+                    else if (state.mPane == -2)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        const auto equippedId = [&](int slot) {
+                            const MWWorld::ConstContainerStoreIterator item = inventory.getSlot(slot);
+                            return item == inventory.end() ? std::string("none")
+                                                           : item->getCellRef().getRefId().toDebugString();
+                        };
+                        Log(Debug::Info) << "FNV Pip-Boy apparel world audit: state=" << state.mName
+                                         << " helmet=" << equippedId(MWWorld::InventoryStore::Slot_Helmet)
+                                         << " body=" << equippedId(MWWorld::InventoryStore::Slot_Cuirass)
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " source=live-equipment-and-native-frame";
+                    }
+                    else if (state.mPane == -3)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        MWRender::Animation* const firstPerson
+                            = mWorld->getFalloutWeaponAnimation(player, true);
+                        Log(Debug::Info) << "FNV Pip-Boy Aid world audit: state=" << state.mName
+                                         << " right="
+                                         << (right == inventory.end() ? std::string("none")
+                                                                      : right->getCellRef().getRefId().toDebugString())
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " weaponShown="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown())
+                                         << " activeRightArm=\""
+                                         << (firstPerson != nullptr
+                                                 ? std::string(firstPerson->getActiveGroup(
+                                                       MWRender::BoneGroup_RightArm))
+                                                 : std::string())
+                                         << "\" source=live-consumable-close-and-native-frame";
+                    }
+                    else if (state.mPane == -4)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        const ESM::RefId weaponId = right == inventory.end()
+                            ? ESM::RefId() : right->getCellRef().getRefId();
+                        const std::optional<ESM::RefId> selectedAmmo
+                            = inventory.getFalloutAmmoSelection(weaponId);
+                        MWRender::Animation* const firstPerson
+                            = mWorld->getFalloutWeaponAnimation(player, true);
+                        Log(Debug::Info) << "FNV Pip-Boy Ammo world audit: state=" << state.mName
+                                         << " right="
+                                         << (weaponId.empty() ? std::string("none")
+                                                              : weaponId.toDebugString())
+                                         << " selectedAmmo="
+                                         << (selectedAmmo ? selectedAmmo->toDebugString() : std::string("none"))
+                                         << " reserve="
+                                         << (selectedAmmo ? inventory.count(*selectedAmmo) : 0)
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " weaponShown="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown())
+                                         << " source=live-ammo-selection-and-native-frame";
+                    }
+                    else if (state.mPane == -5)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        ESM::RefId bobbyPinId;
+                        for (MWWorld::ConstContainerStoreIterator item = inventory.cbegin();
+                             item != inventory.cend(); ++item)
+                        {
+                            if (item->getType() == ESM4::MiscItem::sRecordId
+                                && item->get<ESM4::MiscItem>()->mBase->mEditorId == "Lockpick")
+                            {
+                                bobbyPinId = item->getCellRef().getRefId();
+                                break;
+                            }
+                        }
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        MWRender::Animation* const firstPerson
+                            = mWorld->getFalloutWeaponAnimation(player, true);
+                        Log(Debug::Info) << "FNV Pip-Boy Misc world audit: state=" << state.mName
+                                         << " bobbyPins="
+                                         << (bobbyPinId.empty() ? 0 : inventory.count(bobbyPinId))
+                                         << " right="
+                                         << (right == inventory.end() ? std::string("none")
+                                                                      : right->getCellRef().getRefId().toDebugString())
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " weaponShown="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown())
+                                         << " source=live-misc-inspection-and-native-frame";
+                    }
+                    Log(Debug::Info) << "FNV Pip-Boy showcase: queuing GUI-inclusive native frame state="
+                                     << state.mName << " pane=" << state.mPane
+                                     << " readyFrame=" << proofWorldReadyFrames
+                                     << " source=ScreenCaptureHandler";
+                    mScreenCaptureHandler->setFramesToCapture(1);
+                    mScreenCaptureHandler->captureNextFrame(*mViewer);
+                    ++fnvPipBoyShowcaseCapturedPanes;
+                }
+            }
+            else if (fnvPipBoyShowcaseQuitAfterCapture
+                && fnvPipBoyShowcaseCapturedPanes >= showcaseStateCount)
+            {
+                if (fnvPipBoyShowcaseExitReadyFrame < 0)
+                {
+                    fnvPipBoyShowcaseExitReadyFrame = proofWorldReadyFrames + 45;
+                    Log(Debug::Info) << "FNV Pip-Boy showcase: final native frame drain begins readyFrame="
+                                     << proofWorldReadyFrames << " exitReadyFrame="
+                                     << fnvPipBoyShowcaseExitReadyFrame;
+                }
+                else if (!fnvPipBoyShowcaseQuitRequested
+                    && proofWorldReadyFrames >= fnvPipBoyShowcaseExitReadyFrame)
+                {
+                    fnvPipBoyShowcaseQuitRequested = true;
+                    Log(Debug::Info) << "FNV Pip-Boy showcase: native panel sequence complete; exiting cleanly";
+                    mStateManager->requestQuit();
+                }
+            }
+        }
+    }
+
+    if (!proofFNVJamRouteHeadingApplied && proofWorldReady && proofWorldReadyFrames >= 2
+        && nativeFalloutSaveOwnsCamera() && mWorld != nullptr
+        && std::getenv("OPENMW_FNV_JAM_PROOF_YAW_DEGREES") != nullptr)
+    {
+        MWWorld::Ptr player = mWorld->getPlayerPtr();
+        MWRender::Camera* camera = mWorld->getCamera();
+        if (!player.isEmpty() && camera != nullptr)
+        {
+            const ESM::Position savedPosition = player.getRefData().getPosition();
+            const float deltaDegrees = readProofFloat("OPENMW_FNV_JAM_PROOF_YAW_DEGREES", 0.f);
+            const float deltaRadians = osg::DegreesToRadians(deltaDegrees);
+            const float targetYaw = savedPosition.rot[2] + deltaRadians;
+
+            mWorld->rotateObject(
+                player, osg::Vec3f(savedPosition.rot[0], savedPosition.rot[1], targetYaw));
+            const ESM::Position appliedPosition = player.getRefData().getPosition();
+            camera->attachTo(player);
+            camera->setYaw(-appliedPosition.rot[2], true);
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->updateCamera();
+
+            const float appliedDelta
+                = std::remainder(appliedPosition.rot[2] - savedPosition.rot[2], 2.f * static_cast<float>(osg::PI));
+            const bool headingPass = std::abs(appliedDelta - deltaRadians) <= 0.0005f;
+            Log(Debug::Info) << "FNV/ESM4 proof: JAM route heading source=save-relative savedYawRadians="
+                             << savedPosition.rot[2] << " deltaDegrees=" << deltaDegrees
+                             << " targetYawRadians=" << targetYaw << " appliedYawRadians="
+                             << appliedPosition.rot[2] << " appliedDeltaDegrees="
+                             << osg::RadiansToDegrees(appliedDelta) << " status="
+                             << (headingPass ? "pass" : "fail");
+            proofFNVJamRouteHeadingApplied = true;
+        }
+    }
+
+    const char* worldViewerStartCameraMode = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_MODE");
+    const bool worldViewerStaticStartCamera
+        = worldViewerStartCameraMode != nullptr && std::string(worldViewerStartCameraMode) == "static";
+    if (!worldViewerNonStaticStartCameraSettled && proofWorldReady && proofWorldReadyFrames >= 2 && !VR::getVR()
+        && !nativeFalloutSaveOwnsCamera() && worldViewerNonStaticStartCameraRequested() && mWorld != nullptr
+        && !proofActorStaticCameraOwnsView)
+    {
+        worldViewerNonStaticStartCameraSettled = settleWorldViewerNonStaticStartCamera(*mWorld);
+    }
+
+    const bool worldViewerExplicitNonStaticStartCamera = worldViewerNonStaticStartCameraRequested();
+    if (!fnvFlatStartupCameraSettled && proofWorldReady && proofWorldReadyFrames >= 2 && !VR::getVR()
+        && !nativeFalloutSaveOwnsCamera() && hasFalloutNvContent(mContentFiles) && !worldViewerStaticStartCamera
+        && !worldViewerExplicitNonStaticStartCamera && !proofActorStaticCameraOwnsView
+        && std::getenv("OPENMW_FNV_PROOF_RESET_CAMERA") == nullptr)
+    {
+        settleFNVFlatStartupCamera(*mWorld);
+        fnvFlatStartupCameraSettled = true;
+    }
+
+    if (!proofFNVCameraResetApplied && proofWorldReady && !nativeFalloutSaveOwnsCamera()
+        && std::getenv("OPENMW_FNV_PROOF_RESET_CAMERA") != nullptr)
+    {
+        resetFNVProofCamera(*mWorld);
+        proofFNVCameraResetApplied = true;
+    }
+
+    int requestedCameraAngleSequenceIndex = -1;
+    for (std::size_t i = 0; i < worldViewerCameraAngleSequence.size(); ++i)
+    {
+        if (frameNumber >= static_cast<unsigned>(worldViewerCameraAngleSequence[i].mFrame))
+            requestedCameraAngleSequenceIndex = static_cast<int>(i);
+    }
+    if (requestedCameraAngleSequenceIndex >= 0 && proofWorldReady && !nativeFalloutSaveOwnsCamera()
+        && mWorld != nullptr && !VR::getVR())
+    {
+        if (MWRender::Camera* camera = mWorld->getCamera())
+        {
+            const WorldViewerCameraAngleKeyframe& keyframe
+                = worldViewerCameraAngleSequence[static_cast<std::size_t>(requestedCameraAngleSequenceIndex)];
+            camera->setPitch(keyframe.mPitch, true);
+            camera->setYaw(keyframe.mYaw, true);
+            camera->setRoll(0.f);
+            camera->updateCamera();
+            if (requestedCameraAngleSequenceIndex != worldViewerCameraAngleSequenceIndex)
+            {
+                worldViewerCameraAngleSequenceIndex = requestedCameraAngleSequenceIndex;
+                Log(Debug::Info) << "World viewer sky sweep: applied camera slot="
+                                 << requestedCameraAngleSequenceIndex << " frame=" << frameNumber
+                                 << " pitch=" << keyframe.mPitch << " yaw=" << keyframe.mYaw;
+            }
+        }
+    }
+
+    if (!proofInventoryOpened && proofInventoryFrame >= 0 && frameNumber >= static_cast<unsigned>(proofInventoryFrame)
+        && proofRunning)
+    {
+        Log(Debug::Info) << "FNV/ESM4 proof: opening native inventory screen at frame " << frameNumber;
+        mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+        proofInventoryOpened = true;
+    }
+
+    while (proofInventoryPaneFrameIndex < proofInventoryPaneFrames.size()
+        && frameNumber >= static_cast<unsigned>(proofInventoryPaneFrames[proofInventoryPaneFrameIndex]) && proofRunning)
+    {
+        const int paneIndex = proofInventoryPaneFrameIndex < proofInventoryPaneIndices.size()
+            ? proofInventoryPaneIndices[proofInventoryPaneFrameIndex]
+            : 1;
+        if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+            mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+        Log(Debug::Info) << "FNV/ESM4 proof: raising native inventory pane index=" << paneIndex << " at frame "
+                         << frameNumber;
+        mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, paneIndex);
+        ++proofInventoryPaneFrameIndex;
+    }
+
+    if (!proofQuickSaveQueued && proofQuickSaveFrame >= 0 && frameNumber >= static_cast<unsigned>(proofQuickSaveFrame)
+        && proofRunning)
+    {
+        const char* quickSaveName = std::getenv("OPENMW_PROOF_QUICKSAVE_NAME");
+        const std::string name
+            = quickSaveName != nullptr && *quickSaveName != '\0' ? quickSaveName : "FNV Proof Save";
+        Log(Debug::Info) << "FNV/ESM4 proof: requesting quicksave \"" << name << "\" at frame " << frameNumber;
+        mStateManager->quickSave(name);
+        proofQuickSaveQueued = true;
+        proofQuickSaveCompletedFrame = frameNumber;
+    }
+    if (!proofQuickSaveQuitRequested && proofQuitAfterQuickSave && proofQuickSaveQueued
+        && proofQuickSaveCompletedFrame != 0 && proofRunning
+        && frameNumber >= proofQuickSaveCompletedFrame + static_cast<unsigned>(proofQuickSaveQuitDelayFrames))
+    {
+        proofQuickSaveQuitRequested = true;
+        Log(Debug::Info) << "FNV/ESM4 proof: quicksave complete; exiting cleanly after delayFrames="
+                         << proofQuickSaveQuitDelayFrames << " frame=" << frameNumber;
+        mStateManager->requestQuit();
+    }
+
+    const int proofFalloutQuickKeyIndex
+        = std::clamp(readProofInt("OPENMW_FNV_PROOF_QUICKKEY_INDEX", 1), 1, 8);
+    if (!proofFalloutQuickKeyAssigned && proofFalloutQuickKeyAssignFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutQuickKeyAssignFrame) && proofRunning)
+    {
+        const char* itemText = std::getenv("OPENMW_FNV_PROOF_QUICKKEY_ITEM");
+        const bool assigned = itemText != nullptr && *itemText != '\0'
+            && mWindowManager->setFalloutSaveQuickKey(
+                static_cast<std::uint8_t>(proofFalloutQuickKeyIndex - 1), makeProofRefId(itemText));
+        Log(assigned ? Debug::Info : Debug::Error)
+            << "FNV/ESM4 proof: Fallout quickkey assignment index=" << proofFalloutQuickKeyIndex
+            << " item=" << (itemText != nullptr ? itemText : "") << " assigned=" << assigned;
+        proofFalloutQuickKeyAssigned = true;
+    }
+    if (!proofFalloutQuickKeyActivated && proofFalloutQuickKeyActivateFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutQuickKeyActivateFrame) && proofRunning)
+    {
+        mWindowManager->activateQuickKey(proofFalloutQuickKeyIndex);
+        Log(Debug::Info) << "FNV/ESM4 proof: activated Fallout quickkey index=" << proofFalloutQuickKeyIndex;
+        proofFalloutQuickKeyActivated = true;
+    }
+    if (!proofFalloutReloaded && proofFalloutReloadFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutReloadFrame) && proofRunning && mWorld != nullptr
+        && mMechanicsManager != nullptr)
+    {
+        const bool reloaded = mMechanicsManager->reloadFalloutWeapon(mWorld->getPlayerPtr());
+        Log(reloaded ? Debug::Info : Debug::Error) << "FNV/ESM4 proof: requested Fallout reload result=" << reloaded;
+        proofFalloutReloaded = true;
+    }
+    if (!proofFalloutWeaponAudited && proofFalloutWeaponAuditFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutWeaponAuditFrame) && proofRunning && mWorld != nullptr)
+    {
+        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+        const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+        const MWWorld::ConstContainerStoreIterator equipped
+            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+        if (equipped == inventory.end())
+            Log(Debug::Error) << "FNV/ESM4 proof: Fallout weapon audit has no equipped right-hand item";
+        else
+        {
+            const ESM::RefId weapon = equipped->getCellRef().getRefId();
+            const std::optional<ESM::RefId> ammo = inventory.getFalloutAmmoSelection(weapon);
+            const std::optional<int> loaded = inventory.getFalloutLoadedAmmo(weapon);
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout weapon audit equipped=" << weapon
+                             << " name=\"" << equipped->getClass().getName(*equipped) << "\" ammo="
+                             << (ammo ? ammo->toString() : std::string("none")) << " loaded="
+                             << (loaded ? std::to_string(*loaded) : std::string("uninitialized"))
+                             << " reserve=" << (ammo ? inventory.count(*ammo) : 0);
+        }
+        proofFalloutWeaponAudited = true;
+    }
+
+    if (!proofGodModeEnabled && proofRunning && std::getenv("OPENMW_PROOF_GOD_MODE") != nullptr && mWorld != nullptr)
+    {
+        if (!mWorld->getGodModeState())
+            mWorld->toggleGodMode();
+        proofGodModeEnabled = true;
+        Log(Debug::Info) << "FNV/ESM4 proof: enabled god mode for deterministic proof capture";
+    }
+
+    if (!proofActorBaseRosterExpanded && proofWorldReady && mWorld != nullptr
+        && !proofActorBatchTargets.empty() && !proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_ALL_LOADED"))
+    {
+        if (proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_AUTO_FRAMES"))
+        {
+            const int configuredFirst = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_FIRST_FRAME");
+            const int configuredStep = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_FRAMES_PER_ACTOR");
+            const int poseFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_FRAMES");
+            const int poseFrames = poseFramesEnv >= 1 ? poseFramesEnv : 12;
+            const int poseWindow = static_cast<int>(proofActorPoseGroups.size() + 2) * poseFrames;
+            const int firstFrame = configuredFirst >= 0
+                ? configuredFirst
+                : std::max<int>(static_cast<int>(frameNumber) + 60, std::max(0, proofSayFrame) + poseWindow + 60);
+            const int framesPerActor = configuredStep >= 1 ? configuredStep : std::max(90, poseWindow + 60);
+            proofScreenshotFrames.clear();
+            proofScreenshotFrames.reserve(proofActorBatchTargets.size());
+            for (std::size_t index = 0; index < proofActorBatchTargets.size(); ++index)
+            {
+                const std::uint64_t requested = static_cast<std::uint64_t>(firstFrame)
+                    + static_cast<std::uint64_t>(index) * static_cast<std::uint64_t>(framesPerActor);
+                proofScreenshotFrames.push_back(static_cast<int>(
+                    std::min<std::uint64_t>(requested, static_cast<std::uint64_t>(std::numeric_limits<int>::max()))));
+            }
+        }
+        proofActorBaseRosterExpanded = true;
+        Log(Debug::Info) << "FNV/ESM4 actor batch: explicit roster ready selected="
+                         << proofActorBatchTargets.size() << " screenshotFrames=" << proofScreenshotFrames.size();
+    }
+
+    if (!proofActorBaseRosterExpanded && proofWorldReady && mWorld != nullptr
+        && proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_ALL_LOADED"))
+    {
+        struct LoadedActorBase
+        {
+            ESM::FormId mId;
+            std::string mType;
+            std::string mEditorId;
+            std::string mName;
+            std::string mVisualSignature;
+            std::string mSelectedWeapon;
+            std::uint32_t mFlags = 0;
+            int mRepresentativeScore = 0;
+            std::size_t mRepresentativeOfCount = 1;
+        };
+
+        const auto npcTemplateChain = [](const ESM4::Npc& base) {
+            std::vector<const ESM4::Npc*> records;
+            const ESM4::Npc* current = &base;
+            for (int depth = 0; current != nullptr && depth < 16; ++depth)
+            {
+                if (std::find(records.begin(), records.end(), current) != records.end())
+                    break;
+                records.push_back(current);
+                if (current->mBaseTemplate.isZeroOrUnset())
+                    break;
+                const ESM4::Npc* next = MWClass::ESM4Impl::resolveLevelled<ESM4::LevelledNpc, ESM4::Npc>(
+                    ESM::RefId(current->mBaseTemplate), 1);
+                if (next == nullptr || next == current)
+                    break;
+                current = next;
+            }
+            return records;
+        };
+        const auto chooseNpcTemplate = [](const std::vector<const ESM4::Npc*>& records, std::uint16_t flag) {
+            for (const ESM4::Npc* record : records)
+            {
+                if (record == nullptr)
+                    continue;
+                if (record->mIsTES4)
+                    return record;
+                if (record->mIsFONV && (record->mBaseConfig.fo3.templateFlags & flag) == 0)
+                    return record;
+                if (record->mIsFO4 && (record->mBaseConfig.fo4.templateFlags & flag) == 0)
+                    return record;
+                if (!record->mIsFONV && !record->mIsFO4
+                    && (record->mBaseConfig.tes5.templateFlags & flag) == 0)
+                    return record;
+            }
+            return static_cast<const ESM4::Npc*>(nullptr);
+        };
+        const auto makeNpcVisualSignature = [&](const ESM4::Npc& npc, std::string& selectedWeapon) {
+            const std::vector<const ESM4::Npc*> records = npcTemplateChain(npc);
+            const ESM4::Npc* traits = chooseNpcTemplate(records, ESM4::Npc::Template_UseTraits);
+            const ESM4::Npc* model = chooseNpcTemplate(records, ESM4::Npc::Template_UseModel);
+            const ESM4::Npc* inventory = chooseNpcTemplate(records, ESM4::Npc::Template_UseInventory);
+            if (traits == nullptr)
+                traits = &npc;
+            if (model == nullptr)
+                model = traits;
+
+            const bool female = traits->mIsFONV
+                ? (traits->mBaseConfig.fo3.flags & ESM4::Npc::FO3_Female) != 0
+                : (traits->mBaseConfig.tes5.flags & ESM4::Npc::TES5_Female) != 0;
+            const ESM4::Armor* dominantArmor = nullptr;
+            const ESM4::Clothing* dominantClothing = nullptr;
+            const ESM4::Weapon* mainWeapon = nullptr;
+            std::function<void(ESM::FormId, int)> addVisualItem;
+            addVisualItem = [&](ESM::FormId itemId, int depth) {
+                if (itemId.isZeroOrUnset() || depth > 16)
+                    return;
+                if (const ESM4::LevelledItem* levelled
+                    = mWorld->getStore().get<ESM4::LevelledItem>().search(ESM::RefId(itemId));
+                    levelled != nullptr && levelled->useAll())
+                {
+                    for (const ESM4::LVLO& entry : levelled->mLvlObject)
+                    {
+                        if (entry.level <= 1 && entry.item != 0)
+                            addVisualItem(ESM::FormId::fromUint32(entry.item), depth + 1);
+                    }
+                    return;
+                }
+
+                if (const ESM4::Armor* armor
+                    = MWClass::ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Armor>(ESM::RefId(itemId), 1))
+                {
+                    if ((armor->mArmorFlags & ESM4::Armor::FO3_UpperBody) != 0)
+                    {
+                        dominantArmor = armor;
+                        dominantClothing = nullptr;
+                    }
+                    return;
+                }
+                if (const ESM4::Weapon* weapon
+                    = MWClass::ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Weapon>(ESM::RefId(itemId), 1))
+                {
+                    if (!weapon->mModel.empty()
+                        && (mainWeapon == nullptr || weapon->mData.damage > mainWeapon->mData.damage))
+                        mainWeapon = weapon;
+                    return;
+                }
+                if (const ESM4::Clothing* clothing
+                    = MWClass::ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Clothing>(ESM::RefId(itemId), 1))
+                {
+                    if ((clothing->mClothingFlags & ESM4::Armor::FO3_UpperBody) != 0)
+                    {
+                        dominantClothing = clothing;
+                        dominantArmor = nullptr;
+                    }
+                }
+            };
+
+            if (inventory != nullptr)
+            {
+                for (const ESM4::InventoryItem& item : inventory->mInventory)
+                    addVisualItem(ESM::FormId::fromUint32(item.item), 0);
+                if (const ESM4::Outfit* outfit
+                    = mWorld->getStore().get<ESM4::Outfit>().search(ESM::RefId(inventory->mDefaultOutfit)))
+                {
+                    for (ESM::FormId itemId : outfit->mInventory)
+                        addVisualItem(itemId, 0);
+                }
+            }
+            selectedWeapon = mainWeapon != nullptr ? mainWeapon->mEditorId : std::string();
+
+            const auto normalizedPath = [](std::string_view value) {
+                std::string result(value);
+                std::replace(result.begin(), result.end(), '\\', '/');
+                Misc::StringUtils::lowerCaseInPlace(result);
+                return result;
+            };
+            std::ostringstream signature;
+            signature << "NPC_";
+            if (dominantArmor != nullptr)
+            {
+                std::string bodyModel = normalizedPath(MWClass::ESM4Npc::chooseEquipmentModel(dominantArmor, female));
+                if (bodyModel.empty())
+                    bodyModel = Misc::StringUtils::lowerCase(dominantArmor->mEditorId);
+                signature << "|body=armor:" << bodyModel << "|powerArmor="
+                          << ((dominantArmor->mGeneralFlags & ESM4::Armor::FO3_PowerArmor) != 0);
+            }
+            else if (dominantClothing != nullptr)
+            {
+                std::string bodyModel
+                    = normalizedPath(MWClass::ESM4Npc::chooseEquipmentModel(dominantClothing, female));
+                if (bodyModel.empty())
+                    bodyModel = Misc::StringUtils::lowerCase(dominantClothing->mEditorId);
+                signature << "|body=clothing:" << bodyModel << "|powerArmor=0";
+            }
+            else
+                signature << "|body=naked|race=" << ESM::RefId(traits->mRace).toDebugString()
+                          << "|female=" << female << "|powerArmor=0";
+            return signature.str();
+        };
+        const auto creatureTemplateChain = [](const ESM4::Creature& base) {
+            std::vector<const ESM4::Creature*> records;
+            const ESM4::Creature* current = &base;
+            for (int depth = 0; current != nullptr && depth < 16; ++depth)
+            {
+                if (std::find(records.begin(), records.end(), current) != records.end())
+                    break;
+                records.push_back(current);
+                if (current->mBaseTemplate.isZeroOrUnset())
+                    break;
+                const ESM4::Creature* next
+                    = MWClass::ESM4Impl::resolveLevelled<ESM4::LevelledCreature, ESM4::Creature>(
+                        ESM::RefId(current->mBaseTemplate), 1);
+                if (next == nullptr || next == current)
+                    break;
+                current = next;
+            }
+            return records;
+        };
+        const auto makeCreatureVisualSignature = [&](const ESM4::Creature& creature) {
+            const std::vector<const ESM4::Creature*> records = creatureTemplateChain(creature);
+            const ESM4::CreatureVisualTemplate visual = ESM4::resolveCreatureVisualTemplate(records);
+            const auto normalizedPath = [](std::string_view value) {
+                std::string result(value);
+                std::replace(result.begin(), result.end(), '\\', '/');
+                Misc::StringUtils::lowerCaseInPlace(result);
+                return result;
+            };
+            std::vector<std::string> meshes;
+            if (visual.mModel != nullptr && !visual.mModel->mModel.empty())
+                meshes.push_back(normalizedPath(visual.mModel->mModel));
+            if (visual.mNif != nullptr)
+            {
+                for (const std::string& nif : visual.mNif->mNif)
+                    meshes.push_back(normalizedPath(nif));
+            }
+            if (meshes.empty())
+                return std::string();
+            if (visual.mBodyParts != nullptr)
+            {
+                for (ESM::FormId bodyPartId : visual.mBodyParts->mBodyParts)
+                {
+                    if (const ESM4::BodyPartData* bodyPart
+                        = mWorld->getStore().get<ESM4::BodyPartData>().search(ESM::RefId(bodyPartId));
+                        bodyPart != nullptr && !bodyPart->mModel.empty())
+                        meshes.push_back(normalizedPath(bodyPart->mModel));
+                }
+            }
+            std::sort(meshes.begin(), meshes.end());
+            meshes.erase(std::unique(meshes.begin(), meshes.end()), meshes.end());
+            std::ostringstream signature;
+            signature << "CREA";
+            for (const std::string& mesh : meshes)
+                signature << "|mesh=" << mesh;
+            return signature.str();
+        };
+        const auto representativeScore = [](std::string_view editorId, std::string_view name, std::uint32_t flags,
+                                             bool armed, bool unique) {
+            std::string label(editorId);
+            label.push_back(' ');
+            label.append(name);
+            Misc::StringUtils::lowerCaseInPlace(label);
+            int score = 0;
+            static constexpr std::array<std::string_view, 9> templateMarkers{
+                "dead", "corpse", "template", "test", "audio", "preset", "dummy", "leveled", "lvl"
+            };
+            for (std::string_view marker : templateMarkers)
+            {
+                if (label.find(marker) != std::string::npos)
+                    score -= 10000;
+            }
+            score += armed ? 200 : 0;
+            score += !name.empty() ? 100 : 0;
+            score += !editorId.empty() ? 25 : 0;
+            score += (flags & ESM::FLAG_Persistent) != 0 ? 50 : 0;
+            score += unique ? 50 : 0;
+            return score;
+        };
+
+        std::vector<LoadedActorBase> loadedActorBases;
+        const auto appendNpc = [&](const ESM4::Npc& npc) {
+            if (npc.mId.isZeroOrUnset() || (npc.mFlags & ESM::FLAG_Deleted) != 0)
+                return;
+            if (proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_EXCLUDE_RAW_PLAYER_BASE")
+                && (npc.mId.toUint32() == 0x00000007u || npc.mEditorId == "Player"))
+                return;
+            std::string selectedWeapon;
+            const std::string signature = makeNpcVisualSignature(npc, selectedWeapon);
+            LoadedActorBase actor{
+                npc.mId, "NPC_", npc.mEditorId, npc.mFullName, signature, selectedWeapon, npc.mFlags
+            };
+            actor.mRepresentativeScore = representativeScore(npc.mEditorId, npc.mFullName, npc.mFlags,
+                !selectedWeapon.empty(), (npc.mBaseConfig.fo3.flags & 0x00000020u) != 0);
+            loadedActorBases.push_back(std::move(actor));
+        };
+        const auto appendCreature = [&](const ESM4::Creature& creature) {
+            if (creature.mId.isZeroOrUnset() || (creature.mFlags & ESM::FLAG_Deleted) != 0)
+                return;
+            const std::string signature = makeCreatureVisualSignature(creature);
+            if (signature.empty())
+                return;
+            LoadedActorBase actor{
+                creature.mId, "CREA", creature.mEditorId, creature.mFullName, signature, {}, creature.mFlags
+            };
+            actor.mRepresentativeScore
+                = representativeScore(creature.mEditorId, creature.mFullName, creature.mFlags, false, false);
+            loadedActorBases.push_back(std::move(actor));
+        };
+        for (const ESM4::Npc& npc : mWorld->getStore().get<ESM4::Npc>())
+            appendNpc(npc);
+        for (const ESM4::Creature& creature : mWorld->getStore().get<ESM4::Creature>())
+            appendCreature(creature);
+        std::stable_sort(loadedActorBases.begin(), loadedActorBases.end(), [](const auto& left, const auto& right) {
+            if (left.mType != right.mType)
+                return left.mType == "NPC_";
+            return left.mId.toUint32() < right.mId.toUint32();
+        });
+
+        const std::size_t totalAvailable = loadedActorBases.size();
+        const std::size_t totalNpcs = static_cast<std::size_t>(std::count_if(
+            loadedActorBases.begin(), loadedActorBases.end(), [](const LoadedActorBase& actor) {
+                return actor.mType == "NPC_";
+            }));
+        const std::size_t totalCreatures = totalAvailable - totalNpcs;
+        const bool representativeVisualTypes
+            = proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_REPRESENTATIVE_VISUAL_TYPES");
+        std::vector<LoadedActorBase> selectionPool;
+        if (representativeVisualTypes)
+        {
+            std::unordered_map<std::string, std::size_t> signatureIndices;
+            selectionPool.reserve(loadedActorBases.size());
+            for (const LoadedActorBase& actor : loadedActorBases)
+            {
+                const auto [it, inserted]
+                    = signatureIndices.emplace(actor.mVisualSignature, selectionPool.size());
+                if (inserted)
+                    selectionPool.push_back(actor);
+                else
+                {
+                    LoadedActorBase& current = selectionPool[it->second];
+                    const std::size_t groupCount = current.mRepresentativeOfCount + 1;
+                    if (actor.mRepresentativeScore > current.mRepresentativeScore
+                        || (actor.mRepresentativeScore == current.mRepresentativeScore
+                            && actor.mId.toUint32() < current.mId.toUint32()))
+                        current = actor;
+                    current.mRepresentativeOfCount = groupCount;
+                }
+            }
+        }
+        else
+            selectionPool = loadedActorBases;
+        const bool priorityOrder = proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_PRIORITY_ORDER");
+        if (priorityOrder)
+        {
+            std::stable_sort(selectionPool.begin(), selectionPool.end(), [](const auto& left, const auto& right) {
+                if (left.mRepresentativeOfCount != right.mRepresentativeOfCount)
+                    return left.mRepresentativeOfCount > right.mRepresentativeOfCount;
+                if (left.mRepresentativeScore != right.mRepresentativeScore)
+                    return left.mRepresentativeScore > right.mRepresentativeScore;
+                if (left.mType != right.mType)
+                    return left.mType == "NPC_";
+                return left.mId.toUint32() < right.mId.toUint32();
+            });
+        }
+        const std::size_t distinctVisualTypes = selectionPool.size();
+        const int configuredOffset = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_OFFSET");
+        const int configuredLimit = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_LIMIT");
+        const std::size_t offset = std::min<std::size_t>(
+            configuredOffset >= 0 ? static_cast<std::size_t>(configuredOffset) : 0, selectionPool.size());
+        const std::size_t remaining = selectionPool.size() - offset;
+        const std::size_t selectedCount = configuredLimit > 0
+            ? std::min<std::size_t>(static_cast<std::size_t>(configuredLimit), remaining)
+            : remaining;
+
+        std::vector<LoadedActorBase> selected;
+        selected.reserve(selectedCount);
+        selected.insert(selected.end(), selectionPool.begin() + offset, selectionPool.begin() + offset + selectedCount);
+        proofActorBatchTargets.clear();
+        proofActorBatchTargets.reserve(selected.size());
+        for (const LoadedActorBase& actor : selected)
+            proofActorBatchTargets.push_back(ESM::RefId(actor.mId).toDebugString());
+
+        if (proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_AUTO_FRAMES"))
+        {
+            const int configuredFirst = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_FIRST_FRAME");
+            const int configuredStep = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_FRAMES_PER_ACTOR");
+            const int poseFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_FRAMES");
+            const int poseFrames = poseFramesEnv >= 1 ? poseFramesEnv : 12;
+            const int poseWindow = static_cast<int>(proofActorPoseGroups.size() + 2) * poseFrames;
+            const int firstFrame = configuredFirst >= 0
+                ? configuredFirst
+                : std::max<int>(static_cast<int>(frameNumber) + 60, std::max(0, proofSayFrame) + poseWindow + 60);
+            const int framesPerActor = configuredStep >= 1 ? configuredStep : std::max(90, poseWindow + 60);
+            proofScreenshotFrames.clear();
+            proofScreenshotFrames.reserve(selected.size());
+            for (std::size_t index = 0; index < selected.size(); ++index)
+            {
+                const std::uint64_t requested = static_cast<std::uint64_t>(firstFrame)
+                    + static_cast<std::uint64_t>(index) * static_cast<std::uint64_t>(framesPerActor);
+                proofScreenshotFrames.push_back(static_cast<int>(
+                    std::min<std::uint64_t>(requested, static_cast<std::uint64_t>(std::numeric_limits<int>::max()))));
+            }
+        }
+
+        const auto writeJsonString = [](std::ostream& stream, std::string_view value) {
+            stream << '"';
+            for (unsigned char ch : value)
+            {
+                switch (ch)
+                {
+                    case '"': stream << "\\\""; break;
+                    case '\\': stream << "\\\\"; break;
+                    case '\b': stream << "\\b"; break;
+                    case '\f': stream << "\\f"; break;
+                    case '\n': stream << "\\n"; break;
+                    case '\r': stream << "\\r"; break;
+                    case '\t': stream << "\\t"; break;
+                    default:
+                        if (ch < 0x20)
+                            stream << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                                   << static_cast<unsigned int>(ch) << std::dec << std::setfill(' ');
+                        else
+                            stream << static_cast<char>(ch);
+                        break;
+                }
+            }
+            stream << '"';
+        };
+        if (const char* rosterPath = std::getenv("OPENMW_PROOF_ACTOR_ROSTER_JSON"))
+        {
+            if (*rosterPath != '\0')
+            {
+                std::ofstream roster(rosterPath, std::ios::trunc);
+                if (!roster)
+                    Log(Debug::Error) << "FNV/ESM4 actor batch: failed to open roster path " << rosterPath;
+                else
+                {
+                    roster << "{\n  \"schema\": \"nikami-fnv-loaded-actor-roster/v1\",\n"
+                           << "  \"totalAvailable\": " << totalAvailable << ",\n"
+                           << "  \"totalNpcs\": " << totalNpcs << ",\n"
+                           << "  \"totalCreatures\": " << totalCreatures << ",\n"
+                           << "  \"representativeVisualTypes\": "
+                           << (representativeVisualTypes ? "true" : "false") << ",\n"
+                           << "  \"priorityOrdered\": " << (priorityOrder ? "true" : "false") << ",\n"
+                           << "  \"distinctVisualTypes\": " << distinctVisualTypes << ",\n"
+                           << "  \"offset\": " << offset << ",\n"
+                           << "  \"selectedCount\": " << selected.size() << ",\n"
+                           << "  \"actors\": [\n";
+                    for (std::size_t index = 0; index < selected.size(); ++index)
+                    {
+                        const LoadedActorBase& actor = selected[index];
+                        roster << "    {\"index\": " << index << ", \"type\": ";
+                        writeJsonString(roster, actor.mType);
+                        roster << ", \"form\": ";
+                        writeJsonString(roster, ESM::RefId(actor.mId).toDebugString());
+                        roster << ", \"editorId\": ";
+                        writeJsonString(roster, actor.mEditorId);
+                        roster << ", \"name\": ";
+                         writeJsonString(roster, actor.mName);
+                         roster << ", \"visualSignature\": ";
+                         writeJsonString(roster, actor.mVisualSignature);
+                         roster << ", \"selectedWeapon\": ";
+                         writeJsonString(roster, actor.mSelectedWeapon);
+                         roster << ", \"representativeOfCount\": " << actor.mRepresentativeOfCount
+                                << ", \"representativeScore\": " << actor.mRepresentativeScore
+                                << ", \"priorityRank\": " << (priorityOrder ? offset + index + 1 : 0)
+                                << ", \"priorityScore\": "
+                                << (static_cast<std::int64_t>(actor.mRepresentativeOfCount) * 1000000
+                                    + actor.mRepresentativeScore)
+                                << ", \"flags\": " << actor.mFlags << "}";
+                        if (index + 1 != selected.size())
+                            roster << ',';
+                        roster << '\n';
+                    }
+                    roster << "  ]\n}\n";
+                    Log(Debug::Info) << "FNV/ESM4 actor batch: wrote deterministic loaded roster path="
+                                     << rosterPath << " count=" << selected.size();
+                }
+            }
+        }
+
+        for (std::size_t index = 0; index < selected.size(); ++index)
+        {
+            const LoadedActorBase& actor = selected[index];
+            Log(Debug::Info) << "FNV/ESM4 actor roster: index=" << index << " type=" << actor.mType
+                             << " form=" << ESM::RefId(actor.mId).toDebugString() << " editor=\""
+                             << actor.mEditorId << "\" name=\"" << actor.mName << "\" selectedWeapon=\""
+                             << actor.mSelectedWeapon << "\" representativeOfCount=" << actor.mRepresentativeOfCount
+                             << " representativeScore=" << actor.mRepresentativeScore << " flags=0x" << std::hex
+                             << actor.mFlags << std::dec;
+        }
+        Log(Debug::Info) << "FNV/ESM4 actor batch: loaded roster ready totalAvailable=" << totalAvailable
+                          << " npcs=" << totalNpcs << " creatures=" << totalCreatures
+                          << " representativeVisualTypes=" << representativeVisualTypes
+                          << " priorityOrdered=" << priorityOrder
+                          << " distinctVisualTypes=" << distinctVisualTypes << " offset=" << offset
+                          << " selected=" << selected.size()
+                         << " screenshotFrames=" << proofScreenshotFrames.size();
+        proofActorBaseRosterExpanded = true;
+    }
+
+    if (proofSidecarEnabled && proofSidecarPhase != FNVSidecarOpenMwPhase::Failed)
+    {
+        if (!proofSidecarSnapshot.mValid)
+            failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault, "retail-payload-crc-or-length-invalid");
+        else if ((proofSidecarSnapshot.mFlags & FNVSidecar::ErrorFlag) != 0
+            || proofSidecarSnapshot.mState == FNVSidecar::State::Error)
+        {
+            proofSidecarPhase = FNVSidecarOpenMwPhase::Failed;
+            if (!proofSidecarPeerErrorLogged)
+            {
+                proofSidecarPeerErrorLogged = true;
+                Log(Debug::Error) << "FNV sidecar OpenMW: peer error code="
+                                  << static_cast<std::uint32_t>(proofSidecarSnapshot.mErrorCode)
+                                  << " message=\"" << proofSidecarSnapshot.mErrorMessage << "\"";
+            }
+        }
+        else if (proofActorBaseRosterExpanded && proofSidecarSnapshot.mGeneration > proofSidecarGeneration)
+        {
+            std::string parseError;
+            const std::optional<FNVSidecar::RetailAction> action
+                = FNVSidecar::parseRetailAction(proofSidecarSnapshot, parseError);
+            if (!action && (proofSidecarSnapshot.mFlags & FNVSidecar::RetailReadyFlag) != 0)
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, parseError);
+            else if (!action)
+            {
+                // Retail increments generation before replacing its payload. A
+                // frame may observe that intentional publication window; the
+                // retail-ready flag is the fail-closed validation boundary.
+            }
+            else if (proofSidecarSnapshot.mGeneration != proofSidecarGeneration + 1)
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "noncontiguous-generation");
+            else if (action->mActorIndex >= proofActorBatchTargets.size())
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "actor-index-out-of-openmw-roster");
+            else if (proofSidecarSnapshot.mActionCount != proofActorPoseGroups.size()
+                || action->mActionIndex >= proofActorPoseGroups.size())
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "action-count-or-index-mismatch");
+            else
+            {
+                const std::string& expectedActionId = proofSidecarActionIds.empty()
+                    ? proofActorPoseGroups[action->mActionIndex]
+                    : proofSidecarActionIds[action->mActionIndex];
+                const bool actionIdListValid = proofSidecarActionIds.empty()
+                    || proofSidecarActionIds.size() == proofActorPoseGroups.size();
+                const bool sequenceValid = proofSidecarGeneration == 0
+                    ? action->mActorIndex == 0 && action->mActionIndex == 0
+                    : ((action->mActorIndex == proofSidecarPreviousActor
+                           && action->mActionIndex == proofSidecarPreviousAction + 1)
+                        || (action->mActorIndex == proofSidecarPreviousActor + 1
+                            && action->mActionIndex == 0));
+                const std::optional<ESM::FormId> localBase
+                    = parseProofFormId(proofActorBatchTargets[action->mActorIndex]);
+                const bool baseMatches = localBase.has_value()
+                    && (localBase->toUint32() & 0x00FFFFFFu)
+                        == (action->mRetailBaseForm & 0x00FFFFFFu);
+                if (!actionIdListValid)
+                    failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "openmw-action-id-count-mismatch");
+                else if (action->mActionId != expectedActionId)
+                    failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "retail-openmw-action-id-mismatch");
+                else if (!sequenceValid)
+                    failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "actor-action-sequence-mismatch");
+                else if (!baseMatches)
+                    failFNVSidecar(FNVSidecar::ErrorCode::ActorUnavailable, "retail-openmw-base-form-mismatch");
+                else
+                {
+                    proofSidecarAction = action;
+                    proofSidecarGeneration = action->mGeneration;
+                    proofSidecarPreviousActor = action->mActorIndex;
+                    proofSidecarPreviousAction = action->mActionIndex;
+                    proofSidecarActionStartFrame = -1;
+                    proofSidecarCaptureStateStartFrame = -1;
+                    proofSidecarActionPlayed = false;
+                    proofSidecarScreenshotBaseline = {};
+                    proofSidecarScreenshotCandidate = {};
+                    proofSidecarScreenshotStableFrames = 0;
+                    proofSidecarPhase = FNVSidecarOpenMwPhase::Staging;
+                    proofScreenshotFrameIndex = action->mActorIndex;
+                    Log(Debug::Info) << "FNV sidecar OpenMW: consumed retail action generation="
+                                     << action->mGeneration << " actorIndex=" << action->mActorIndex
+                                     << " actionIndex=" << action->mActionIndex << " actionId=\""
+                                     << action->mActionId << "\" group=\""
+                                     << proofActorPoseGroups[action->mActionIndex] << "\" requestedFrames="
+                                     << action->mRequestedFrames << " requestedWeaponForm="
+                                     << action->mRequestedWeaponForm;
+                }
+            }
+        }
+        else if (proofSidecarGeneration != 0 && proofSidecarSnapshot.mGeneration == proofSidecarGeneration
+            && (proofSidecarSnapshot.mActorIndex != proofSidecarPreviousActor
+                || proofSidecarSnapshot.mActionIndex != proofSidecarPreviousAction))
+            failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault, "stable-generation-identity-changed");
+
+        if (proofSidecarPhase != FNVSidecarOpenMwPhase::Failed
+            && proofSidecarSnapshot.mDeadlineTickMs != 0 && proofSidecarGeneration != 0
+            && proofSidecarSnapshot.mGeneration == proofSidecarGeneration
+            && FNVSidecar::monotonicTickMilliseconds() > proofSidecarSnapshot.mDeadlineTickMs
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::CaptureAckFlag) == 0)
+        {
+            const FNVSidecar::ErrorCode code = proofSidecarPhase == FNVSidecarOpenMwPhase::Capturing
+                ? FNVSidecar::ErrorCode::ScreenshotTimeout
+                : (proofSidecarPhase == FNVSidecarOpenMwPhase::WaitingAdvance
+                        ? FNVSidecar::ErrorCode::CaptureAckTimeout
+                        : FNVSidecar::ErrorCode::OpenMwReadyTimeout);
+            failFNVSidecar(code, "shared-deadline-expired");
+        }
+
+        if (!proofSidecarCompletionPublished
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::RetailCompleteFlag) != 0
+            && proofSidecarPhase == FNVSidecarOpenMwPhase::WaitingAdvance)
+        {
+            if (proofSidecarClient.markComplete(frameNumber))
+            {
+                proofSidecarCompletionPublished = true;
+                proofSidecarPhase = FNVSidecarOpenMwPhase::Complete;
+                proofActorBatchCompletionLogged = true;
+                proofActorBatchCompleteFrame = static_cast<int>(frameNumber);
+                Log(Debug::Info) << "FNV sidecar OpenMW: sequence complete generation="
+                                 << proofSidecarGeneration << " frame=" << frameNumber;
+            }
+            else
+                failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault, "openmw-complete-publish-failed");
+        }
+    }
+
+    const bool proofRequiresActorForScreenshot = std::getenv("OPENMW_PROOF_REQUIRE_ACTOR_FOR_SCREENSHOT") != nullptr;
+    const bool proofSidecarActorRequested = !proofSidecarEnabled
+        || (proofSidecarAction.has_value()
+            && proofSidecarPhase != FNVSidecarOpenMwPhase::WaitingRetail
+            && proofSidecarPhase != FNVSidecarOpenMwPhase::Failed
+            && proofSidecarPhase != FNVSidecarOpenMwPhase::Complete);
+    const bool proofActorBatchActive = !proofActorBatchTargets.empty()
+        && proofScreenshotFrameIndex < proofActorBatchTargets.size() && proofSidecarActorRequested;
+    // Native capture is asynchronous. Do not change the staged scene immediately after
+    // arming it; advance only when the next target enters its warmup window.
+    const int proofActorBatchWarmupFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_WARMUP_FRAMES");
+    const int proofActorBatchWarmupFrames
+        = proofActorBatchWarmupFramesEnv >= 0 ? proofActorBatchWarmupFramesEnv : 30;
+    const bool proofActorBatchTransitionReady = proofSidecarEnabled
+        || proofActorBatchIndex == static_cast<std::size_t>(-1)
+        || proofScreenshotFrameIndex == 0 || proofScreenshotFrameIndex >= proofScreenshotFrames.size()
+        || static_cast<int>(frameNumber) + proofActorBatchWarmupFrames
+            >= proofScreenshotFrames[proofScreenshotFrameIndex];
+    if (proofActorBatchActive && proofActorBatchIndex != proofScreenshotFrameIndex
+        && proofActorBatchTransitionReady)
+    {
+        if (!proofActorBatchPrevious.isEmpty() && mWorld != nullptr)
+        {
+            try
+            {
+                mWorld->disable(proofActorBatchPrevious);
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof batch: failed to retire previous actor: " << e.what();
+            }
+        }
+        proofActorBatchPrevious = MWWorld::Ptr();
+        proofActorBatchIndex = proofScreenshotFrameIndex;
+        proofActorBatchSelectedFrame = static_cast<int>(frameNumber);
+        proofActorPoseBatchIndex = proofActorBatchIndex;
+        proofActorPoseIndex = 0;
+        proofActorPoseNextFrame = -1;
+        proofActorPoseRestoringNativeState = false;
+        proofActorActivePoseGroups = proofActorPoseAllAvailable
+            ? std::vector<std::string>()
+            : proofActorPoseGroups;
+        proofActorPoseCycleComplete = !proofActorPoseSweepEnabled;
+        proofActorPoseInventoryLogged = false;
+        proofActorNativeGroupMasks.clear();
+        proofActorPosePlayed = 0;
+        proofActorPoseDeferred = 0;
+        proofActorPoseSkipped = 0;
+        proofActorPhaseTimedOut = false;
+        proofActorPhaseTimeoutReason.clear();
+        proofSayQueued = false;
+        proofActorCameraAligned = false;
+        proofActorCameraAlignedFrame = -1;
+        proofActorCameraAlignedScreenshotIndex = static_cast<std::size_t>(-1);
+        proofActorAlignedScreenshotQueued = false;
+        proofActorNeutralizedForCamera = false;
+        proofActorStagedForCamera = false;
+        proofActorSnappedToRenderGround = false;
+        proofActorRenderGroundFreshBoundsLatched = false;
+        proofActorStagedFrame = -1;
+        proofActorSnappedFrame = -1;
+        proofActorSkinState = {};
+        proofPinnedStagedActor = MWWorld::Ptr();
+        proofPinnedStagedActorLastLogFrame = -1000000;
+        proofActorScreenshotWaitLogged = false;
+        proofActorScreenshotLastResolveFrame = -1;
+        proofPinnedPlayerToActorView = false;
+        Log(Debug::Info) << "FNV/ESM4 proof batch: selected actor index=" << proofActorBatchIndex
+                         << " target=\"" << proofActorBatchTargets[proofActorBatchIndex] << "\"";
+    }
+    const char* proofSayActor = proofActorBatchActive
+        ? proofActorBatchTargets[std::min(proofActorBatchIndex, proofActorBatchTargets.size() - 1)].c_str()
+        : std::getenv("OPENMW_PROOF_SAY_ACTOR");
+    const int proofActorResolveRetryFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_RESOLVE_RETRY_FRAMES");
+    const int proofActorResolveRetryFrames = proofActorResolveRetryFramesEnv >= 0 ? proofActorResolveRetryFramesEnv : 30;
+    const bool proofOrbitBurstPending = proofScreenshotFrameIndex < proofScreenshotFrames.size()
+        && !proofActorViewOrbitDegrees.empty()
+        && proofActorCameraAlignedScreenshotIndex != proofScreenshotFrameIndex;
+    const bool proofActorScreenshotNeedsResolveRaw = proofRequiresActorForScreenshot
+        && (!proofActorCameraAligned || proofOrbitBurstPending)
+        && proofScreenshotFrameIndex < proofScreenshotFrames.size()
+        && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
+    const bool proofActorScreenshotNeedsResolve = proofActorScreenshotNeedsResolveRaw
+        && (proofActorScreenshotLastResolveFrame < 0
+            || frameNumber
+                >= static_cast<unsigned>(proofActorScreenshotLastResolveFrame + proofActorResolveRetryFrames));
+    const bool proofOrbitBurstAlignReached = proofOrbitBurstPending
+        && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex])
+        && (!proofRequiresActorForScreenshot || proofActorScreenshotNeedsResolve);
+    const bool proofEarlyActorAlignmentPending = proofActorBatchActive
+        && proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_EARLY_ALIGN") && !proofActorCameraAligned;
+    const bool proofActorCameraAlignmentWindowOpen = proofSidecarEnabled || proofEarlyActorAlignmentPending || !proofActorBatchActive
+        || proofScreenshotFrameIndex >= proofScreenshotFrames.size()
+        || frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
+    if (proofEnvEnabled("OPENMW_PROOF_PIN_STAGED_ACTOR") && !proofPinnedStagedActor.isEmpty()
+        && mWorld != nullptr)
+    {
+        try
+        {
+            const ESM::Position& current = proofPinnedStagedActor.getRefData().getPosition();
+            const osg::Vec3f currentPosition(current.pos[0], current.pos[1], current.pos[2]);
+            const osg::Vec3f currentRotation(current.rot[0], current.rot[1], current.rot[2]);
+            const float positionDrift = (currentPosition - proofPinnedStagedActorPosition).length();
+            const float rotationDrift = (currentRotation - proofPinnedStagedActorRotation).length();
+            if (positionDrift > 0.001f)
+            {
+                proofPinnedStagedActor = mWorld->moveObject(proofPinnedStagedActor,
+                    proofPinnedStagedActor.getCell(), proofPinnedStagedActorPosition, true, true);
+            }
+            if (rotationDrift > 0.00001f)
+                mWorld->rotateObject(proofPinnedStagedActor, proofPinnedStagedActorRotation);
+            if ((positionDrift > 0.001f || rotationDrift > 0.00001f)
+                && static_cast<int>(frameNumber) - proofPinnedStagedActorLastLogFrame >= 30)
+            {
+                proofPinnedStagedActorLastLogFrame = static_cast<int>(frameNumber);
+                Log(Debug::Info) << "FNV/ESM4 proof: restored pinned staged actor transform target=\""
+                                 << (proofSayActor != nullptr ? proofSayActor : "") << "\" frame=" << frameNumber
+                                 << " positionDrift=" << positionDrift << " rotationDrift=" << rotationDrift
+                                 << " pos=(" << proofPinnedStagedActorPosition.x() << ","
+                                 << proofPinnedStagedActorPosition.y() << "," << proofPinnedStagedActorPosition.z()
+                                 << ") rot=(" << proofPinnedStagedActorRotation.x() << ","
+                                 << proofPinnedStagedActorRotation.y() << ","
+                                 << proofPinnedStagedActorRotation.z() << ")";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: failed to restore pinned staged actor transform: "
+                                << e.what();
+        }
+    }
+    if ((!proofSayQueued || proofOrbitBurstAlignReached || proofActorScreenshotNeedsResolve
+            || proofEarlyActorAlignmentPending)
+        && (proofSidecarEnabled
+            || (proofSayFrame >= 0 && frameNumber >= static_cast<unsigned>(proofSayFrame))))
+    {
+        const char* proofSayFile = std::getenv("OPENMW_PROOF_SAY_FILE");
+        const char* proofSayTopic = std::getenv("OPENMW_PROOF_SAY_TOPIC");
+        MWWorld::Ptr proofActor;
+        if (proofSayActor != nullptr && *proofSayActor != '\0')
+        {
+            proofActor = resolveProofActor(proofSayActor);
+            if (proofActorBatchActive && !proofActor.isEmpty() && !proofActor.getRefData().isEnabled()
+                && mWorld != nullptr)
+                mWorld->enable(proofActor);
+            if (proofActorScreenshotNeedsResolve)
+                proofActorScreenshotLastResolveFrame = static_cast<int>(frameNumber);
+            Log(Debug::Info) << "FNV/ESM4 proof: resolved proof say actor \"" << proofSayActor
+                             << "\" -> " << proofActor.toString();
+            if (!proofActor.isEmpty() && std::getenv("OPENMW_PROOF_SUPPRESS_ACTOR_AI") != nullptr
+                && !proofActorNeutralizedForCamera)
+            {
+                try
+                {
+                    MWMechanics::CreatureStats& proofActorStats = proofActor.getClass().getCreatureStats(proofActor);
+                    const bool proofActorWasDead = proofActorStats.isDead();
+                    if (proofActorWasDead && proofEnvEnabled("OPENMW_PROOF_REVIVE_ACTOR")
+                        && mMechanicsManager != nullptr)
+                    {
+                        mMechanicsManager->resurrect(proofActor);
+                        Log(Debug::Info) << "FNV/ESM4 proof: revived staged actor target=\""
+                                         << proofSayActor << "\" ptr=" << proofActor.toString();
+                    }
+                    // A clean proof copy can still inherit transient combat/death flags from the authored
+                    // reference or from its first mechanics update. Those flags select hit, knockdown, block,
+                    // or death controller states even after the copy has been resurrected and its AI queue has
+                    // been cleared. Reset only the isolated proof actor so CharacterController can rebuild the
+                    // native data-driven idle from a genuinely neutral state.
+                    proofActorStats.setKnockedDown(false);
+                    proofActorStats.setKnockedDownOneFrame(false);
+                    proofActorStats.setKnockedDownOverOneFrame(false);
+                    proofActorStats.setHitRecovery(false);
+                    proofActorStats.setBlock(false);
+                    proofActorStats.setAttacked(false);
+                    proofActorStats.setAlarmed(false);
+                    proofActorStats.setDeathAnimationFinished(false);
+                    proofActorStats.setDeathAnimation(-1);
+                    // A Fallout package can leave a scripted furniture animation running after the actor is moved.
+                    // The capture copy must start from a deterministic neutral state; ordinary world actors keep
+                    // their authored packages and animations because this path is proof-only.
+                    proofActorStats.getAiSequence().clear();
+                    proofActorStats.setAttackingOrSpell(false);
+                    proofActorStats.setAiSetting(MWMechanics::AiSetting::Fight, 0);
+                    proofActorStats.setAiSetting(MWMechanics::AiSetting::Flee, 0);
+                    proofActorStats.setAiSetting(MWMechanics::AiSetting::Alarm, 0);
+                    proofActorStats.setMovementFlag(MWMechanics::CreatureStats::Flag_Run, false);
+                    proofActorStats.setMovementFlag(MWMechanics::CreatureStats::Flag_ForceRun, false);
+                    MWMechanics::Movement& proofMovement = proofActor.getClass().getMovementSettings(proofActor);
+                    proofMovement.mPosition[0] = 0.f;
+                    proofMovement.mPosition[1] = 0.f;
+                    proofMovement.mPosition[2] = 0.f;
+                    proofMovement.mRotation[0] = 0.f;
+                    proofMovement.mRotation[1] = 0.f;
+                    proofMovement.mRotation[2] = 0.f;
+                    if (proofActor.getType() == ESM4::Npc::sRecordId)
+                    {
+                        MWClass::ESM4Npc::setFurnitureState(
+                            proofActor, MWClass::FalloutFurnitureState::None);
+                        MWClass::ESM4Npc::setFurniturePlacement(
+                            proofActor, MWClass::FalloutFurniturePlacement {});
+
+                        // Canonical actor proofs must stage the weapon authored for
+                        // this exact NPC, not merely attach it in the renderer while
+                        // leaving the mechanics state holstered. Conversely, an NPC
+                        // with no authored equipped weapon must stay unarmed.
+                        const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(proofActor);
+                        proofActorStats.setDrawState(equippedWeapon != nullptr
+                                ? MWMechanics::DrawState::Weapon
+                                : MWMechanics::DrawState::Nothing);
+                    }
+                    if (mMechanicsManager != nullptr)
+                    {
+                        mMechanicsManager->clearAnimationQueue(proofActor, true);
+                        mMechanicsManager->forceStateUpdate(proofActor);
+                    }
+                    if (proofEnvEnabled("OPENMW_PROOF_DISABLE_ACTOR_COLLISION") && mWorld != nullptr)
+                        mWorld->setActorCollisionMode(proofActor, false, false);
+                    Log(Debug::Info) << "FNV/ESM4 proof: suppressed proof actor AI and reset staged animation target=\""
+                                     << proofSayActor << "\" ptr=" << proofActor.toString();
+                    if (proofActor.getType() == ESM4::Npc::sRecordId)
+                    {
+                        const ESM4::Npc* npc = proofActor.get<ESM4::Npc>()->mBase;
+                        const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(proofActor);
+                        const MWMechanics::DrawState terminalDrawState = proofActorStats.getDrawState();
+                        Log(Debug::Info) << "FNV/ESM4 proof: phase=canonical-actor-terminal-identity"
+                                         << " target=\"" << proofSayActor << "\""
+                                         << " ref=" << proofActor.getCellRef().getRefNum().toString("FormId:")
+                                         << " base=" << proofActor.getCellRef().getRefId().toDebugString()
+                                         << " npc=\"" << (npc != nullptr ? npc->mEditorId : std::string()) << "\""
+                                         << " npcForm=" << (npc != nullptr ? ESM::RefId(npc->mId) : ESM::RefId())
+                                         << " equippedWeapon=" << (equippedWeapon != nullptr)
+                                         << " weapon=\""
+                                         << (equippedWeapon != nullptr ? equippedWeapon->mEditorId : std::string())
+                                         << "\" weaponForm="
+                                         << (equippedWeapon != nullptr ? ESM::RefId(equippedWeapon->mId) : ESM::RefId())
+                                         << " terminalDrawState="
+                                         << (terminalDrawState == MWMechanics::DrawState::Weapon
+                                                 ? "Weapon"
+                                                 : (terminalDrawState == MWMechanics::DrawState::Spell ? "Spell"
+                                                                                                      : "Nothing"));
+                    }
+                    proofActorNeutralizedForCamera = true;
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 proof: failed to suppress proof actor AI target=\""
+                                        << proofSayActor << "\": " << e.what();
+                }
+            }
+            if (!proofActor.isEmpty() && std::getenv("OPENMW_PROOF_STAGE_ACTOR") != nullptr
+                && !proofActorStagedForCamera && mWorld != nullptr)
+            {
+                try
+                {
+                    proofActorStagedForCamera = stageProofActorForCamera(*mWorld, proofActor, proofSayActor);
+                    if (proofActorStagedForCamera)
+                    {
+                        proofActorStagedFrame = static_cast<int>(frameNumber);
+                        if (proofEnvEnabled("OPENMW_PROOF_PIN_STAGED_ACTOR"))
+                        {
+                            proofPinnedStagedActor = proofActor;
+                            const ESM::Position& staged = proofActor.getRefData().getPosition();
+                            proofPinnedStagedActorPosition.set(staged.pos[0], staged.pos[1], staged.pos[2]);
+                            proofPinnedStagedActorRotation.set(staged.rot[0], staged.rot[1], staged.rot[2]);
+                            Log(Debug::Info) << "FNV/ESM4 proof: pinned staged actor transform target=\""
+                                             << proofSayActor << "\" pos=(" << staged.pos[0] << ","
+                                             << staged.pos[1] << "," << staged.pos[2] << ") rot=("
+                                             << staged.rot[0] << "," << staged.rot[1] << "," << staged.rot[2]
+                                             << ") refScale=" << proofActor.getCellRef().getScale();
+                        }
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 proof: failed to stage actor target=\""
+                                        << proofSayActor << "\": " << e.what();
+                    proofActorStagedForCamera = true;
+                }
+            }
+            const bool proofActorStageRenderUpdateReady = !proofActorStagedForCamera
+                || proofActorStagedFrame < 0 || static_cast<int>(frameNumber) > proofActorStagedFrame;
+            if (!proofActor.isEmpty() && std::getenv("OPENMW_PROOF_SNAP_ACTOR_TO_RENDER_GROUND") != nullptr
+                && !proofActorSnappedToRenderGround && mWorld != nullptr && proofActorStageRenderUpdateReady)
+            {
+                try
+                {
+                    proofActorSnappedToRenderGround = snapProofActorToRenderGround(*mWorld, proofActor,
+                        proofSayActor, proofActorRenderGroundFreshBoundsLatched);
+                    if (proofActorSnappedToRenderGround)
+                        proofActorSnappedFrame = static_cast<int>(frameNumber);
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 proof: render-ground snap failed target=\""
+                                        << proofSayActor << "\": " << e.what();
+                    proofActorSnappedToRenderGround = true;
+                    proofActorSnappedFrame = static_cast<int>(frameNumber);
+                }
+            }
+            else if (!proofActor.isEmpty()
+                && std::getenv("OPENMW_PROOF_SNAP_ACTOR_TO_RENDER_GROUND") != nullptr
+                && !proofActorSnappedToRenderGround && !proofActorStageRenderUpdateReady)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: render-ground snap waiting for post-stage render update target=\""
+                                 << proofSayActor << "\" stagedFrame=" << proofActorStagedFrame
+                                 << " frame=" << frameNumber;
+            }
+            if (!proofActor.isEmpty())
+                logProofActorRenderBounds(proofActor, proofSayActor, "post-stage-snap");
+            if (proofActorBatchActive && !proofActor.isEmpty())
+                proofActorBatchPrevious = proofActor;
+
+            const bool proofNeutralActorPreviewRequested = proofEnvEnabled("OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW")
+                || proofEnvEnabled("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW");
+            if (!proofActor.isEmpty() && proofNeutralActorPreviewRequested && !proofNeutralActorPreviewAttempted)
+            {
+                proofNeutralActorPreviewAttempted = true;
+                try
+                {
+                    osg::Group* sceneRoot = mViewer != nullptr && mViewer->getSceneData() != nullptr
+                        ? mViewer->getSceneData()->asGroup()
+                        : nullptr;
+                    if (sceneRoot == nullptr)
+                        throw std::runtime_error("missing viewer scene root");
+
+                    proofNeutralActorPreviewRoot = new osg::Group;
+                    proofNeutralActorPreviewRoot->setName("FNV Neutral Actor Preview Root");
+                    proofNeutralActorPreviewRoot->setNodeMask(MWRender::Mask_RenderToTexture);
+                    sceneRoot->addChild(proofNeutralActorPreviewRoot);
+
+                    const std::string profile = [] {
+                        const char* value = std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_PROFILE");
+                        return value != nullptr && value[0] != '\0' ? std::string(value) : std::string("full-body");
+                    }();
+                    const float zoom = readProofFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_ZOOM", 1.f);
+                    proofNeutralActorPreviews.clear();
+                    proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
+                        proofNeutralActorPreviewRoot, mResourceSystem.get(), proofActor,
+                        MWRender::FalloutActorPreview::ViewMode::Front, zoom, profile));
+                    proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
+                        proofNeutralActorPreviewRoot, mResourceSystem.get(), proofActor,
+                        MWRender::FalloutActorPreview::ViewMode::Left, zoom, profile));
+                    proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
+                        proofNeutralActorPreviewRoot, mResourceSystem.get(), proofActor,
+                        MWRender::FalloutActorPreview::ViewMode::Top, zoom, profile));
+                    for (const std::unique_ptr<MWRender::FalloutActorPreview>& preview : proofNeutralActorPreviews)
+                    {
+                        preview->rebuild();
+                        preview->redraw();
+                    }
+                    proofNeutralActorPreviewComposite = createFalloutNeutralActorPreviewComposite(proofNeutralActorPreviews);
+                    sceneRoot->addChild(proofNeutralActorPreviewComposite);
+                    proofNeutralActorPreviewReady = true;
+                    Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview assembled target=\""
+                                     << proofSayActor << "\" ptr=" << proofActor.toString()
+                                     << " panes=" << proofNeutralActorPreviews.size()
+                                     << " profile=" << profile
+                                     << " zoom=" << zoom
+                                     << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 proof: neutral actor preview failed target=\""
+                                        << proofSayActor << "\" error=\"" << e.what()
+                                        << "\" runtime=known-blocked gate=runtime-neutral-actor-preview";
+                }
+            }
+
+            if (proofNeutralActorPreviewRequested && proofNeutralActorPreviewReady
+                && !proofNeutralActorPreviewIsolationApplied)
+            {
+                if (mWindowManager)
+                    mWindowManager->setHudVisibility(false);
+                if (mWorld != nullptr)
+                {
+                    if (MWRender::RenderingManager* rendering = mWorld->getRenderingManager())
+                    {
+                        rendering->setWaterEnabled(false);
+                        rendering->setSkyEnabled(false);
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        if (!player.isEmpty() && player.isInCell() && player.getCell() != nullptr
+                            && player.getCell()->getCell() != nullptr)
+                            rendering->enableTerrain(false, player.getCell()->getCell()->getWorldSpace());
+                    }
+                }
+                if (mViewer && mViewer->getCamera())
+                {
+                    mViewer->getCamera()->setClearColor(osg::Vec4(0.22f, 0.23f, 0.24f, 1.f));
+                    mViewer->getCamera()->setCullMask(MWRender::Mask_RenderToTexture);
+                    mViewer->getCamera()->setCullMaskLeft(MWRender::Mask_RenderToTexture);
+                    mViewer->getCamera()->setCullMaskRight(MWRender::Mask_RenderToTexture);
+                }
+                proofActorCameraAligned = true;
+                proofActorCameraAlignedFrame = static_cast<int>(frameNumber);
+                proofActorCameraAlignedScreenshotIndex = proofScreenshotFrameIndex;
+                proofNeutralActorPreviewIsolationApplied = true;
+                Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview isolation target=\""
+                                 << proofSayActor
+                                 << "\" cullMask=Mask_RenderToTexture hud=hidden sky=hidden water=hidden"
+                                 << " terrain=hidden runtime=runtime-supported gate=runtime-neutral-actor-preview";
+            }
+
+            const bool proofActorRenderGroundReady
+                = std::getenv("OPENMW_PROOF_SNAP_ACTOR_TO_RENDER_GROUND") == nullptr
+                || (proofActorSnappedToRenderGround && proofActorSnappedFrame >= 0
+                    && static_cast<int>(frameNumber) > proofActorSnappedFrame);
+            if (!proofActor.isEmpty() && !proofNeutralActorPreviewReady && proofActorCameraAlignmentWindowOpen
+                && !nativeFalloutSaveOwnsCamera() && !proofActorRenderGroundReady
+                && std::getenv("OPENMW_PROOF_ALIGN_PLAYER_TO_ACTOR") != nullptr)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: actor camera waiting for coherent render-ground state target=\""
+                                 << proofSayActor << "\" snapped=" << proofActorSnappedToRenderGround
+                                 << " snappedFrame=" << proofActorSnappedFrame << " frame=" << frameNumber;
+            }
+            if (!proofActor.isEmpty() && !proofNeutralActorPreviewReady && proofActorCameraAlignmentWindowOpen
+                && !nativeFalloutSaveOwnsCamera() && proofActorRenderGroundReady
+                && std::getenv("OPENMW_PROOF_ALIGN_PLAYER_TO_ACTOR") != nullptr)
+            {
+                const ESM::Position& actorPos = proofActor.getRefData().getPosition();
+                float offsetX = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_X", 0.f);
+                float offsetY = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_Y", -220.f);
+                const float offsetZ = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_Z", 20.f);
+                const float targetZ = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_TARGET_Z", 120.f);
+                const float cameraDistance = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_CAMERA_DISTANCE", 0.f);
+                const float cameraPitch = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_PITCH", 0.f);
+                const bool staticDialogueCamera = std::getenv("OPENMW_PROOF_ACTOR_VIEW_STATIC_CAMERA") != nullptr;
+                const bool replayRetailAbsoluteCamera
+                    = proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_REPLAY_RETAIL_ABSOLUTE_CAMERA");
+                const bool requireActorForScreenshot = std::getenv("OPENMW_PROOF_REQUIRE_ACTOR_FOR_SCREENSHOT") != nullptr;
+                bool useFaceAxisCamera = false;
+                osg::Vec2f faceAxis(0.f, 0.f);
+                osg::Vec3d actorAim(actorPos.pos[0], actorPos.pos[1], actorPos.pos[2] + targetZ);
+                double cameraZ = actorPos.pos[2] + offsetZ;
+                const bool useRenderBounds = std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_RENDER_BOUNDS") != nullptr;
+                const bool useFaceBounds = std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_FACE_BOUNDS") != nullptr;
+                const bool fullBodyView = std::getenv("OPENMW_PROOF_ACTOR_VIEW_FULL_BODY") != nullptr;
+                bool actorViewBoundsAccepted = false;
+                bool actorViewScaleAccepted = true;
+                osg::BoundingBox actorViewRenderBounds;
+                int actorViewVisibilityBlockers = -1;
+                const auto isProofBoundsNearActor = [&](const osg::BoundingBox& bounds, const char* label) {
+                    const double dx = bounds.center().x() - actorPos.pos[0];
+                    const double dy = bounds.center().y() - actorPos.pos[1];
+                    const double dz = bounds.center().z() - actorPos.pos[2];
+                    const double centerDistance = std::sqrt(dx * dx + dy * dy + dz * dz);
+                    const osg::Vec3d boundsSize(bounds.xMax() - bounds.xMin(), bounds.yMax() - bounds.yMin(),
+                        bounds.zMax() - bounds.zMin());
+                    const double boundsDiagonal = boundsSize.length();
+                    const float maxCenterDistance
+                        = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_MAX_BOUNDS_CENTER_DISTANCE", 1000.f);
+                    const float maxCenterDiagonals
+                        = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_MAX_BOUNDS_CENTER_DIAGONALS", 2.f);
+                    const float minRelativeAllowance
+                        = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_MIN_RELATIVE_BOUNDS_ALLOWANCE", 64.f);
+                    const double relativeAllowance
+                        = std::max(static_cast<double>(minRelativeAllowance), boundsDiagonal * maxCenterDiagonals);
+                    const double allowedCenterDistance
+                        = std::min(static_cast<double>(maxCenterDistance), relativeAllowance);
+                    if (centerDistance <= allowedCenterDistance)
+                        return true;
+                    Log(Debug::Warning) << "FNV/ESM4 proof: actor " << label
+                                        << " bounds rejected as stale/far target=\"" << proofSayActor
+                                        << "\" center=(" << bounds.center().x() << "," << bounds.center().y()
+                                        << "," << bounds.center().z() << ") actorPos=(" << actorPos.pos[0] << ","
+                                        << actorPos.pos[1] << "," << actorPos.pos[2] << ") distance="
+                                        << centerDistance << " boundsSize=(" << boundsSize.x() << ","
+                                        << boundsSize.y() << "," << boundsSize.z() << ") boundsDiagonal="
+                                        << boundsDiagonal << " maxCenterDiagonals=" << maxCenterDiagonals
+                                        << " absoluteMax=" << maxCenterDistance << " allowed="
+                                        << allowedCenterDistance;
+                    return false;
+                };
+                if (useRenderBounds && proofActor.getRefData().getBaseNode() != nullptr)
+                {
+                    osg::ComputeBoundsVisitor boundsVisitor;
+                    boundsVisitor.setTraversalMask(~(MWRender::Mask_ParticleSystem | MWRender::Mask_Effect));
+                    proofActor.getRefData().getBaseNode()->accept(boundsVisitor);
+                    const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
+                    if (bounds.valid() && isProofBoundsNearActor(bounds, "render"))
+                    {
+                        const float focusPercent = readProofFloat(
+                            "OPENMW_PROOF_ACTOR_VIEW_BOUNDS_FOCUS", fullBodyView ? 0.5f : 0.72f);
+                        const double focusZ = bounds.zMin() + (bounds.zMax() - bounds.zMin()) * focusPercent;
+                        actorAim = osg::Vec3d(bounds.center().x(), bounds.center().y(), focusZ);
+                        cameraZ = focusZ + (offsetZ - targetZ);
+                        actorViewBoundsAccepted = true;
+                        actorViewRenderBounds = bounds;
+                        const float refScale = proofActor.getCellRef().getScale();
+                        osg::Vec3f expectedRenderRootScale(refScale, refScale, refScale);
+                        proofActor.getClass().adjustScale(proofActor, expectedRenderRootScale, true);
+                        const osg::Vec3f renderRootScale
+                            = proofActor.getRefData().getBaseNode()->getScale();
+                        const float scaleTolerance
+                            = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_SCALE_TOLERANCE", 0.001f);
+                        actorViewScaleAccepted
+                            = std::abs(renderRootScale.x() - expectedRenderRootScale.x()) <= scaleTolerance
+                            && std::abs(renderRootScale.y() - expectedRenderRootScale.y()) <= scaleTolerance
+                            && std::abs(renderRootScale.z() - expectedRenderRootScale.z()) <= scaleTolerance;
+                        Log(Debug::Info) << "FNV/ESM4 proof: actor render bounds target=\"" << proofSayActor
+                                         << "\" min=(" << bounds.xMin() << "," << bounds.yMin() << ","
+                                         << bounds.zMin() << ") max=(" << bounds.xMax() << "," << bounds.yMax()
+                                         << "," << bounds.zMax() << ") focus=(" << actorAim.x() << ","
+                                         << actorAim.y() << "," << actorAim.z() << ") size=("
+                                         << bounds.xMax() - bounds.xMin() << "," << bounds.yMax() - bounds.yMin()
+                                         << "," << bounds.zMax() - bounds.zMin() << ") cameraZ=" << cameraZ;
+                        Log(actorViewScaleAccepted ? Debug::Info : Debug::Error)
+                            << "FNV/ESM4 proof: actor assembled scale gate target=\"" << proofSayActor
+                            << "\" refScale=" << refScale << " expectedRenderRootScale=("
+                            << expectedRenderRootScale.x() << "," << expectedRenderRootScale.y() << ","
+                            << expectedRenderRootScale.z() << ") renderRootScale=(" << renderRootScale.x() << ","
+                            << renderRootScale.y() << "," << renderRootScale.z() << ") tolerance=" << scaleTolerance
+                            << " accepted=" << actorViewScaleAccepted;
+                    }
+                    else
+                        Log(Debug::Warning) << "FNV/ESM4 proof: actor render bounds invalid target=\""
+                                            << proofSayActor << "\"";
+                }
+                if (useFaceBounds && proofActor.getRefData().getBaseNode() != nullptr)
+                {
+                    const osg::Vec3d renderBoundsAim = actorAim;
+                    const double renderBoundsCameraZ = cameraZ;
+                    const bool renderBoundsAccepted = actorViewBoundsAccepted;
+                    FalloutProofFaceBoundsVisitor faceBoundsVisitor;
+                    proofActor.getRefData().getBaseNode()->accept(faceBoundsVisitor);
+                    const osg::BoundingBox bounds = faceBoundsVisitor.getBounds();
+                    if (bounds.valid() && isProofBoundsNearActor(bounds, "face"))
+                    {
+                        actorAim = osg::Vec3d(bounds.center().x(), bounds.center().y(), bounds.center().z());
+                        actorViewBoundsAccepted = true;
+                        const osg::Vec3d headCenter = faceBoundsVisitor.getHeadCenter();
+                        const osg::Vec3d featureCenter = faceBoundsVisitor.getFeatureCenter();
+                        const osg::Vec3d faceVector = featureCenter - headCenter;
+                        const osg::Vec3d headForward = faceBoundsVisitor.getHeadForward();
+                        if (faceBoundsVisitor.getHeadBoneMatched() > 0)
+                        {
+                            const float forwardFocus
+                                = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_HEAD_FORWARD_FOCUS", 4.f);
+                            actorAim = headCenter + headForward * forwardFocus;
+                        }
+                        else if (faceBoundsVisitor.getHeadMatched() > 0
+                            && faceBoundsVisitor.getFeatureMatched() > 0)
+                        {
+                            const float featureFocus
+                                = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FEATURE_FOCUS", 0.3f);
+                            actorAim = headCenter + faceVector * featureFocus;
+                        }
+                        else if (faceBoundsVisitor.getFeatureMatched() > 0)
+                            actorAim = featureCenter;
+                        else if (faceBoundsVisitor.getHeadMatched() > 0)
+                            actorAim = headCenter;
+                        cameraZ = actorAim.z() + (offsetZ - targetZ);
+                        const double faceVectorPlanar
+                            = std::sqrt(faceVector.x() * faceVector.x() + faceVector.y() * faceVector.y());
+                        const double headForwardPlanar
+                            = std::sqrt(headForward.x() * headForward.x() + headForward.y() * headForward.y());
+                        if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_FACE_AXIS") != nullptr
+                            && faceBoundsVisitor.getHeadBoneMatched() > 0 && headForwardPlanar > 1e-3)
+                        {
+                            faceAxis.set(static_cast<float>(headForward.x() / headForwardPlanar),
+                                static_cast<float>(headForward.y() / headForwardPlanar));
+                            useFaceAxisCamera = true;
+                        }
+                        else if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_FACE_AXIS") != nullptr
+                            && faceBoundsVisitor.getHeadMatched() > 0 && faceBoundsVisitor.getFeatureMatched() > 0
+                            && faceVectorPlanar > 1e-3)
+                        {
+                            faceAxis.set(static_cast<float>(faceVector.x() / faceVectorPlanar),
+                                static_cast<float>(faceVector.y() / faceVectorPlanar));
+                            useFaceAxisCamera = true;
+                        }
+                        Log(Debug::Info) << "FNV/ESM4 proof: actor face bounds target=\"" << proofSayActor
+                                         << "\" matched=" << faceBoundsVisitor.getMatched() << " min=("
+                                         << bounds.xMin() << "," << bounds.yMin() << "," << bounds.zMin()
+                                         << ") max=(" << bounds.xMax() << "," << bounds.yMax() << ","
+                                         << bounds.zMax() << ") focus=(" << actorAim.x() << "," << actorAim.y()
+                                         << "," << actorAim.z() << ") cameraZ=" << cameraZ
+                                         << " headMatched=" << faceBoundsVisitor.getHeadMatched()
+                                         << " headBoneMatched=" << faceBoundsVisitor.getHeadBoneMatched()
+                                         << " featureMatched=" << faceBoundsVisitor.getFeatureMatched()
+                                         << " headCenter=(" << headCenter.x() << "," << headCenter.y() << ","
+                                         << headCenter.z() << ") featureCenter=(" << featureCenter.x() << ","
+                                         << featureCenter.y() << "," << featureCenter.z() << ") headForward=("
+                                         << headForward.x() << "," << headForward.y() << "," << headForward.z()
+                                         << ") faceAxis=("
+                                         << faceAxis.x() << "," << faceAxis.y()
+                                         << ") useFaceAxisCamera=" << useFaceAxisCamera;
+                        if (fullBodyView && renderBoundsAccepted)
+                        {
+                            actorAim = renderBoundsAim;
+                            cameraZ = renderBoundsCameraZ;
+                            actorViewBoundsAccepted = true;
+                        }
+                    }
+                    else
+                        Log(Debug::Warning) << "FNV/ESM4 proof: actor face bounds invalid target=\""
+                                            << proofSayActor << "\" matched="
+                                            << faceBoundsVisitor.getMatched();
+                }
+                if (!useFaceAxisCamera
+                    && proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_USE_HEAD_POSE_AXIS"))
+                {
+                    osg::Vec3d headCenter;
+                    osg::Vec3d headForward;
+                    if (resolveFalloutProofHeadPose(proofActor, headCenter, headForward))
+                    {
+                        const double headForwardPlanar
+                            = std::sqrt(headForward.x() * headForward.x() + headForward.y() * headForward.y());
+                        bool credibleHeadPose = true;
+                        // A humanoid head must sit in the upper half of the assembled
+                        // bounds.  Creature rigs are not required to follow that
+                        // convention: robots commonly expose a useful authored view
+                        // axis on a screen/wheel anchor below the visual midpoint.
+                        // Rejecting that anchor made the camera fall back to actor yaw
+                        // and photographed the back of otherwise valid creature rigs.
+                        if (fullBodyView && actorViewRenderBounds.valid()
+                            && proofActor.getType() == ESM4::Npc::sRecordId)
+                        {
+                            const double boundsHeight
+                                = actorViewRenderBounds.zMax() - actorViewRenderBounds.zMin();
+                            const double minimumHeadFraction = readProofFloat(
+                                "OPENMW_PROOF_ACTOR_VIEW_MIN_HEAD_HEIGHT_FRACTION", 0.5f);
+                            const double minimumHeadZ
+                                = actorViewRenderBounds.zMin() + boundsHeight * minimumHeadFraction;
+                            credibleHeadPose = headCenter.z() >= minimumHeadZ;
+                            if (!credibleHeadPose)
+                            {
+                                Log(Debug::Warning) << "FNV/ESM4 proof: rejected implausible head-pose camera axis target=\""
+                                                    << proofSayActor << "\" headZ=" << headCenter.z()
+                                                    << " minimumHeadZ=" << minimumHeadZ
+                                                    << " boundsZ=(" << actorViewRenderBounds.zMin() << ","
+                                                    << actorViewRenderBounds.zMax() << ")";
+                            }
+                        }
+                        if (credibleHeadPose && headForwardPlanar > 1e-3)
+                        {
+                            const float forwardFocus
+                                = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_HEAD_FORWARD_FOCUS", 4.f);
+                            if (!fullBodyView || !actorViewBoundsAccepted)
+                            {
+                                actorAim = headCenter + headForward * forwardFocus;
+                                cameraZ = actorAim.z() + (offsetZ - targetZ);
+                            }
+                            faceAxis.set(static_cast<float>(headForward.x() / headForwardPlanar),
+                                static_cast<float>(headForward.y() / headForwardPlanar));
+                            useFaceAxisCamera = true;
+                            if (!fullBodyView || actorViewRenderBounds.valid())
+                                actorViewBoundsAccepted = true;
+                            Log(Debug::Info) << "FNV/ESM4 proof: actor head-pose camera axis target=\""
+                                             << proofSayActor << "\" headCenter=(" << headCenter.x() << ","
+                                             << headCenter.y() << "," << headCenter.z() << ") headForward=("
+                                             << headForward.x() << "," << headForward.y() << ","
+                                             << headForward.z() << ") faceAxis=(" << faceAxis.x() << ","
+                                             << faceAxis.y() << ")";
+                        }
+                    }
+                }
+                if (fullBodyView && actorViewRenderBounds.valid())
+                {
+                    // Retail does not put the eye on the visual centerline of a low creature.  Keep the aim
+                    // tied to the assembled box, but give the camera a small ground-relative elevation so the
+                    // road/terrain cannot erase the lower half of the actor.  Tall NPCs and robots naturally
+                    // retain their bounds-center eye because their center already exceeds this floor.
+                    const double groundZ = actorPos.pos[2];
+                    const double minimumAimZ = groundZ
+                        + readProofFloat("OPENMW_PROOF_ACTOR_VIEW_LOW_RIG_AIM_ABOVE_GROUND", 16.f);
+                    const double minimumCameraZ = groundZ
+                        + readProofFloat("OPENMW_PROOF_ACTOR_VIEW_LOW_RIG_CAMERA_ABOVE_GROUND", 48.f);
+                    actorAim.z() = std::max<double>(actorViewRenderBounds.center().z(), minimumAimZ);
+                    cameraZ = std::max(actorAim.z(), minimumCameraZ);
+                    Log(Debug::Info) << "FNV/ESM4 proof: actor full-body ground-relative vertical fit target=\""
+                                     << proofSayActor << "\" groundZ=" << groundZ
+                                     << " boundsCenterZ=" << actorViewRenderBounds.center().z()
+                                     << " minimumAimZ=" << minimumAimZ << " minimumCameraZ=" << minimumCameraZ
+                                     << " actorAimZ=" << actorAim.z() << " cameraZ=" << cameraZ;
+                }
+                if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_ACTOR_FACING") != nullptr)
+                {
+                    float frontDistance = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FRONT_DISTANCE", 0.f);
+                    if (!proofActorViewFrontDistances.empty())
+                    {
+                        const std::size_t distanceIndex = std::min(
+                            proofScreenshotFrameIndex, proofActorViewFrontDistances.size() - 1);
+                        frontDistance = proofActorViewFrontDistances[distanceIndex];
+                    }
+                    if (fullBodyView && actorViewRenderBounds.valid())
+                    {
+                        const float boundsHeight = actorViewRenderBounds.zMax() - actorViewRenderBounds.zMin();
+                        const float boundsDistanceScale
+                            = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FULL_BODY_DISTANCE_SCALE", 1.35f);
+                        frontDistance = std::max(frontDistance, boundsHeight * boundsDistanceScale);
+
+                        // Height alone cannot fit broad or long creatures.  A bark scorpion is only about
+                        // 156 units tall but its animated box is roughly 376x353, so the old 220-unit camera
+                        // landed inside that box.  Fit the sphere enclosing every bounds corner against the
+                        // active projection's tighter FOV (including the requested screen margin).  This is
+                        // orientation independent and therefore remains safe while the semantic front axis is
+                        // changing from one creature skeleton convention to another.
+                        const double radiusX = std::max(
+                            std::abs(actorViewRenderBounds.xMin() - actorAim.x()),
+                            std::abs(actorViewRenderBounds.xMax() - actorAim.x()));
+                        const double radiusY = std::max(
+                            std::abs(actorViewRenderBounds.yMin() - actorAim.y()),
+                            std::abs(actorViewRenderBounds.yMax() - actorAim.y()));
+                        const double radiusZ = std::max(
+                            std::abs(actorViewRenderBounds.zMin() - actorAim.z()),
+                            std::abs(actorViewRenderBounds.zMax() - actorAim.z()));
+                        const double boundsRadius
+                            = std::sqrt(radiusX * radiusX + radiusY * radiusY + radiusZ * radiusZ);
+                        const float fullBodyMargin
+                            = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FULL_BODY_MARGIN", 0.03f);
+                        const double ndcLimit = std::clamp(1.0 - 2.0 * static_cast<double>(fullBodyMargin), 0.1, 1.0);
+                        double effectiveTangent = 0.0;
+                        if (mViewer != nullptr && mViewer->getCamera() != nullptr)
+                        {
+                            const osg::Matrixd projection = mViewer->getCamera()->getProjectionMatrix();
+                            const double projectionX = std::abs(projection(0, 0));
+                            const double projectionY = std::abs(projection(1, 1));
+                            if (projectionX > 1e-6 && projectionY > 1e-6)
+                                effectiveTangent = std::min(1.0 / projectionX, 1.0 / projectionY) * ndcLimit;
+                        }
+                        const double fitFactor = effectiveTangent > 1e-6
+                            ? std::sqrt(1.0 + 1.0 / (effectiveTangent * effectiveTangent))
+                            : 2.2;
+                        const double fitPadding
+                            = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FULL_BODY_FIT_PADDING", 1.02f);
+                        const float fittedDistance
+                            = static_cast<float>(boundsRadius * fitFactor * fitPadding);
+                        const float requestedDistance = frontDistance;
+                        const bool creatureAutoFit
+                            = proofActor.getType() == ESM::REC_CREA4
+                            && proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_CREATURE_AUTO_FIT");
+                        frontDistance = creatureAutoFit
+                            ? fittedDistance
+                            : std::max(frontDistance, fittedDistance);
+                        Log(Debug::Info) << "FNV/ESM4 proof: actor full-body distance fit target=\""
+                                         << proofSayActor << "\" boundsRadius=" << boundsRadius
+                                         << " effectiveTangent=" << effectiveTangent
+                                         << " fitFactor=" << fitFactor << " fittedDistance=" << fittedDistance
+                                         << " requestedDistance=" << requestedDistance
+                                         << " creatureAutoFit=" << creatureAutoFit
+                                         << " selectedDistance=" << frontDistance;
+                    }
+                    if (frontDistance <= 0.f)
+                    {
+                        frontDistance = std::sqrt(offsetX * offsetX + offsetY * offsetY);
+                        if (frontDistance <= 0.f)
+                            frontDistance = 220.f;
+                    }
+                    const float actorYaw = actorPos.rot[2];
+                    // Fallout creature skeletons that do not expose a usable
+                    // face/head axis are authored facing the opposite planar
+                    // direction from the humanoid actor convention.  Prefer
+                    // geometry-derived face axes; only invert the fallback.
+                    const bool falloutCreatureFacingFallback
+                        = !useFaceAxisCamera && proofActor.getType() == ESM::REC_CREA4;
+                    const float frontSign
+                        = (std::getenv("OPENMW_PROOF_ACTOR_VIEW_FALLOUT_FRONT") != nullptr
+                              || falloutCreatureFacingFallback)
+                        ? -1.f
+                        : 1.f;
+                    if (useFaceAxisCamera)
+                    {
+                        offsetX = faceAxis.x() * frontDistance;
+                        offsetY = faceAxis.y() * frontDistance;
+                    }
+                    else
+                    {
+                        offsetX = std::sin(actorYaw) * frontDistance * frontSign;
+                        offsetY = std::cos(actorYaw) * frontDistance * frontSign;
+                    }
+                    float orbitDegrees = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_ORBIT_DEGREES", 0.f);
+                    if (!proofActorViewOrbitDegrees.empty())
+                    {
+                        const std::size_t orbitIndex = std::min(
+                            proofScreenshotFrameIndex, proofActorViewOrbitDegrees.size() - 1);
+                        orbitDegrees = proofActorViewOrbitDegrees[orbitIndex];
+                    }
+                    if (std::abs(orbitDegrees) > 1e-3f)
+                    {
+                        const float orbitRadians = orbitDegrees * static_cast<float>(osg::PI) / 180.f;
+                        const float cosOrbit = std::cos(orbitRadians);
+                        const float sinOrbit = std::sin(orbitRadians);
+                        const float rotatedX = offsetX * cosOrbit - offsetY * sinOrbit;
+                        const float rotatedY = offsetX * sinOrbit + offsetY * cosOrbit;
+                        offsetX = rotatedX;
+                        offsetY = rotatedY;
+                    }
+                    const float openMwForwardX = std::sin(actorYaw);
+                    const float openMwForwardY = std::cos(actorYaw);
+                    const float falloutForwardX = -openMwForwardX;
+                    const float falloutForwardY = -openMwForwardY;
+                    const float offsetLength = std::sqrt(offsetX * offsetX + offsetY * offsetY);
+                    const float cameraDirX = offsetLength > 0.f ? offsetX / offsetLength : 0.f;
+                    const float cameraDirY = offsetLength > 0.f ? offsetY / offsetLength : 0.f;
+                    const float openMwFrontDot = cameraDirX * openMwForwardX + cameraDirY * openMwForwardY;
+                    const float falloutFrontDot = cameraDirX * falloutForwardX + cameraDirY * falloutForwardY;
+                    Log(Debug::Info) << "FNV/ESM4 proof: actor-facing camera offset target=\"" << proofSayActor
+                                     << "\" actorYaw=" << actorYaw << " frontDistance=" << frontDistance
+                                     << " frontSign=" << frontSign
+                                     << " useFaceAxisCamera=" << useFaceAxisCamera
+                                     << " orbitDegrees=" << orbitDegrees
+                                     << " offset=(" << offsetX << "," << offsetY << "," << offsetZ
+                                     << ") cameraDir=(" << cameraDirX << "," << cameraDirY
+                                     << ") openMwFrontDot=" << openMwFrontDot
+                                     << " falloutFrontDot=" << falloutFrontDot;
+                }
+                MWWorld::Ptr player = mWorld->getPlayerPtr();
+                osg::Vec3f targetPos(
+                    static_cast<float>(actorAim.x() + offsetX), static_cast<float>(actorAim.y() + offsetY),
+                    static_cast<float>(cameraZ));
+                if (replayRetailAbsoluteCamera)
+                {
+                    targetPos.set(readProofFloat("OPENMW_PROOF_ACTOR_VIEW_RETAIL_CAMERA_X", targetPos.x()),
+                        readProofFloat("OPENMW_PROOF_ACTOR_VIEW_RETAIL_CAMERA_Y", targetPos.y()),
+                        readProofFloat("OPENMW_PROOF_ACTOR_VIEW_RETAIL_CAMERA_Z", targetPos.z()));
+                    cameraZ = targetPos.z();
+                    Log(Debug::Info) << "FNV/ESM4 proof: replaying retail absolute actor camera target=\""
+                                     << proofSayActor << "\" pos=(" << targetPos.x() << "," << targetPos.y()
+                                     << "," << targetPos.z() << ") aim=(" << actorAim.x() << "," << actorAim.y()
+                                     << "," << actorAim.z() << ")";
+                }
+                if (!replayRetailAbsoluteCamera
+                    && std::getenv("OPENMW_PROOF_ACTOR_VIEW_RAYCAST_BACKOFF") != nullptr)
+                {
+                    const MWPhysics::RayCastingInterface* rayCasting = mWorld->getRayCasting();
+                    if (rayCasting != nullptr)
+                    {
+                        const osg::Vec3f focus(
+                            static_cast<float>(actorAim.x()), static_cast<float>(actorAim.y()),
+                            static_cast<float>(actorAim.z()));
+                        const osg::Vec3f ray = targetPos - focus;
+                        const float rayLength = ray.length();
+                        if (rayLength > 1e-3f)
+                        {
+                            const osg::Vec3f rayDirection = ray / rayLength;
+                            const int mask = MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap
+                                | MWPhysics::CollisionType_Door;
+                            const MWPhysics::RayCastingResult rayResult
+                                = rayCasting->castRay(focus, targetPos, { proofActor }, {}, mask);
+                            if (rayResult.mHit)
+                            {
+                                const float clearance = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_RAYCAST_CLEARANCE", 24.f);
+                                const osg::Vec3f adjusted = rayResult.mHitPos - rayDirection * clearance;
+                                const float adjustedDistance = (adjusted - focus).length();
+                                if (adjustedDistance > 32.f)
+                                {
+                                    Log(Debug::Info)
+                                        << "FNV/ESM4 proof: actor orbit camera raycast adjusted target=\""
+                                        << proofSayActor << "\" hit=(" << rayResult.mHitPos.x() << ","
+                                        << rayResult.mHitPos.y() << "," << rayResult.mHitPos.z() << ") from=("
+                                        << targetPos.x() << "," << targetPos.y() << "," << targetPos.z()
+                                        << ") to=(" << adjusted.x() << "," << adjusted.y() << ","
+                                        << adjusted.z() << ")";
+                                    targetPos = adjusted;
+                                    cameraZ = targetPos.z();
+                                }
+                                else
+                                {
+                                    Log(Debug::Warning)
+                                        << "FNV/ESM4 proof: actor orbit camera raycast hit too close target=\""
+                                        << proofSayActor << "\" hit=(" << rayResult.mHitPos.x() << ","
+                                        << rayResult.mHitPos.y() << "," << rayResult.mHitPos.z() << ")";
+                                }
+                            }
+                            else
+                            {
+                                Log(Debug::Info) << "FNV/ESM4 proof: actor orbit camera raycast clear target=\""
+                                                 << proofSayActor << "\"";
+                            }
+                        }
+                    }
+                }
+                if (!replayRetailAbsoluteCamera)
+                {
+                    if (selectProofActorCameraByOrbitRays(*mWorld, proofActor, proofSayActor, actorAim, targetPos))
+                        cameraZ = targetPos.z();
+                    if (adjustProofActorCameraByRenderRay(*mWorld, proofActor, proofSayActor, actorAim, targetPos))
+                        cameraZ = targetPos.z();
+                }
+                if (fullBodyView && actorViewRenderBounds.valid())
+                {
+                    actorViewVisibilityBlockers = raiseProofActorCameraForClearVisibility(
+                        *mWorld, proofActor, proofSayActor, actorViewRenderBounds, targetPos);
+                    cameraZ = targetPos.z();
+                }
+                osg::Vec3f playerTargetPos(targetPos);
+                const bool pinPlayerToActorView = std::getenv("OPENMW_PROOF_PIN_PLAYER_TO_ACTOR_VIEW") != nullptr;
+                if (!staticDialogueCamera || pinPlayerToActorView)
+                {
+                    if (!staticDialogueCamera)
+                    {
+                        const float playerEyeZ = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_PLAYER_EYE_Z", 124.f);
+                        playerTargetPos.z() -= playerEyeZ;
+                    }
+                    player = mWorld->moveObject(player, playerTargetPos, true, true);
+                }
+                const ESM::Position& playerPos = player.getRefData().getPosition();
+                const float yawToActor = static_cast<float>(
+                    std::atan2(actorAim.x() - targetPos.x(), actorAim.y() - targetPos.y()));
+                const float cameraYawToActor = -yawToActor;
+                const osg::Vec3f playerTargetRotation(0.f, 0.f, -yawToActor);
+                if (!staticDialogueCamera || pinPlayerToActorView)
+                    mWorld->rotateObject(player, playerTargetRotation);
+                if (MWRender::Camera* camera = mWorld->getCamera())
+                {
+                    osg::Vec3d proofCameraPos;
+                    if (staticDialogueCamera)
+                    {
+                        const osg::Vec3d cameraTarget(actorAim);
+                        const osg::Vec3d cameraPos(targetPos.x(), targetPos.y(), targetPos.z());
+                        proofCameraPos = cameraPos;
+                        const float dx = static_cast<float>(cameraTarget.x() - cameraPos.x());
+                        const float dy = static_cast<float>(cameraTarget.y() - cameraPos.y());
+                        const float dz = static_cast<float>(cameraTarget.z() - cameraPos.z());
+                        const float horizontal = std::sqrt(dx * dx + dy * dy);
+                        camera->setMode(MWRender::Camera::Mode::Static, true);
+                        camera->setStaticPosition(cameraPos);
+                        camera->setPitch(static_cast<float>(std::atan2(dz, horizontal)), true);
+                        camera->setYaw(-static_cast<float>(std::atan2(dx, dy)), true);
+                        camera->setRoll(0.f);
+                        camera->updateCamera();
+                    }
+                    else
+                    {
+                        camera->attachTo(player);
+                        camera->setMode(MWRender::Camera::Mode::ThirdPerson, true);
+                        camera->setPreferredCameraDistance(cameraDistance);
+                        camera->update(0.f, false);
+                        const osg::Vec3d initialCameraPos = camera->getPosition();
+                        const float dx = static_cast<float>(actorAim.x() - initialCameraPos.x());
+                        const float dy = static_cast<float>(actorAim.y() - initialCameraPos.y());
+                        const float dz = static_cast<float>(actorAim.z() - initialCameraPos.z());
+                        const float horizontal = std::sqrt(dx * dx + dy * dy);
+                        camera->setPitch(static_cast<float>(std::atan2(dz, horizontal)) + cameraPitch, true);
+                        camera->setYaw(cameraYawToActor, true);
+                        camera->setRoll(0.f);
+                        camera->updateCamera();
+                        proofCameraPos = camera->getPosition();
+                    }
+                    const osg::Vec3d cameraPos = camera->getPosition();
+                    const osg::Vec3d cameraToAim = actorAim - cameraPos;
+                    const double cameraToAimDistance = cameraToAim.length();
+                    const double cameraPlanarDistance = std::sqrt(
+                        cameraToAim.x() * cameraToAim.x() + cameraToAim.y() * cameraToAim.y());
+                    const osg::Vec3d requestedDelta(
+                        cameraPos.x() - targetPos.x(), cameraPos.y() - targetPos.y(), cameraPos.z() - targetPos.z());
+                    const double requestedDeltaDistance = requestedDelta.length();
+                    Log(Debug::Info) << "FNV/ESM4 proof: aligned player camera to actor target=\""
+                                     << proofSayActor << "\" playerPos=(" << playerPos.pos[0] << ","
+                                     << playerPos.pos[1] << "," << playerPos.pos[2] << ") actorPos=("
+                                     << actorPos.pos[0] << "," << actorPos.pos[1] << "," << actorPos.pos[2]
+                                     << ") actorRot=(" << actorPos.rot[0] << "," << actorPos.rot[1] << ","
+                                     << actorPos.rot[2] << ") actorAim=(" << actorAim.x() << "," << actorAim.y()
+                                     << "," << actorAim.z() << ") yawToActor=" << yawToActor
+                                     << " cameraYawToActor=" << cameraYawToActor << " requestedCameraPos=("
+                                     << targetPos.x() << "," << targetPos.y() << "," << targetPos.z()
+                                     << ") cameraPos=(" << cameraPos.x() << ","
+                                     << cameraPos.y() << "," << cameraPos.z() << ") cameraDelta=("
+                                     << requestedDelta.x() << "," << requestedDelta.y() << ","
+                                     << requestedDelta.z() << ") cameraDeltaDistance=" << requestedDeltaDistance
+                                     << " aimDelta=(" << cameraToAim.x() << ","
+                                     << cameraToAim.y() << "," << cameraToAim.z() << ") aimDistance="
+                                     << cameraToAimDistance << " aimPlanarDistance=" << cameraPlanarDistance
+                                     << " cameraDistance="
+                                     << cameraDistance << " cameraPitch=" << camera->getPitch()
+                                     << " cameraYaw=" << camera->getYaw() << " staticDialogueCamera="
+                                     << staticDialogueCamera;
+                    bool actorFocusInFrame = true;
+                    if (requireActorForScreenshot)
+                    {
+                        actorFocusInFrame = false;
+                        const osg::Matrix viewProj = camera->getViewMatrix() * camera->getProjectionMatrix();
+                        const osg::Vec4d clipPoint = osg::Vec4d(actorAim, 1.0) * viewProj;
+                        if (clipPoint.w() > 0.0)
+                        {
+                            const double screenPointX = (clipPoint.x() / clipPoint.w() + 1.0) * 0.5;
+                            const double screenPointY = (clipPoint.y() / clipPoint.w() - 1.0) * -0.5;
+                            actorFocusInFrame = screenPointX >= 0.02 && screenPointX <= 0.98 && screenPointY >= 0.02
+                                && screenPointY <= 0.98;
+                            if ((useRenderBounds || useFaceBounds) && !actorViewBoundsAccepted)
+                                actorFocusInFrame = false;
+                            if (!actorViewScaleAccepted)
+                                actorFocusInFrame = false;
+                            if (fullBodyView && !actorViewRenderBounds.valid())
+                            {
+                                actorFocusInFrame = false;
+                                Log(Debug::Warning)
+                                    << "FNV/ESM4 proof: actor full-body screen gate rejected missing current render bounds target=\""
+                                    << proofSayActor << "\"";
+                            }
+                            if (fullBodyView
+                                && proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_VISIBILITY_RAYCAST")
+                                && actorViewVisibilityBlockers != 0)
+                            {
+                                actorFocusInFrame = false;
+                                Log(Debug::Warning)
+                                    << "FNV/ESM4 proof: actor full-body visibility gate rejected blocked camera target=\""
+                                    << proofSayActor << "\" blockers=" << actorViewVisibilityBlockers;
+                            }
+                            if (fullBodyView && actorViewRenderBounds.valid())
+                            {
+                                double minScreenX = 1.0;
+                                double maxScreenX = 0.0;
+                                double minScreenY = 1.0;
+                                double maxScreenY = 0.0;
+                                bool allBoundsCornersInFront = true;
+                                for (int corner = 0; corner < 8; ++corner)
+                                {
+                                    const osg::Vec3d point(
+                                        (corner & 1) != 0 ? actorViewRenderBounds.xMax() : actorViewRenderBounds.xMin(),
+                                        (corner & 2) != 0 ? actorViewRenderBounds.yMax() : actorViewRenderBounds.yMin(),
+                                        (corner & 4) != 0 ? actorViewRenderBounds.zMax() : actorViewRenderBounds.zMin());
+                                    const osg::Vec4d clip = osg::Vec4d(point, 1.0) * viewProj;
+                                    if (clip.w() <= 0.0)
+                                    {
+                                        allBoundsCornersInFront = false;
+                                        break;
+                                    }
+                                    const double x = (clip.x() / clip.w() + 1.0) * 0.5;
+                                    const double y = (clip.y() / clip.w() - 1.0) * -0.5;
+                                    minScreenX = std::min(minScreenX, x);
+                                    maxScreenX = std::max(maxScreenX, x);
+                                    minScreenY = std::min(minScreenY, y);
+                                    maxScreenY = std::max(maxScreenY, y);
+                                }
+                                const float fullBodyMargin
+                                    = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FULL_BODY_MARGIN", 0.03f);
+                                const double projectedWidth = maxScreenX - minScreenX;
+                                const double projectedHeight = maxScreenY - minScreenY;
+                                const double projectedArea = projectedWidth * projectedHeight;
+                                const double visibleWidth
+                                    = std::max(0.0, std::min(maxScreenX, 1.0) - std::max(minScreenX, 0.0));
+                                const double visibleHeight
+                                    = std::max(0.0, std::min(maxScreenY, 1.0) - std::max(minScreenY, 0.0));
+                                const double visibleArea = visibleWidth * visibleHeight;
+                                const float minimumProjectedWidth = readProofFloat(
+                                    "OPENMW_PROOF_ACTOR_VIEW_MIN_FULL_BODY_SCREEN_WIDTH", 0.f);
+                                const float minimumProjectedHeight = readProofFloat(
+                                    "OPENMW_PROOF_ACTOR_VIEW_MIN_FULL_BODY_SCREEN_HEIGHT", 0.f);
+                                const float minimumProjectedArea = readProofFloat(
+                                    "OPENMW_PROOF_ACTOR_VIEW_MIN_FULL_BODY_SCREEN_AREA", 0.f);
+                                const bool diagnosticFullBodyInFrame = allBoundsCornersInFront
+                                    && minScreenX >= fullBodyMargin && maxScreenX <= 1.0 - fullBodyMargin
+                                    && minScreenY >= fullBodyMargin && maxScreenY <= 1.0 - fullBodyMargin
+                                    && projectedWidth >= minimumProjectedWidth
+                                    && projectedHeight >= minimumProjectedHeight
+                                    && projectedArea >= minimumProjectedArea;
+                                // The canonical parity camera is an oracle transform, not a framing suggestion.
+                                // Retail intentionally crops some scaled creature boxes (notably the 2.5x raven),
+                                // so moving that camera to satisfy diagnostic containment destroys 1:1 pairing.
+                                // In replay mode retain the hard current-bounds/scale/visibility gates and require
+                                // a meaningful viewport intersection; dynamic proof cameras still require every
+                                // bounds corner inside the requested margin.
+                                const bool retailReplayBoundsVisible = allBoundsCornersInFront
+                                    && visibleWidth >= minimumProjectedWidth
+                                    && visibleHeight >= minimumProjectedHeight
+                                    && visibleArea >= minimumProjectedArea;
+                                const bool fullBodyInFrame = replayRetailAbsoluteCamera
+                                    ? retailReplayBoundsVisible
+                                    : diagnosticFullBodyInFrame;
+                                actorFocusInFrame = actorFocusInFrame && fullBodyInFrame;
+                                Log(Debug::Info) << "FNV/ESM4 proof: actor full-body screen gate target=\""
+                                                 << proofSayActor << "\" screenMin=(" << minScreenX << ","
+                                                 << minScreenY << ") screenMax=(" << maxScreenX << ","
+                                                 << maxScreenY << ") margin=" << fullBodyMargin
+                                                 << " projectedSize=(" << projectedWidth << ","
+                                                 << projectedHeight << ") projectedArea=" << projectedArea
+                                                 << " visibleSize=(" << visibleWidth << "," << visibleHeight
+                                                 << ") visibleArea=" << visibleArea
+                                                 << " minimumProjectedSize=(" << minimumProjectedWidth << ","
+                                                 << minimumProjectedHeight << ") minimumProjectedArea="
+                                                 << minimumProjectedArea
+                                                 << " policy="
+                                                 << (replayRetailAbsoluteCamera ? "retail-viewport-intersection"
+                                                                               : "diagnostic-full-containment")
+                                                 << " allCornersInFront=" << allBoundsCornersInFront
+                                                 << " inFrame=" << fullBodyInFrame;
+                            }
+                            if (proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_REQUIRE_HUMAN_POSE"))
+                            {
+                                std::string actorModel;
+                                try
+                                {
+                                    actorModel = Misc::StringUtils::lowerCase(
+                                        std::string(proofActor.getClass().getModel(proofActor)));
+                                }
+                                catch (const std::exception&)
+                                {
+                                }
+                                std::replace(actorModel.begin(), actorModel.end(), '\\', '/');
+                                const bool humanSkeleton
+                                    = actorModel.find("characters/_male/skeleton.nif") != std::string::npos;
+                                if (humanSkeleton)
+                                {
+                                    const FalloutProofPortraitPose pose
+                                        = resolveFalloutProofPortraitPose(proofActor);
+                                    const bool allBonesResolved = pose.mHeadResolved && pose.mPelvisResolved
+                                        && pose.mLeftHandResolved && pose.mRightHandResolved
+                                        && pose.mLeftFootResolved && pose.mRightFootResolved;
+                                    const double footZ = allBonesResolved
+                                        ? (pose.mLeftFootCenter.z() + pose.mRightFootCenter.z()) * 0.5
+                                        : 0.0;
+                                    const float minHeadAbovePelvis = readProofFloat(
+                                        "OPENMW_PROOF_ACTOR_VIEW_MIN_HEAD_ABOVE_PELVIS", 20.f);
+                                    const float minPelvisAboveFeet = readProofFloat(
+                                        "OPENMW_PROOF_ACTOR_VIEW_MIN_PELVIS_ABOVE_FEET", 20.f);
+                                    const float maxFootDeltaZ = readProofFloat(
+                                        "OPENMW_PROOF_ACTOR_VIEW_MAX_FOOT_DELTA_Z", 30.f);
+                                    const bool upright = allBonesResolved
+                                        && pose.mHeadCenter.z() - pose.mPelvisCenter.z() >= minHeadAbovePelvis
+                                        && pose.mPelvisCenter.z() - footZ >= minPelvisAboveFeet
+                                        && std::abs(pose.mLeftFootCenter.z() - pose.mRightFootCenter.z())
+                                            <= maxFootDeltaZ;
+                                    const float poseMargin = readProofFloat(
+                                        "OPENMW_PROOF_ACTOR_VIEW_POSE_MARGIN", 0.02f);
+                                    bool poseInFrame = allBonesResolved;
+                                    const auto projectPosePoint = [&](const osg::Vec3d& point) {
+                                        const osg::Vec4d clip = osg::Vec4d(point, 1.0) * viewProj;
+                                        if (clip.w() <= 0.0)
+                                            return false;
+                                        const double x = (clip.x() / clip.w() + 1.0) * 0.5;
+                                        const double y = (clip.y() / clip.w() - 1.0) * -0.5;
+                                        return x >= poseMargin && x <= 1.0 - poseMargin
+                                            && y >= poseMargin && y <= 1.0 - poseMargin;
+                                    };
+                                    if (poseInFrame)
+                                    {
+                                        poseInFrame = projectPosePoint(pose.mHeadCenter)
+                                            && projectPosePoint(pose.mPelvisCenter)
+                                            && projectPosePoint(pose.mLeftHandCenter)
+                                            && projectPosePoint(pose.mRightHandCenter)
+                                            && projectPosePoint(pose.mLeftFootCenter)
+                                            && projectPosePoint(pose.mRightFootCenter);
+                                    }
+                                    actorFocusInFrame
+                                        = actorFocusInFrame && allBonesResolved && upright && poseInFrame;
+                                    Log(Debug::Info) << "FNV/ESM4 proof: actor human-pose gate target=\""
+                                                     << proofSayActor << "\" model=\"" << actorModel
+                                                     << "\" resolved=(head=" << pose.mHeadResolved
+                                                     << ",pelvis=" << pose.mPelvisResolved
+                                                     << ",leftHand=" << pose.mLeftHandResolved
+                                                     << ",rightHand=" << pose.mRightHandResolved
+                                                     << ",leftFoot=" << pose.mLeftFootResolved
+                                                     << ",rightFoot=" << pose.mRightFootResolved
+                                                     << ") z=(head=" << pose.mHeadCenter.z()
+                                                     << ",pelvis=" << pose.mPelvisCenter.z()
+                                                     << ",leftFoot=" << pose.mLeftFootCenter.z()
+                                                     << ",rightFoot=" << pose.mRightFootCenter.z()
+                                                     << ") upright=" << upright << " inFrame=" << poseInFrame
+                                                     << " accepted=" << actorFocusInFrame;
+                                }
+                            }
+                            const float maxCameraDrift
+                                = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_MAX_CAMERA_DRIFT", 4.f);
+                            if (requestedDeltaDistance > maxCameraDrift)
+                                actorFocusInFrame = false;
+                            Log(Debug::Info) << "FNV/ESM4 proof: actor focus screen target=\"" << proofSayActor
+                                             << "\" clip=(" << clipPoint.x() << "," << clipPoint.y() << ","
+                                             << clipPoint.z() << "," << clipPoint.w() << ") screen=("
+                                             << screenPointX << "," << screenPointY << ") boundsAccepted="
+                                             << actorViewBoundsAccepted << " cameraDeltaDistance="
+                                             << requestedDeltaDistance << " inFrame=" << actorFocusInFrame;
+                        }
+                        else
+                        {
+                            actorFocusInFrame = false;
+                            Log(Debug::Warning)
+                                << "FNV/ESM4 proof: actor focus projection sign was behind camera target=\""
+                                << proofSayActor << "\" w=" << clipPoint.w() << "; rejecting actor alignment";
+                        }
+                    }
+                    // A data-only actor export does not consume the proof camera. Dead, sleeping,
+                    // seated, and creature poses legitimately fail the upright/full-body portrait
+                    // tests even though their assembled scene graph is ready to serialize. The
+                    // exporter below still validates the resolved actor, drawables, rig data, and
+                    // written payload; bypass only the screenshot framing decision here.
+                    if (std::getenv("OPENMW_OPENNV_ACTOR_EXPORT_NO_SCREENSHOT") != nullptr)
+                        actorFocusInFrame = true;
+                    if (actorFocusInFrame)
+                    {
+                        proofActorCameraAligned = true;
+                        proofActorCameraAlignedFrame = static_cast<int>(frameNumber);
+                        proofActorCameraAlignedScreenshotIndex = proofScreenshotFrameIndex;
+                        if (pinPlayerToActorView)
+                        {
+                            proofPinnedPlayerToActorView = true;
+                            proofPinnedPlayerPosition = playerTargetPos;
+                            proofPinnedPlayerRotation = playerTargetRotation;
+                            proofPinnedPlayerFirstFrame = static_cast<int>(frameNumber);
+                            proofPinnedPlayerLastLogFrame = static_cast<int>(frameNumber) - 1000000;
+                            Log(Debug::Info) << "FNV/ESM4 proof: pinned player to actor view target=\""
+                                             << proofSayActor << "\" pos=(" << proofPinnedPlayerPosition.x() << ","
+                                             << proofPinnedPlayerPosition.y() << "," << proofPinnedPlayerPosition.z()
+                                             << ") rot=(" << proofPinnedPlayerRotation.x() << ","
+                                             << proofPinnedPlayerRotation.y() << "," << proofPinnedPlayerRotation.z()
+                                             << ") staticDialogueCamera=" << staticDialogueCamera;
+                        }
+                    }
+                    else
+                    {
+                        proofActorCameraAligned = false;
+                        proofActorCameraAlignedFrame = -1;
+                        proofActorCameraAlignedScreenshotIndex = static_cast<std::size_t>(-1);
+                        if (pinPlayerToActorView)
+                            proofPinnedPlayerToActorView = false;
+                        Log(Debug::Warning) << "FNV/ESM4 proof: actor camera alignment rejected target=\""
+                                            << proofSayActor << "\" frame=" << frameNumber;
+                    }
+
+                    if (std::getenv("OPENMW_PROOF_LOG_NEARBY_REFS") != nullptr)
+                    {
+                        const float radius = readProofFloat("OPENMW_PROOF_NEARBY_REF_RADIUS", 450.f);
+                        const float radiusSq = radius * radius;
+                        int nearbyLogged = 0;
+                        for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+                        {
+                            if (cellstore == nullptr)
+                                continue;
+                            cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                                if (ptr.isEmpty())
+                                    return true;
+                                const ESM::Position& pos = ptr.getRefData().getPosition();
+                                const float dx = pos.pos[0] - static_cast<float>(proofCameraPos.x());
+                                const float dy = pos.pos[1] - static_cast<float>(proofCameraPos.y());
+                                const float dz = pos.pos[2] - static_cast<float>(proofCameraPos.z());
+                                if (dx * dx + dy * dy + dz * dz > radiusSq)
+                                    return true;
+
+                                const ESM::RefNum refNum = ptr.getCellRef().getRefNum();
+                                const ESM::RefId baseId = ptr.getCellRef().getRefId();
+                                std::string name;
+                                try
+                                {
+                                    name = std::string(ptr.getClass().getName(ptr));
+                                }
+                                catch (const std::exception&)
+                                {
+                                }
+                                VFS::Path::Normalized model;
+                                try
+                                {
+                                    model = ptr.getClass().getCorrectedModel(ptr);
+                                }
+                                catch (const std::exception& e)
+                                {
+                                    Log(Debug::Warning) << "FNV/ESM4 proof: nearby ref model lookup failed for "
+                                                        << ptr.toString() << ": " << e.what();
+                                }
+                                unsigned int nodeMask = 0;
+                                osg::Vec3d scenePos;
+                                if (ptr.getRefData().getBaseNode())
+                                {
+                                    nodeMask = ptr.getRefData().getBaseNode()->getNodeMask();
+                                    scenePos = ptr.getRefData().getBaseNode()->getPosition();
+                                }
+                                Log(Debug::Info) << "FNV/ESM4 proof: nearby ref ref="
+                                                 << refNum.toString("FormId:") << " base="
+                                                 << baseId.toDebugString() << " type=" << ptr.getType()
+                                                 << " actor=" << ptr.getClass().isActor() << " name=\"" << name
+                                                 << "\" model=" << model.value() << " pos=(" << pos.pos[0]
+                                                 << "," << pos.pos[1] << "," << pos.pos[2] << ") scenePos=("
+                                                 << scenePos.x() << "," << scenePos.y() << "," << scenePos.z()
+                                                 << ") nodeMask=0x" << std::hex << nodeMask << std::dec
+                                                 << " ptr=" << ptr.toString();
+                                ++nearbyLogged;
+                                return nearbyLogged < 120;
+                            });
+                            if (nearbyLogged >= 120)
+                                break;
+                        }
+                        Log(Debug::Info) << "FNV/ESM4 proof: nearby ref dump complete count=" << nearbyLogged
+                                         << " radius=" << radius;
+                    }
+                }
+            }
+        }
+
+        if (!proofSayQueued && !proofActor.isEmpty() && proofEnvEnabled("OPENMW_PROOF_START_DIALOGUE")
+            && mWindowManager != nullptr)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: opening real dialogue GUI for " << proofActor.toString()
+                             << " at frame " << frameNumber;
+            mWindowManager->pushGuiMode(MWGui::GM_Dialogue, proofActor);
+        }
+        else if (!proofSayQueued && !proofActor.isEmpty() && proofSayTopic != nullptr && *proofSayTopic != '\0'
+            && mDialogueManager != nullptr)
+        {
+            const bool said = mDialogueManager->say(proofActor, ESM::RefId::stringRefId(proofSayTopic));
+            Log(Debug::Info) << "FNV/ESM4 proof: actor dialogue say topic \"" << proofSayTopic << "\" result="
+                             << said << " at frame " << frameNumber;
+        }
+        else if (!proofSayQueued && !proofActor.isEmpty() && proofSayFile != nullptr && *proofSayFile != '\0'
+            && mSoundManager != nullptr)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: playing actor proof voice \"" << proofSayFile << "\" for "
+                             << proofActor.toString() << " at frame " << frameNumber;
+            mSoundManager->say(proofActor, VFS::Path::Normalized(proofSayFile));
+        }
+        else if (!proofSayQueued && proofSayFile != nullptr && *proofSayFile != '\0'
+            && mSoundManager != nullptr)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: playing proof voice \"" << proofSayFile << "\" at frame "
+                             << frameNumber;
+            mSoundManager->say(VFS::Path::Normalized(proofSayFile));
+        }
+        else if (!proofSayQueued && proofSayFile != nullptr && *proofSayFile != '\0')
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: skipped proof voice \"" << proofSayFile
+                                << "\" because sound manager is unavailable at frame " << frameNumber;
+        }
+        proofSayQueued = true;
+    }
+
+    if (proofSidecarEnabled && proofSidecarAction.has_value()
+        && proofSidecarPhase != FNVSidecarOpenMwPhase::Failed
+        && proofSidecarPhase != FNVSidecarOpenMwPhase::Complete)
+    {
+        const FNVSidecar::RetailAction& action = *proofSidecarAction;
+        const std::string& requestedGroup = proofActorPoseGroups[action.mActionIndex];
+        const auto localWeapon = [&]() -> const ESM4::Weapon* {
+            if (proofActorBatchPrevious.isEmpty()
+                || proofActorBatchPrevious.getType() != ESM4::Npc::sRecordId)
+                return nullptr;
+            return MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious);
+        };
+        const auto exactWeapon = [&]() {
+            const ESM4::Weapon* weapon = localWeapon();
+            if (action.mRequestedWeaponForm == 0)
+                return weapon == nullptr;
+            return weapon != nullptr
+                && (weapon->mId.toUint32() & 0x00FFFFFFu)
+                    == (action.mRequestedWeaponForm & 0x00FFFFFFu);
+        };
+        const auto applyWeaponDrawState = [&](bool weaponDrawn) {
+            if (proofActorBatchPrevious.isEmpty()
+                || proofActorBatchPrevious.getType() != ESM4::Npc::sRecordId)
+                return;
+            proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
+                .setDrawState(weaponDrawn && action.mRequestedWeaponForm != 0
+                        ? MWMechanics::DrawState::Weapon : MWMechanics::DrawState::Nothing);
+        };
+        const auto applyWeaponAttachment = [&](const FNVSidecar::RetailAction& source) {
+            if (source.mRequestedWeaponForm == 0 || source.mWeaponDrawn)
+                return true;
+            if (!source.mWeaponAttachment || proofActorBatchPrevious.isEmpty() || mWorld == nullptr)
+                return false;
+            MWRender::Animation* animation = mWorld->getAnimation(proofActorBatchPrevious);
+            auto* esm4Animation = dynamic_cast<MWRender::ESM4NpcAnimation*>(animation);
+            if (esm4Animation == nullptr)
+                return false;
+            const FNVSidecar::RetailAction::WeaponAttachment& attachment
+                = *source.mWeaponAttachment;
+            return esm4Animation->setWeaponHolsterAttachment(attachment.mFrameName,
+                attachment.mParentName, attachment.mRotation, attachment.mTranslation,
+                attachment.mScale);
+        };
+        const auto buildOpenMwTelemetry = [&](const FNVSidecarScreenshot* screenshot) {
+            std::ostringstream out;
+            out << std::setprecision(9)
+                << "{\"schema\":\"nikami-fnv-sidecar-openmw/v1\",\"sequenceId\":";
+            writeProofJsonString(out, action.mSequenceId);
+            out << ",\"key\":{\"sequenceId\":";
+            writeProofJsonString(out, action.mSequenceId);
+            out << ",\"actorIndex\":" << action.mActorIndex << ",\"actionIndex\":"
+                << action.mActionIndex << "},\"generation\":" << action.mGeneration
+                << ",\"frame\":" << frameNumber << ",\"actor\":{";
+            if (!proofActorBatchPrevious.isEmpty())
+            {
+                const ESM::Position& position = proofActorBatchPrevious.getRefData().getPosition();
+                out << "\"ref\":";
+                writeProofJsonString(out,
+                    proofActorBatchPrevious.getCellRef().getRefNum().toString("FormId:"));
+                out << ",\"base\":";
+                writeProofJsonString(out,
+                    proofActorBatchPrevious.getCellRef().getRefId().toDebugString());
+                out << ",\"position\":[" << position.pos[0] << ',' << position.pos[1] << ','
+                    << position.pos[2] << "],\"rotation\":[" << position.rot[0] << ',' << position.rot[1]
+                    << ',' << position.rot[2] << ']';
+            }
+            out << "},\"action\":{\"id\":";
+            writeProofJsonString(out, action.mActionId);
+            out << ",\"openMwGroup\":";
+            writeProofJsonString(out, requestedGroup);
+            out << ",\"requestedFrames\":" << action.mRequestedFrames << ",\"elapsedFrames\":"
+                << (proofSidecarActionStartFrame >= 0
+                        ? static_cast<int>(frameNumber) - proofSidecarActionStartFrame : 0)
+                << ",\"accepted\":" << (proofSidecarActionPlayed ? "true" : "false") << '}';
+
+            const bool openMwWeaponDrawn = !proofActorBatchPrevious.isEmpty()
+                && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId
+                && proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious).getDrawState()
+                    == MWMechanics::DrawState::Weapon;
+            out << ",\"animation\":{\"retailWeaponOut\":" << (action.mWeaponDrawn ? "true" : "false")
+                << ",\"weaponOut\":" << (openMwWeaponDrawn ? "true" : "false") << '}';
+
+            const ESM4::Weapon* weapon = localWeapon();
+            out << ",\"weaponPolicy\":{\"retailRequestedForm\":" << action.mRequestedWeaponForm
+                << ",\"openMwEquippedForm\":" << (weapon != nullptr ? weapon->mId.toUint32() : 0)
+                << ",\"openMwEditorId\":";
+            writeProofJsonString(out,
+                weapon != nullptr ? std::string_view(weapon->mEditorId) : std::string_view{});
+            out << ",\"exactBySourceForm\":" << (exactWeapon() ? "true" : "false")
+                << ",\"attachment\":{\"consumed\":";
+            const auto writeAttachmentBasisFields = [&](std::string_view frameName,
+                                                  std::string_view parentName,
+                                                  const std::array<float, 9>& rotation,
+                                                  const std::array<float, 3>& translation,
+                                                  float scale) {
+                out << "\"frameName\":";
+                writeProofJsonString(out, frameName);
+                out << ",\"parentName\":";
+                writeProofJsonString(out, parentName);
+                out << ",\"rotationBits\":[";
+                for (std::size_t index = 0; index < rotation.size(); ++index)
+                {
+                    if (index != 0)
+                        out << ',';
+                    out << std::bit_cast<std::uint32_t>(rotation[index]);
+                }
+                out << "],\"translationBits\":[";
+                for (std::size_t index = 0; index < translation.size(); ++index)
+                {
+                    if (index != 0)
+                        out << ',';
+                    out << std::bit_cast<std::uint32_t>(translation[index]);
+                }
+                out << "],\"scaleBits\":" << std::bit_cast<std::uint32_t>(scale);
+            };
+            if (action.mWeaponAttachment)
+            {
+                const auto& attachment = *action.mWeaponAttachment;
+                out << "{\"available\":true,\"sourceForm\":" << attachment.mSourceForm << ',';
+                out << "\"evaluatedSlot\":" << attachment.mEvaluatedSlot
+                    << ",\"evaluatedState\":" << attachment.mEvaluatedState
+                    << ",\"modelRootName\":";
+                writeProofJsonString(out, attachment.mModelRootName);
+                out << ',';
+                writeAttachmentBasisFields(attachment.mFrameName, attachment.mParentName,
+                    attachment.mRotation, attachment.mTranslation, attachment.mScale);
+                out << '}';
+            }
+            else
+                out << "{\"available\":false}";
+
+            MWRender::ESM4NpcAnimation::WeaponAttachmentState observedAttachment;
+            if (!proofActorBatchPrevious.isEmpty() && mWorld != nullptr)
+            {
+                if (auto* esm4Animation = dynamic_cast<MWRender::ESM4NpcAnimation*>(
+                        mWorld->getAnimation(proofActorBatchPrevious)))
+                    observedAttachment = esm4Animation->getWeaponHolsterAttachmentState();
+            }
+            out << ",\"observed\":{\"applied\":"
+                << (observedAttachment.mApplied ? "true" : "false")
+                << ",\"attached\":" << (observedAttachment.mAttached ? "true" : "false")
+                << ",\"visible\":" << (observedAttachment.mVisible ? "true" : "false") << ',';
+            writeAttachmentBasisFields(observedAttachment.mFrameName, observedAttachment.mParentName,
+                observedAttachment.mRotation, observedAttachment.mTranslation,
+                observedAttachment.mScale);
+            out << "}}}";
+
+            out << ",\"equipment\":{";
+            if (!proofActorBatchPrevious.isEmpty()
+                && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
+            {
+                const std::vector<const ESM4::Armor*>& armor
+                    = MWClass::ESM4Npc::getEquippedArmor(proofActorBatchPrevious);
+                const std::vector<const ESM4::Clothing*>& clothing
+                    = MWClass::ESM4Npc::getEquippedClothing(proofActorBatchPrevious);
+                out << "\"armorForms\":[";
+                for (std::size_t index = 0; index < armor.size(); ++index)
+                {
+                    if (index != 0)
+                        out << ',';
+                    out << (armor[index] != nullptr ? armor[index]->mId.toUint32() : 0);
+                }
+                out << "],\"clothingForms\":[";
+                for (std::size_t index = 0; index < clothing.size(); ++index)
+                {
+                    if (index != 0)
+                        out << ',';
+                    out << (clothing[index] != nullptr ? clothing[index]->mId.toUint32() : 0);
+                }
+                out << ']';
+                if (const ESM4::Npc* npc = proofActorBatchPrevious.get<ESM4::Npc>()->mBase)
+                {
+                    out << ",\"npc\":{\"form\":" << npc->mId.toUint32() << ",\"race\":"
+                        << npc->mRace.toUint32() << ",\"hair\":" << npc->mHair.toUint32()
+                        << ",\"eyes\":" << npc->mEyes.toUint32() << ",\"hairColor\":["
+                        << static_cast<unsigned int>(npc->mHairColour.red) << ','
+                        << static_cast<unsigned int>(npc->mHairColour.green) << ','
+                        << static_cast<unsigned int>(npc->mHairColour.blue) << ','
+                        << static_cast<unsigned int>(npc->mHairColour.custom) << "],\"headParts\":[";
+                    for (std::size_t index = 0; index < npc->mHeadParts.size(); ++index)
+                    {
+                        if (index != 0)
+                            out << ',';
+                        out << npc->mHeadParts[index].toUint32();
+                    }
+                    out << "]}";
+                }
+            }
+            out << '}';
+
+            FalloutProofSkinState payloadSkinState = proofActorSkinState;
+            const std::string currentActorRef = proofActorBatchPrevious.isEmpty()
+                ? std::string()
+                : proofActorBatchPrevious.getCellRef().getRefNum().toString("FormId:");
+            const std::string currentActorBase = proofActorBatchPrevious.isEmpty()
+                ? std::string()
+                : proofActorBatchPrevious.getCellRef().getRefId().toDebugString();
+            const bool skinSampleMatches = payloadSkinState.mAvailable
+                && payloadSkinState.mActorIndex == action.mActorIndex
+                && payloadSkinState.mActorRef == currentActorRef
+                && payloadSkinState.mActorBase == currentActorBase;
+            if (!skinSampleMatches)
+            {
+                const unsigned int previousSampleFrame = payloadSkinState.mSampleFrame;
+                payloadSkinState = {};
+                payloadSkinState.mSampleFrame = previousSampleFrame;
+                payloadSkinState.mActorIndex = action.mActorIndex;
+                payloadSkinState.mActorRef = currentActorRef;
+                payloadSkinState.mActorBase = currentActorBase;
+                if (!proofActorBatchPrevious.isEmpty()
+                    && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
+                {
+                    if (const ESM4::Npc* traits
+                        = MWClass::ESM4Npc::getTraitsRecord(proofActorBatchPrevious))
+                        payloadSkinState.mExpectedOwner = traits->mEditorId;
+                }
+                payloadSkinState.mFailures.emplace_back("post-render-skin-sample-unavailable-or-stale");
+            }
+            out << ",\"skinState\":";
+            writeFalloutProofSkinStateJson(out, payloadSkinState);
+
+            osg::Camera* camera = mViewer != nullptr ? mViewer->getCamera() : nullptr;
+            out << ",\"camera\":{\"available\":" << (camera != nullptr ? "true" : "false");
+            if (camera != nullptr)
+            {
+                const auto writeMatrix = [&](std::string_view name, const osg::Matrixd& matrix) {
+                    out << ",\"" << name << "\":[";
+                    for (std::size_t row = 0; row < 4; ++row)
+                    {
+                        for (std::size_t column = 0; column < 4; ++column)
+                        {
+                            if (row != 0 || column != 0)
+                                out << ',';
+                            out << matrix(row, column);
+                        }
+                    }
+                    out << ']';
+                };
+                writeMatrix("view", camera->getViewMatrix());
+                writeMatrix("projection", camera->getProjectionMatrix());
+            }
+            out << '}';
+            out << ",\"screenshot\":{\"exists\":"
+                << (screenshot != nullptr && screenshot->mValid ? "true" : "false");
+            if (screenshot != nullptr && screenshot->mValid)
+            {
+                out << ",\"path\":";
+                writeProofJsonString(out, screenshot->mPath.generic_string());
+                out << ",\"bytes\":" << screenshot->mSize;
+            }
+            out << "}}";
+            return out.str();
+        };
+
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::Staging
+            && proofActorBatchIndex == action.mActorIndex && !proofActorBatchPrevious.isEmpty()
+            && proofActorStagedForCamera && proofActorCameraAligned && mWorld != nullptr
+            && mMechanicsManager != nullptr)
+        {
+            MWRender::Animation* animation = mWorld->getAnimation(proofActorBatchPrevious);
+            if (!exactWeapon())
+                failFNVSidecar(FNVSidecar::ErrorCode::WeaponPolicyFailed,
+                    "openmw-retail-exact-weapon-mismatch");
+            else if (!applyWeaponAttachment(action))
+                failFNVSidecar(FNVSidecar::ErrorCode::WeaponPolicyFailed,
+                    "openmw-retail-holster-attachment-rejected");
+            else if (animation == nullptr || !animation->hasAnimation(requestedGroup))
+                failFNVSidecar(FNVSidecar::ErrorCode::ActionRejected,
+                    "openmw-animation-group-unavailable-" + requestedGroup);
+            else
+            {
+                applyWeaponDrawState(action.mWeaponDrawn);
+                mMechanicsManager->clearAnimationQueue(proofActorBatchPrevious, true);
+                proofSidecarActionPlayed = mMechanicsManager->playAnimationGroup(
+                    proofActorBatchPrevious, requestedGroup, 1, 1, true);
+                if (!proofSidecarActionPlayed)
+                    failFNVSidecar(FNVSidecar::ErrorCode::ActionRejected,
+                        "openmw-animation-group-rejected-" + requestedGroup);
+                else
+                {
+                    proofSidecarActionStartFrame = static_cast<int>(frameNumber);
+                    proofSidecarPhase = FNVSidecarOpenMwPhase::Settling;
+                    Log(Debug::Info) << "FNV sidecar OpenMW: action staged generation="
+                                     << action.mGeneration << " actorIndex=" << action.mActorIndex
+                                     << " actionIndex=" << action.mActionIndex << " group=\""
+                                     << requestedGroup << "\" frame=" << frameNumber;
+                }
+            }
+        }
+
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::Settling
+            && proofSidecarActionStartFrame >= 0
+            && static_cast<std::uint64_t>(static_cast<int>(frameNumber) - proofSidecarActionStartFrame)
+                >= action.mRequestedFrames
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::RetailReadyFlag) != 0)
+        {
+            const std::string telemetry = buildOpenMwTelemetry(nullptr);
+            if (proofSidecarClient.publishReady(proofSidecarSnapshot, frameNumber, telemetry))
+            {
+                proofSidecarPhase = FNVSidecarOpenMwPhase::Ready;
+                Log(Debug::Info) << "FNV sidecar OpenMW: both-ready publication generation="
+                                 << action.mGeneration << " actorIndex=" << action.mActorIndex
+                                 << " actionIndex=" << action.mActionIndex << " frame=" << frameNumber;
+            }
+            else
+                failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault, "openmw-ready-publish-failed");
+        }
+
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::Ready
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::RetailCapturedFlag) != 0)
+        {
+            std::string parseError;
+            const std::optional<FNVSidecar::RetailAction> capturedAction
+                = FNVSidecar::parseRetailAction(proofSidecarSnapshot, parseError);
+            if (!capturedAction)
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan,
+                    "retail-captured-state-invalid-" + parseError);
+            else if (capturedAction->mGeneration != action.mGeneration
+                || capturedAction->mActorIndex != action.mActorIndex
+                || capturedAction->mActionIndex != action.mActionIndex
+                || capturedAction->mRetailBaseForm != action.mRetailBaseForm
+                || capturedAction->mActionId != action.mActionId
+                || capturedAction->mRequestedFrames != action.mRequestedFrames
+                || capturedAction->mRequestedWeaponForm != action.mRequestedWeaponForm)
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "retail-captured-state-identity-changed");
+            else if (!applyWeaponAttachment(*capturedAction))
+                failFNVSidecar(FNVSidecar::ErrorCode::WeaponPolicyFailed,
+                    "openmw-retail-captured-holster-attachment-rejected");
+            else
+            {
+                proofSidecarAction->mWeaponDrawn = capturedAction->mWeaponDrawn;
+                proofSidecarAction->mWeaponAttachment = capturedAction->mWeaponAttachment;
+                applyWeaponDrawState(capturedAction->mWeaponDrawn);
+                proofSidecarCaptureStateStartFrame = static_cast<int>(frameNumber);
+                proofSidecarPhase = FNVSidecarOpenMwPhase::SettlingCaptureState;
+                Log(Debug::Info) << "FNV sidecar OpenMW: consumed retail captured state generation="
+                                 << action.mGeneration << " weaponOut=" << capturedAction->mWeaponDrawn
+                                 << " frame=" << frameNumber;
+            }
+        }
+
+        constexpr int captureStateSettleFrames = 2;
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::SettlingCaptureState
+            && proofSidecarCaptureStateStartFrame >= 0
+            && static_cast<int>(frameNumber) - proofSidecarCaptureStateStartFrame >= captureStateSettleFrames)
+        {
+            if (mScreenCaptureHandler == nullptr)
+                failFNVSidecar(FNVSidecar::ErrorCode::ScreenshotTimeout, "screen-capture-handler-unavailable");
+            else
+            {
+                proofSidecarScreenshotBaseline = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+                proofSidecarScreenshotCandidate = {};
+                proofSidecarScreenshotStableFrames = 0;
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+                proofSidecarPhase = FNVSidecarOpenMwPhase::Capturing;
+                Log(Debug::Info) << "FNV sidecar OpenMW: capture issued generation="
+                                 << action.mGeneration << " actorIndex=" << action.mActorIndex
+                                 << " actionIndex=" << action.mActionIndex << " frame=" << frameNumber;
+            }
+        }
+
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::Capturing)
+        {
+            const FNVSidecarScreenshot candidate = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+            if (isNewSidecarScreenshot(proofSidecarScreenshotBaseline, candidate))
+            {
+                if (proofSidecarScreenshotCandidate.mValid
+                    && proofSidecarScreenshotCandidate.mPath == candidate.mPath
+                    && proofSidecarScreenshotCandidate.mSize == candidate.mSize)
+                    ++proofSidecarScreenshotStableFrames;
+                else
+                {
+                    proofSidecarScreenshotCandidate = candidate;
+                    proofSidecarScreenshotStableFrames = 1;
+                }
+            }
+            if (proofSidecarScreenshotStableFrames >= 2)
+            {
+                const std::string telemetry = buildOpenMwTelemetry(&proofSidecarScreenshotCandidate);
+                if (proofSidecarClient.markCaptured(action.mGeneration, action.mActorIndex,
+                        action.mActionIndex, frameNumber, telemetry))
+                {
+                    proofSidecarPhase = FNVSidecarOpenMwPhase::WaitingAdvance;
+                    Log(Debug::Info) << "FNV sidecar OpenMW: capture file proven generation="
+                                     << action.mGeneration << " actorIndex=" << action.mActorIndex
+                                     << " actionIndex=" << action.mActionIndex << " path=\""
+                                     << proofSidecarScreenshotCandidate.mPath.string() << "\" bytes="
+                                     << proofSidecarScreenshotCandidate.mSize << " frame=" << frameNumber;
+                }
+                else
+                    failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault,
+                        "openmw-captured-publish-failed");
+            }
+        }
+
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::WaitingAdvance
+            && proofSidecarSnapshot.mGeneration == action.mGeneration
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::RetailCapturedFlag) != 0
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::OpenMwCapturedFlag) != 0
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::CaptureAckFlag) == 0)
+        {
+            if (!proofSidecarClient.acknowledgeCapture(
+                    action.mGeneration, action.mActorIndex, action.mActionIndex))
+                failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault, "capture-ack-publish-failed");
+        }
+    }
+
+    if (fnvStripSniperCinematicEnabled && !fnvStripSniperSetupComplete
+        && !proofActorBatchPrevious.isEmpty() && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId
+        && mWorld != nullptr && mMechanicsManager != nullptr)
+    {
+        try
+        {
+            const char* targetText = std::getenv("OPENMW_FNV_STRIP_SNIPER_TARGET");
+            if (targetText == nullptr || *targetText == '\0')
+                targetText = "V03FiendShooter";
+
+            fnvStripSniperTarget = resolveProofActor(targetText);
+            if (!fnvStripSniperTarget.isEmpty())
+            {
+                if (!fnvStripSniperTarget.getRefData().isEnabled())
+                    mWorld->enable(fnvStripSniperTarget);
+
+                const ESM::Position& shooterPose = proofActorBatchPrevious.getRefData().getPosition();
+                const osg::Vec3f requestedTargetPosition(
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_X", shooterPose.pos[0]),
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_Y", shooterPose.pos[1] + 320.f),
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_Z", shooterPose.pos[2]));
+                const osg::Vec3f requestedTargetRotation(
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_ROT_X", 0.f),
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_ROT_Y", 0.f),
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_ROT_Z", 3.14159265f));
+                MWWorld::Ptr player = MWMechanics::getPlayer();
+                if (!player.isEmpty() && player.isInCell())
+                    fnvStripSniperTarget = mWorld->moveObject(
+                        fnvStripSniperTarget, player.getCell(), requestedTargetPosition, true, true);
+                else
+                    fnvStripSniperTarget
+                        = mWorld->moveObject(fnvStripSniperTarget, requestedTargetPosition, true, true);
+                mWorld->rotateObject(fnvStripSniperTarget, requestedTargetRotation);
+                fnvStripSniperTarget.getClass().adjustPosition(fnvStripSniperTarget, true);
+
+                const ESM::Position& settledTargetPose = fnvStripSniperTarget.getRefData().getPosition();
+                fnvStripSniperTargetPosition.set(
+                    settledTargetPose.pos[0], settledTargetPose.pos[1], settledTargetPose.pos[2]);
+                fnvStripSniperTargetRotation.set(
+                    settledTargetPose.rot[0], settledTargetPose.rot[1], settledTargetPose.rot[2]);
+
+                MWMechanics::CreatureStats& targetStats
+                    = fnvStripSniperTarget.getClass().getCreatureStats(fnvStripSniperTarget);
+                targetStats.getAiSequence().clear();
+                targetStats.setAttackingOrSpell(false);
+                targetStats.setAiSetting(MWMechanics::AiSetting::Fight, 0);
+                targetStats.setAiSetting(MWMechanics::AiSetting::Flee, 0);
+                targetStats.setMovementFlag(MWMechanics::CreatureStats::Flag_Run, false);
+                targetStats.setMovementFlag(MWMechanics::CreatureStats::Flag_ForceRun, false);
+                const float targetHealth
+                    = readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_HEALTH", 250.f);
+                targetStats.setHealth(MWMechanics::DynamicStat<float>(targetHealth, targetHealth, targetHealth));
+                MWMechanics::Movement& targetMovement
+                    = fnvStripSniperTarget.getClass().getMovementSettings(fnvStripSniperTarget);
+                targetMovement.mPosition[0] = 0.f;
+                targetMovement.mPosition[1] = 0.f;
+                targetMovement.mPosition[2] = 0.f;
+                targetMovement.mRotation[0] = 0.f;
+                targetMovement.mRotation[1] = 0.f;
+                targetMovement.mRotation[2] = 0.f;
+                mWorld->setActorCollisionMode(fnvStripSniperTarget, true, false);
+
+                const MWWorld::ESMStore& store = mWorld->getStore();
+                const ESM::RefId rifleId
+                    = findEsm4EditorId<ESM4::Weapon>(store, "WeapNVAntiMaterielRifle");
+                fnvStripSniperAmmoId = findEsm4EditorId<ESM4::Ammunition>(store, "Ammo50MG");
+                const ESM4::Weapon* rifle
+                    = rifleId.empty() ? nullptr : store.get<ESM4::Weapon>().search(rifleId);
+                MWWorld::ContainerStore& inventory
+                    = proofActorBatchPrevious.getClass().getContainerStore(proofActorBatchPrevious);
+                const bool rifleAdded
+                    = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNVAntiMaterielRifle", 1);
+                const bool ammoAdded = addFNVEditorItem<ESM4::Ammunition>(
+                    inventory, store, "Ammo50MG", readProofInt("OPENMW_FNV_STRIP_SNIPER_AMMO", 8));
+                if (rifle != nullptr)
+                    MWClass::ESM4Npc::setEquippedWeapon(proofActorBatchPrevious, rifle);
+
+                MWMechanics::CreatureStats& shooterStats
+                    = proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious);
+                shooterStats.getAiSequence().clear();
+                shooterStats.setAttackingOrSpell(false);
+                shooterStats.setDrawState(MWMechanics::DrawState::Weapon);
+                mWorld->setActorCollisionMode(proofActorBatchPrevious, true, false);
+                mMechanicsManager->clearAnimationQueue(proofActorBatchPrevious, true);
+                mMechanicsManager->forceStateUpdate(proofActorBatchPrevious);
+
+                const bool rifleEquipped
+                    = rifle != nullptr && MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious) == rifle;
+                fnvStripSniperAmmoBefore
+                    = fnvStripSniperAmmoId.empty() ? -1 : inventory.count(fnvStripSniperAmmoId);
+                fnvStripSniperHealthBefore = targetStats.getHealth().getCurrent();
+                fnvStripSniperSetupComplete = rifleAdded && ammoAdded && rifleEquipped
+                    && !fnvStripSniperAmmoId.empty() && fnvStripSniperAmmoBefore > 0
+                    && std::isfinite(fnvStripSniperHealthBefore);
+                Log(fnvStripSniperSetupComplete ? Debug::Info : Debug::Error)
+                    << "FNV Strip sniper cinematic setup: shooter=" << proofActorBatchPrevious.toString()
+                    << " target=" << fnvStripSniperTarget.toString() << " targetBase=\"" << targetText
+                    << "\" weapon=WeapNVAntiMaterielRifle weaponForm=" << rifleId
+                    << " ammo=Ammo50MG ammoForm=" << fnvStripSniperAmmoId
+                    << " ammoBefore=" << fnvStripSniperAmmoBefore
+                    << " targetHealth=" << fnvStripSniperHealthBefore << " targetPos=("
+                    << fnvStripSniperTargetPosition.x() << "," << fnvStripSniperTargetPosition.y() << ","
+                    << fnvStripSniperTargetPosition.z() << ") exact=1 status="
+                    << (fnvStripSniperSetupComplete ? "pass" : "fail");
+            }
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Error) << "FNV Strip sniper cinematic setup: exact=1 status=fail reason=\""
+                              << e.what() << "\"";
+        }
+    }
+
+    if (fnvStripSniperSetupComplete && !fnvStripSniperTarget.isEmpty() && mWorld != nullptr)
+    {
+        if (!fnvStripSniperCombatArmed)
+        {
+            const ESM::Position& current = fnvStripSniperTarget.getRefData().getPosition();
+            const osg::Vec3f currentPosition(current.pos[0], current.pos[1], current.pos[2]);
+            const osg::Vec3f currentRotation(current.rot[0], current.rot[1], current.rot[2]);
+            if ((currentPosition - fnvStripSniperTargetPosition).length() > 0.001f)
+            {
+                fnvStripSniperTarget = mWorld->moveObject(fnvStripSniperTarget,
+                    fnvStripSniperTarget.getCell(), fnvStripSniperTargetPosition, true, true);
+            }
+            if ((currentRotation - fnvStripSniperTargetRotation).length() > 0.00001f)
+                mWorld->rotateObject(fnvStripSniperTarget, fnvStripSniperTargetRotation);
+        }
+
+        if (fnvStripSniperReactionFrame >= 0 && !fnvStripSniperReactionComplete)
+        {
+            const int elapsed = static_cast<int>(frameNumber) - fnvStripSniperReactionFrame;
+            const int riseFrames
+                = std::max(1, readProofInt("OPENMW_FNV_STRIP_SNIPER_REACTION_RISE_FRAMES", 12));
+            const int durationFrames = std::max(riseFrames + 1,
+                readProofInt("OPENMW_FNV_STRIP_SNIPER_REACTION_DURATION_FRAMES", 54));
+            float amount = 0.f;
+            if (elapsed >= 0 && elapsed < riseFrames)
+                amount = static_cast<float>(elapsed) / static_cast<float>(riseFrames);
+            else if (elapsed < durationFrames)
+            {
+                amount = 1.f - static_cast<float>(elapsed - riseFrames)
+                    / static_cast<float>(durationFrames - riseFrames);
+            }
+
+            const ESM::Position& shooterPose = proofActorBatchPrevious.getRefData().getPosition();
+            osg::Vec3f recoilDirection(fnvStripSniperTargetPosition.x() - shooterPose.pos[0],
+                fnvStripSniperTargetPosition.y() - shooterPose.pos[1], 0.f);
+            if (recoilDirection.normalize() == 0.f)
+                recoilDirection.set(0.f, 1.f, 0.f);
+            const float recoilDistance
+                = std::max(0.f, readProofFloat("OPENMW_FNV_STRIP_SNIPER_REACTION_DISTANCE", 48.f));
+            const float recoilLift
+                = std::max(0.f, readProofFloat("OPENMW_FNV_STRIP_SNIPER_REACTION_LIFT", 0.f));
+            const float recoilRadians
+                = readProofFloat("OPENMW_FNV_STRIP_SNIPER_REACTION_RADIANS", 0.35f);
+            osg::Vec3f reactedPosition
+                = fnvStripSniperTargetPosition + recoilDirection * (recoilDistance * amount);
+            reactedPosition.z() += recoilLift * amount;
+            osg::Vec3f reactedRotation = fnvStripSniperTargetRotation;
+            reactedRotation.x() += recoilRadians * amount;
+            fnvStripSniperTarget = mWorld->moveObject(fnvStripSniperTarget,
+                fnvStripSniperTarget.getCell(), reactedPosition, true, true);
+            mWorld->rotateObject(fnvStripSniperTarget, reactedRotation);
+
+            if (elapsed >= durationFrames)
+            {
+                fnvStripSniperReactionComplete = true;
+                Log(Debug::Info) << "FNV Strip sniper cinematic reaction: target="
+                                 << fnvStripSniperTarget.toString() << " frame=" << frameNumber
+                                 << " displacement=" << recoilDistance << " lift=" << recoilLift
+                                 << " leanRadians=" << recoilRadians
+                                 << " control=damage-driven-transform exact=1 status=pass";
+            }
+        }
+
+        if (fnvStripSniperSlowTimeApplied && fnvStripSniperTriggerFrame >= 0)
+        {
+            const int slowFrames = std::max(1, readProofInt("OPENMW_FNV_STRIP_SNIPER_SLOW_FRAMES", 120));
+            if (static_cast<int>(frameNumber) - fnvStripSniperTriggerFrame >= slowFrames)
+            {
+                mWorld->getTimeManager()->setSimulationTimeScale(1.f);
+                fnvStripSniperSlowTimeApplied = false;
+                Log(Debug::Info) << "FNV Strip sniper cinematic slow time: frame=" << frameNumber
+                                 << " scale=1 phase=restored status=pass";
+            }
+        }
+
+        const int requestedTriggerFrame
+            = std::max(0, readProofInt("OPENMW_FNV_STRIP_SNIPER_TRIGGER_FRAME", 300));
+        if (!fnvStripSniperCombatArmed && static_cast<int>(frameNumber) >= requestedTriggerFrame
+            && !proofActorBatchPrevious.isEmpty() && mMechanicsManager != nullptr)
+        {
+            MWRender::Animation* animation = mWorld->getAnimation(proofActorBatchPrevious);
+            const ESM4::Weapon* weapon = proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId
+                ? MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious)
+                : nullptr;
+            constexpr std::string_view semanticGroup = "attack3";
+            MWMechanics::CreatureStats& shooterStats
+                = proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious);
+            const MWMechanics::DrawState drawState = shooterStats.getDrawState();
+            const bool transitionPlaying = animation != nullptr
+                && (animation->isPlaying("equip") || animation->isPlaying("unequip"));
+            const bool semanticAvailable = animation != nullptr && animation->hasAnimation(semanticGroup);
+            const bool eligible = weapon != nullptr && semanticAvailable
+                && drawState == MWMechanics::DrawState::Weapon && !transitionPlaying;
+            if (eligible)
+            {
+                mMechanicsManager->startCombat(proofActorBatchPrevious, fnvStripSniperTarget, nullptr);
+                // Keep the production combat target, but isolate the deterministic proof actor from AiCombat's
+                // approach movement so its requested primary attack reaches CharacterController unchanged.
+                if (MWBase::LuaManager::ActorControls* controls
+                    = mLuaManager->getActorControls(proofActorBatchPrevious))
+                {
+                    controls->mDisableAI = true;
+                    controls->mMovement = 0.f;
+                    controls->mSideMovement = 0.f;
+                    controls->mJump = false;
+                    controls->mChanged = true;
+                }
+                MWMechanics::Movement& shooterMovement
+                    = proofActorBatchPrevious.getClass().getMovementSettings(proofActorBatchPrevious);
+                shooterMovement.mPosition[0] = 0.f;
+                shooterMovement.mPosition[1] = 0.f;
+                shooterMovement.mPosition[2] = 0.f;
+                // The shooter and target are staged on the same X axis with retail forward (+Y), so the weapon
+                // controller can use its ordinary transform-derived ray without an AI package moving the actor.
+                shooterStats.getAiSequence().clear();
+                const float slowScale
+                    = std::clamp(readProofFloat("OPENMW_FNV_STRIP_SNIPER_SLOW_SCALE", 0.2f), 0.01f, 1.f);
+                mWorld->getTimeManager()->setSimulationTimeScale(slowScale);
+                shooterStats.setAttackingOrSpell(true);
+                fnvStripSniperCombatArmed = true;
+                fnvStripSniperSlowTimeApplied = true;
+                fnvStripSniperTriggerFrame = static_cast<int>(frameNumber);
+                Log(Debug::Info) << "FNV Strip sniper cinematic combat: shooter="
+                                 << proofActorBatchPrevious.toString() << " target="
+                                 << fnvStripSniperTarget.toString() << " frame=" << frameNumber
+                                 << " slowScale=" << slowScale << " semantic=" << semanticGroup
+                                 << " control=production-character-controller directGroupInjection=0 exact=1 status=armed";
+            }
+            else if (static_cast<int>(frameNumber) - fnvStripSniperLastTriggerWaitLogFrame >= 30)
+            {
+                fnvStripSniperLastTriggerWaitLogFrame = static_cast<int>(frameNumber);
+                Log(Debug::Info) << "FNV Strip sniper cinematic trigger: frame=" << frameNumber
+                                 << " requestedFrame=" << requestedTriggerFrame << " weapon=" << (weapon != nullptr)
+                                 << " animation=" << (animation != nullptr) << " semanticAvailable=" << semanticAvailable
+                                 << " drawState=" << static_cast<unsigned int>(drawState)
+                                 << " transition=" << transitionPlaying << " status=waiting";
+            }
+        }
+
+        if (fnvStripSniperCombatArmed && !fnvStripSniperCombatStopped
+            && static_cast<int>(frameNumber) > fnvStripSniperTriggerFrame && mMechanicsManager != nullptr
+            && !fnvStripSniperAmmoId.empty())
+        {
+            MWMechanics::CreatureStats& shooterStats
+                = proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious);
+            shooterStats.getAiSequence().clear();
+            shooterStats.setAttackingOrSpell(true);
+            MWMechanics::Movement& shooterMovement
+                = proofActorBatchPrevious.getClass().getMovementSettings(proofActorBatchPrevious);
+            shooterMovement.mPosition[0] = 0.f;
+            shooterMovement.mPosition[1] = 0.f;
+            shooterMovement.mPosition[2] = 0.f;
+            MWWorld::ContainerStore& inventory
+                = proofActorBatchPrevious.getClass().getContainerStore(proofActorBatchPrevious);
+            const int ammoNow = inventory.count(fnvStripSniperAmmoId);
+            const bool roundConsumed = fnvStripSniperAmmoBefore - ammoNow >= 1;
+            const int elapsed = static_cast<int>(frameNumber) - fnvStripSniperTriggerFrame;
+            const int maximumHoldFrames
+                = std::max(2, readProofInt("OPENMW_FNV_STRIP_SNIPER_MAX_HOLD_FRAMES", 180));
+            if (roundConsumed || elapsed >= maximumHoldFrames)
+            {
+                proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
+                    .setAttackingOrSpell(false);
+                mMechanicsManager->stopCombat(proofActorBatchPrevious);
+                fnvStripSniperCombatStopped = true;
+                Log(roundConsumed ? Debug::Info : Debug::Error)
+                    << "FNV Strip sniper cinematic combat: frame=" << frameNumber
+                    << " phase=single-shot-stop ammoBefore=" << fnvStripSniperAmmoBefore
+                    << " ammoNow=" << ammoNow << " holdFrames=" << elapsed
+                    << " exact=1 status=" << (roundConsumed ? "pass" : "fail");
+            }
+        }
+
+        if (fnvStripSniperCombatArmed && !fnvStripSniperResultLogged && !fnvStripSniperAmmoId.empty())
+        {
+            MWWorld::ContainerStore& inventory
+                = proofActorBatchPrevious.getClass().getContainerStore(proofActorBatchPrevious);
+            const int ammoAfter = inventory.count(fnvStripSniperAmmoId);
+            MWMechanics::CreatureStats& targetStats
+                = fnvStripSniperTarget.getClass().getCreatureStats(fnvStripSniperTarget);
+            const float healthAfter = targetStats.getHealth().getCurrent();
+            const bool pass = fnvStripSniperAmmoBefore - ammoAfter == 1
+                && std::isfinite(fnvStripSniperHealthBefore) && std::isfinite(healthAfter)
+                && healthAfter < fnvStripSniperHealthBefore;
+            const int elapsed = static_cast<int>(frameNumber) - fnvStripSniperTriggerFrame;
+            const int timeout
+                = std::max(2, readProofInt("OPENMW_FNV_STRIP_SNIPER_RESULT_TIMEOUT_FRAMES", 180));
+            if (pass || elapsed >= timeout)
+            {
+                Log(pass ? Debug::Info : Debug::Error)
+                    << "FNV Strip sniper cinematic gate: shooter=" << proofActorBatchPrevious.toString()
+                    << " target=" << fnvStripSniperTarget.toString() << " weapon=WeapNVAntiMaterielRifle"
+                    << " ammoBefore=" << fnvStripSniperAmmoBefore << " ammoAfter=" << ammoAfter
+                    << " healthBefore=" << fnvStripSniperHealthBefore << " healthAfter=" << healthAfter
+                    << " frame=" << frameNumber << " exact=1 status=" << (pass ? "pass" : "fail");
+                fnvStripSniperResultLogged = true;
+                if (pass)
+                {
+                    if (targetStats.isDead())
+                    {
+                        fnvStripSniperReactionComplete = true;
+                        Log(Debug::Info) << "FNV Strip sniper cinematic reaction: target="
+                                         << fnvStripSniperTarget.toString() << " frame=" << frameNumber
+                                         << " phase=armed source=lethal-health-drop exact=1 status=pass";
+                        Log(Debug::Info) << "FNV Strip sniper cinematic reaction: target="
+                                         << fnvStripSniperTarget.toString() << " frame=" << frameNumber
+                                         << " control=death-state manualTransform=0 exact=1 status=pass";
+                    }
+                    else
+                    {
+                        targetStats.setHitRecovery(true);
+                        mMechanicsManager->forceStateUpdate(fnvStripSniperTarget);
+                        fnvStripSniperReactionFrame = static_cast<int>(frameNumber);
+                        Log(Debug::Info) << "FNV Strip sniper cinematic reaction: target="
+                                         << fnvStripSniperTarget.toString() << " frame=" << frameNumber
+                                         << " phase=armed source=health-drop exact=1 status=pass";
+                    }
+                }
+            }
+        }
+    }
+
+    if (!proofSidecarEnabled && proofActorBatchActive && proofActorPoseBatchIndex == proofActorBatchIndex
+        && proofActorPoseSweepEnabled && !proofActorBatchPrevious.isEmpty() && proofActorStagedForCamera
+        && proofActorCameraAligned && mWorld != nullptr && mMechanicsManager != nullptr)
+    {
+        MWRender::Animation* animation = mWorld->getAnimation(proofActorBatchPrevious);
+        if (!proofActorPoseInventoryLogged && animation != nullptr)
+        {
+            const std::vector<std::string> availableGroups = animation->getAnimationGroups();
+            proofActorActivePoseGroups = proofActorPoseAllAvailable ? availableGroups : proofActorPoseGroups;
+            proofActorNativeGroupMasks.clear();
+            for (unsigned int boneGroup = 0; boneGroup < MWRender::sNumBlendMasks; ++boneGroup)
+            {
+                const std::string activeGroup(
+                    animation->getActiveGroup(static_cast<MWRender::BoneGroup>(boneGroup)));
+                if (!activeGroup.empty())
+                    proofActorNativeGroupMasks[activeGroup] |= 1u << boneGroup;
+            }
+            std::ostringstream inventory;
+            for (std::size_t index = 0; index < availableGroups.size(); ++index)
+            {
+                if (index != 0)
+                    inventory << ',';
+                inventory << availableGroups[index];
+            }
+            Log(Debug::Info) << "FNV/ESM4 actor pose inventory: actorIndex=" << proofActorBatchIndex
+                             << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
+                             << "\" availableCount=" << availableGroups.size() << " groups=[" << inventory.str()
+                             << "] sweep=" << (proofActorPoseAllAvailable ? "all-available" : "exact-requested")
+                             << " sweepCount=" << proofActorActivePoseGroups.size();
+            if (proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
+            {
+                const ESM4::Weapon* mainWeapon = MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious);
+                const MWMechanics::DrawState drawState
+                    = proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious).getDrawState();
+                Log(Debug::Info) << "FNV/ESM4 actor authored weapon state: actorIndex=" << proofActorBatchIndex
+                                 << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
+                                 << "\" selectedCount=" << (mainWeapon != nullptr ? 1 : 0) << " editor=\""
+                                 << (mainWeapon != nullptr ? mainWeapon->mEditorId : std::string()) << "\" drawState="
+                                 << (drawState == MWMechanics::DrawState::Weapon
+                                         ? "weapon"
+                                         : (drawState == MWMechanics::DrawState::Spell ? "spell" : "nothing"));
+            }
+            proofActorPoseInventoryLogged = true;
+            proofActorPoseCycleComplete = proofActorActivePoseGroups.empty();
+            const int startDelayEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_START_DELAY_FRAMES");
+            const int startDelay = startDelayEnv >= 0 ? startDelayEnv : 12;
+            proofActorPoseNextFrame = static_cast<int>(frameNumber) + startDelay;
+        }
+
+        if (proofActorPoseInventoryLogged && !proofActorPoseCycleComplete && proofActorPoseNextFrame >= 0
+            && frameNumber >= static_cast<unsigned int>(proofActorPoseNextFrame))
+        {
+            const int poseFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_FRAMES");
+            const int poseFrames = poseFramesEnv >= 1 ? poseFramesEnv : 12;
+            if (proofActorPoseIndex < proofActorActivePoseGroups.size())
+            {
+                const std::string& group = proofActorActivePoseGroups[proofActorPoseIndex];
+                const bool available = animation != nullptr && animation->hasAnimation(group);
+                const unsigned int controllerMask
+                    = available ? animation->getAnimationGroupControllerMask(group) : 0;
+                const auto nativeActive = proofActorNativeGroupMasks.find(group);
+                const unsigned int activeMask
+                    = nativeActive != proofActorNativeGroupMasks.end() ? nativeActive->second : 0;
+                const float groupStart = available ? animation->getStartTime(group) : -1.f;
+                const float groupStop = available ? animation->getTextKeyTime(group + ": stop") : -1.f;
+                const bool nonPlayableSpan = available && (groupStart < 0.f || groupStop < 0.f
+                    || groupStop <= groupStart + std::numeric_limits<float>::epsilon());
+                const unsigned int npcStandaloneMask = (1u << MWRender::BoneGroup_LowerBody)
+                    | (1u << MWRender::BoneGroup_Torso);
+                const bool compositeOnly = available
+                    && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId
+                    && (nonPlayableSpan || (activeMask != 0 && (activeMask & npcStandaloneMask) != npcStandaloneMask)
+                        || (controllerMask & npcStandaloneMask) != npcStandaloneMask);
+                const bool played = available && !compositeOnly
+                    && mMechanicsManager->playAnimationGroup(proofActorBatchPrevious, group, 1, 1, true);
+                if (played)
+                    ++proofActorPosePlayed;
+                else if (compositeOnly)
+                    ++proofActorPoseDeferred;
+                else
+                    ++proofActorPoseSkipped;
+                const bool accepted = played || compositeOnly;
+                Log(accepted ? Debug::Info : Debug::Warning)
+                     << "FNV/ESM4 actor pose transport gate: actorIndex=" << proofActorBatchIndex << " target=\""
+                     << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex=" << proofActorPoseIndex
+                     << " group=\"" << group << "\" resolvedGroup=\"" << group
+                     << "\" available=" << available << " played=" << played << " controllerMask=0x" << std::hex
+                     << controllerMask << " activeMask=0x" << activeMask << std::dec << " start=" << groupStart
+                     << " stop=" << groupStop << " role=" << (compositeOnly ? "composite-only" : "standalone")
+                     << " exact=1 gate=transport-only status=" << (accepted ? "pass" : "fail");
+                ++proofActorPoseIndex;
+                proofActorPoseNextFrame = static_cast<int>(frameNumber) + poseFrames;
+            }
+            else if (!proofActorPoseRestoringNativeState)
+            {
+                // Exact authored groups include overlays and metadata sequences that are only valid as one layer
+                // of the native controller state. End the diagnostic sweep by removing its scripted queue and let
+                // CharacterController reconstruct the actor's real data-driven idle/movement/weapon composite.
+                // Do not choose or inject an animation group here.
+                mMechanicsManager->clearAnimationQueue(proofActorBatchPrevious, true);
+                mMechanicsManager->forceStateUpdate(proofActorBatchPrevious);
+                proofActorPoseRestoringNativeState = true;
+                const int neutralFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_NEUTRAL_FRAMES");
+                const int neutralFrames = neutralFramesEnv >= 1 ? neutralFramesEnv : poseFrames;
+                proofActorPoseNextFrame = static_cast<int>(frameNumber) + neutralFrames;
+                Log(Debug::Info) << "FNV/ESM4 actor pose restore: actorIndex=" << proofActorBatchIndex
+                                 << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
+                                 << "\" phase=native-state-rebuild clearScripted=1 injectedGroup=0 waitFrames="
+                                 << neutralFrames << " status=pending";
+            }
+            else
+            {
+                const std::string lowerGroup(animation != nullptr
+                        ? animation->getActiveGroup(MWRender::BoneGroup_LowerBody)
+                        : std::string_view());
+                const std::string torsoGroup(animation != nullptr
+                        ? animation->getActiveGroup(MWRender::BoneGroup_Torso)
+                        : std::string_view());
+                const std::string leftArmGroup(animation != nullptr
+                        ? animation->getActiveGroup(MWRender::BoneGroup_LeftArm)
+                        : std::string_view());
+                const std::string rightArmGroup(animation != nullptr
+                        ? animation->getActiveGroup(MWRender::BoneGroup_RightArm)
+                        : std::string_view());
+                const bool npc = proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId;
+                const bool nativeBaseLayerReady = animation != nullptr && (!npc || (!lowerGroup.empty()
+                    && !torsoGroup.empty()));
+
+                osg::Node* actorRoot = proofActorBatchPrevious.getRefData().getBaseNode();
+                FalloutProofDrawableCullVisitor drawableVisitor(0);
+                if (actorRoot != nullptr)
+                    actorRoot->accept(drawableVisitor);
+                const bool topologyReady = actorRoot != nullptr && drawableVisitor.mVisibleDrawables > 0
+                    && (drawableVisitor.mVisibleRigs == 0 || drawableVisitor.mResolvedRigs > 0);
+
+                const FalloutProofPortraitPose nativePose
+                    = resolveFalloutProofPortraitPose(proofActorBatchPrevious);
+                const auto finiteVec = [](const osg::Vec3d& value) {
+                    return std::isfinite(value.x()) && std::isfinite(value.y()) && std::isfinite(value.z());
+                };
+                const bool bonesResolved = !npc || (nativePose.mHeadResolved && nativePose.mPelvisResolved
+                    && nativePose.mLeftHandResolved && nativePose.mRightHandResolved
+                    && nativePose.mLeftFootResolved && nativePose.mRightFootResolved);
+                const bool bonesFinite = !npc || (finiteVec(nativePose.mHeadCenter)
+                    && finiteVec(nativePose.mPelvisCenter) && finiteVec(nativePose.mLeftHandCenter)
+                    && finiteVec(nativePose.mRightHandCenter) && finiteVec(nativePose.mLeftFootCenter)
+                    && finiteVec(nativePose.mRightFootCenter));
+                const osg::Vec3d torsoAxis = nativePose.mHeadCenter - nativePose.mPelvisCenter;
+                const double torsoLength = torsoAxis.length();
+                const double uprightRatio = npc && torsoLength > 1e-6 ? torsoAxis.z() / torsoLength : 1.0;
+                const bool upright = !npc || (uprightRatio > 0.55
+                    && nativePose.mLeftFootCenter.z() < nativePose.mPelvisCenter.z() + 5.0
+                    && nativePose.mRightFootCenter.z() < nativePose.mPelvisCenter.z() + 5.0);
+                const bool nativeStatePass
+                    = nativeBaseLayerReady && topologyReady && bonesResolved && bonesFinite && upright;
+                const char* nativeStateReason = !nativeBaseLayerReady ? "base-layer-missing"
+                    : (!topologyReady ? "topology-unresolved"
+                                      : (!bonesResolved ? "bones-unresolved"
+                                          : (!bonesFinite ? "bone-nonfinite"
+                                                          : (!upright ? "posture-folded" : "none"))));
+                Log(nativeStatePass ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 actor native state gate: actorIndex=" << proofActorBatchIndex << " target=\""
+                    << proofActorBatchTargets[proofActorBatchIndex] << "\" type="
+                    << (npc ? "NPC_" : "CREA") << " lower=\"" << lowerGroup << "\" torso=\"" << torsoGroup
+                    << "\" leftArm=\"" << leftArmGroup << "\" rightArm=\"" << rightArmGroup
+                    << "\" visibleDrawables=" << drawableVisitor.mVisibleDrawables << " visibleRigs="
+                    << drawableVisitor.mVisibleRigs << " resolvedRigs=" << drawableVisitor.mResolvedRigs
+                    << " bonesResolved=" << bonesResolved << " bonesFinite=" << bonesFinite
+                    << " uprightRatio=" << uprightRatio << " status=" << (nativeStatePass ? "pass" : "fail")
+                    << " reason=" << nativeStateReason;
+                proofActorPoseCycleComplete = true;
+                Log(Debug::Info) << "FNV/ESM4 actor pose cycle: actorIndex=" << proofActorBatchIndex
+                                 << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
+                                 << "\" requested=" << proofActorActivePoseGroups.size() << " played="
+                                 << proofActorPosePlayed << " deferred=" << proofActorPoseDeferred
+                                 << " skipped=" << proofActorPoseSkipped
+                                 << " selectedFrame=" << proofActorBatchSelectedFrame << " completeFrame="
+                                 << frameNumber << " status=complete";
+            }
+        }
+    }
+
+    if (!proofSidecarEnabled && proofActorBatchActive && !proofActorPhaseTimedOut
+        && proofActorBatchSelectedFrame >= 0)
+    {
+        const int timeoutFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_PHASE_TIMEOUT_FRAMES");
+        const int timeoutFrames = timeoutFramesEnv >= 1 ? timeoutFramesEnv : 1200;
+        if (static_cast<int>(frameNumber) - proofActorBatchSelectedFrame >= timeoutFrames)
+        {
+            if (proofActorBatchPrevious.isEmpty())
+                proofActorPhaseTimeoutReason = "actor-unresolved-timeout";
+            else if (proofActorPoseSweepEnabled && !proofActorPoseInventoryLogged)
+                proofActorPhaseTimeoutReason = "animation-unresolved-timeout";
+            else if (!proofActorStagedForCamera || !proofActorCameraAligned)
+                proofActorPhaseTimeoutReason = "camera-timeout";
+            else if (proofActorPoseSweepEnabled && !proofActorPoseCycleComplete)
+                proofActorPhaseTimeoutReason = "action-cycle-timeout";
+            else
+                proofActorPhaseTimeoutReason = "visual-readiness-timeout";
+
+            proofActorPhaseTimedOut = true;
+            proofActorPoseCycleComplete = true;
+            // A failed representative must not hold the persistent census process forever. Preserve whatever
+            // diagnostic scene is available and let the scheduled capture advance to the next actor.
+            if (!proofActorCameraAligned)
+            {
+                proofActorCameraAligned = true;
+                proofActorCameraAlignedFrame = static_cast<int>(frameNumber);
+                proofActorCameraAlignedScreenshotIndex = proofScreenshotFrameIndex;
+            }
+            Log(Debug::Warning) << "FNV/ESM4 actor phase gate: actorIndex=" << proofActorBatchIndex
+                                << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
+                                << "\" selectedFrame=" << proofActorBatchSelectedFrame << " frame=" << frameNumber
+                                << " timeoutFrames=" << timeoutFrames << " poseIndex=" << proofActorPoseIndex
+                                << " requested=" << proofActorActivePoseGroups.size() << " played="
+                                << proofActorPosePlayed << " deferred=" << proofActorPoseDeferred
+                                << " skipped=" << proofActorPoseSkipped
+                                << " status=fail reason=" << proofActorPhaseTimeoutReason;
+        }
+    }
+
+    const char* proofDialogueTopic = std::getenv("OPENMW_PROOF_DIALOGUE_TOPIC");
+    const int proofDialogueTopicDelay = std::max(1, getProofFrame("OPENMW_PROOF_DIALOGUE_TOPIC_DELAY"));
+    if (!proofDialogueTopicQueued && proofSayQueued && proofDialogueTopic != nullptr && *proofDialogueTopic != '\0'
+        && proofSayFrame >= 0 && frameNumber >= static_cast<unsigned>(proofSayFrame + proofDialogueTopicDelay)
+        && mDialogueManager != nullptr)
+    {
+        struct ProofDialogueCallback final : MWBase::DialogueManager::ResponseCallback
+        {
+            void addResponse(std::string_view title, std::string_view text) override
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: dialogue response title=\"" << title << "\" text=\"" << text
+                                 << "\"";
+            }
+        } callback;
+        Log(Debug::Info) << "FNV/ESM4 proof: selecting dialogue topic \"" << proofDialogueTopic << "\" at frame "
+                         << frameNumber;
+        const auto& choices = mDialogueManager->getChoices();
+        const auto choice = std::find_if(choices.begin(), choices.end(), [&](const auto& item) {
+            return Misc::StringUtils::ciEqual(item.first, proofDialogueTopic);
+        });
+        if (choice != choices.end())
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: matched dialogue choice \"" << choice->first
+                             << "\" index=" << choice->second;
+            mDialogueManager->questionAnswered(choice->second, &callback);
+        }
+        else
+            mDialogueManager->keywordSelected(proofDialogueTopic, &callback);
+        proofDialogueTopicQueued = true;
+    }
+
+    if (proofPinnedPlayerToActorView && proofRunning && !nativeFalloutSaveOwnsCamera() && mWorld != nullptr
+        && std::getenv("OPENMW_PROOF_PIN_PLAYER_TO_ACTOR_VIEW") != nullptr)
+    {
+        try
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const osg::Vec3f before = player.getRefData().getPosition().asVec3();
+            player = mWorld->moveObject(player, proofPinnedPlayerPosition, true, true);
+            mWorld->rotateObject(player, proofPinnedPlayerRotation);
+            if (static_cast<int>(frameNumber) - proofPinnedPlayerLastLogFrame >= 30)
+            {
+                proofPinnedPlayerLastLogFrame = static_cast<int>(frameNumber);
+                Log(Debug::Info) << "FNV/ESM4 proof: refreshed pinned player actor view frame=" << frameNumber
+                                 << " firstFrame=" << proofPinnedPlayerFirstFrame
+                                 << " before=(" << before.x() << "," << before.y() << "," << before.z() << ")"
+                                 << " pos=(" << proofPinnedPlayerPosition.x() << "," << proofPinnedPlayerPosition.y()
+                                 << "," << proofPinnedPlayerPosition.z() << ") rot=("
+                                 << proofPinnedPlayerRotation.x() << "," << proofPinnedPlayerRotation.y() << ","
+                                 << proofPinnedPlayerRotation.z() << ")";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            proofPinnedPlayerToActorView = false;
+            Log(Debug::Warning) << "FNV/ESM4 proof: failed to refresh pinned player actor view: " << e.what();
+        }
+    }
+
+    const auto executeProofTimedScript = [&](int targetFrame, const char* pathEnv, bool& executed) {
+        if (executed || targetFrame < 0 || frameNumber < static_cast<unsigned>(targetFrame) || !proofRunning
+            || !proofWorldReady)
+            return;
+        const char* scriptPath = std::getenv(pathEnv);
+        if (scriptPath == nullptr || *scriptPath == '\0')
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: timed script env " << pathEnv
+                                << " is empty at frame " << frameNumber;
+            executed = true;
+            return;
+        }
+        Log(Debug::Info) << "FNV/ESM4 proof: executing timed script " << pathEnv << "=\""
+                         << scriptPath << "\" at frame " << frameNumber;
+        mWindowManager->executeInConsole(std::filesystem::path(scriptPath));
+        executed = true;
+    };
+    executeProofTimedScript(proofTimedScript1Frame, "OPENMW_PROOF_TIMED_SCRIPT_1", proofTimedScript1Executed);
+    executeProofTimedScript(proofTimedScript2Frame, "OPENMW_PROOF_TIMED_SCRIPT_2", proofTimedScript2Executed);
+
+    const auto proofFalloutFastTravelMarker = [&]() -> std::optional<ESM::FormId> {
+        const char* markerText = std::getenv("OPENMW_FNV_PROOF_FAST_TRAVEL_MARKER");
+        if (markerText == nullptr || *markerText == '\0')
+            return std::nullopt;
+        try
+        {
+            const ESM::RefId marker = ESM::RefId::deserializeText(markerText);
+            if (const ESM::FormId* formId = marker.getIf<ESM::FormId>())
+                return *formId;
+        }
+        catch (const std::exception& error)
+        {
+            Log(Debug::Error) << "FNV fast-travel proof: invalid marker \"" << markerText
+                              << "\": " << error.what();
+        }
+        return std::nullopt;
+    };
+    if (!proofFalloutFastTravelDiscovered && proofFalloutFastTravelDiscoverFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutFastTravelDiscoverFrame) && proofRunning
+        && proofWorldReady && mWorld != nullptr)
+    {
+        const std::optional<ESM::FormId> marker = proofFalloutFastTravelMarker();
+        proofFalloutFastTravelDiscovered = marker && mWorld->showFalloutMapMarker(*marker, true);
+        Log(proofFalloutFastTravelDiscovered ? Debug::Info : Debug::Error)
+            << "FNV fast-travel proof: discover result=" << (proofFalloutFastTravelDiscovered ? "pass" : "fail")
+            << " frame=" << frameNumber;
+    }
+    if (!proofFalloutFastTravelSelected && proofFalloutFastTravelSelectFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutFastTravelSelectFrame) && proofRunning
+        && proofWorldReady && mWindowManager != nullptr)
+    {
+        const std::optional<ESM::FormId> marker = proofFalloutFastTravelMarker();
+        proofFalloutFastTravelSelected = marker && mWindowManager->requestFalloutFastTravel(*marker);
+        Log(proofFalloutFastTravelSelected ? Debug::Info : Debug::Error)
+            << "FNV fast-travel proof: select result=" << (proofFalloutFastTravelSelected ? "pass" : "fail")
+            << " frame=" << frameNumber;
+    }
+    if (!proofFalloutFastTravelConfirmed && proofFalloutFastTravelConfirmFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofFalloutFastTravelConfirmFrame) && proofRunning
+        && proofWorldReady && proofFalloutFastTravelSelected && mWindowManager != nullptr)
+    {
+        mWindowManager->confirmFalloutFastTravel();
+        proofFalloutFastTravelConfirmed = true;
+        Log(Debug::Info) << "FNV fast-travel proof: confirmed frame=" << frameNumber;
+    }
+
+    if (proofFalloutTourPhase >= 0 && proofRunning && proofWorldReady && mWorld != nullptr
+        && mWindowManager != nullptr && mMechanicsManager != nullptr)
+    {
+        constexpr int overviewFrames = 120;
+        constexpr int mapFrames = 90;
+        constexpr int confirmationFrames = 15;
+        constexpr int minimumReadyFrames = 45;
+        constexpr int walkFrames = 120;
+        constexpr int lookFrames = 240;
+        constexpr int readyTimeoutFrames = 600;
+
+        const auto findTourMarker = [&](std::string_view name) -> const ESM4::Reference* {
+            const auto& references = mWorld->getStore().get<ESM4::Reference>();
+            for (std::size_t index = 0; index < references.getSize(); ++index)
+            {
+                const ESM4::Reference* marker = references.at(index);
+                if (marker != nullptr && marker->mIsMapMarker
+                    && Misc::StringUtils::ciEqual(marker->mFullName, name))
+                    return marker;
+            }
+            return nullptr;
+        };
+        const auto currentTourMarker = [&]() -> const ESM4::Reference* {
+            return proofFalloutTourIndex < proofFalloutTourLocations.size()
+                ? findTourMarker(proofFalloutTourLocations[proofFalloutTourIndex])
+                : nullptr;
+        };
+        const auto beginPhase = [&](int phase) {
+            proofFalloutTourPhase = phase;
+            proofFalloutTourPhaseFrame = frameNumber;
+        };
+        const auto setTourMovement = [&](float forward) {
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
+            movement.mPosition[0] = 0.f;
+            movement.mPosition[1] = forward;
+            movement.mPosition[2] = 0.f;
+            player.getClass().getCreatureStats(player).setMovementFlag(
+                MWMechanics::CreatureStats::Flag_Run, false);
+            if (mLuaManager != nullptr)
+            {
+                if (MWBase::LuaManager::ActorControls* controls = mLuaManager->getActorControls(player))
+                {
+                    controls->mDisableAI = false;
+                    controls->mMovement = forward;
+                    controls->mSideMovement = 0.f;
+                    controls->mJump = false;
+                    controls->mRun = false;
+                    controls->mSneak = false;
+                    controls->mChanged = true;
+                }
+            }
+        };
+
+        const unsigned elapsed = frameNumber - proofFalloutTourPhaseFrame;
+        if (proofFalloutTourPhase == 0)
+        {
+            std::size_t discovered = 0;
+            const auto& references = mWorld->getStore().get<ESM4::Reference>();
+            for (std::size_t index = 0; index < references.getSize(); ++index)
+            {
+                const ESM4::Reference* marker = references.at(index);
+                if (marker != nullptr && marker->mIsMapMarker && !marker->mFullName.empty()
+                    && mWorld->showFalloutMapMarker(marker->mId, true, false))
+                    ++discovered;
+            }
+            if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+            mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+            mWindowManager->refreshFalloutMapMarkers();
+            Log(Debug::Info) << "FNV dirty-dozen tour: revealed authored map markers=" << discovered
+                             << " requestedStops=" << proofFalloutTourLocations.size()
+                             << " frame=" << frameNumber;
+            beginPhase(1);
+        }
+        else if (proofFalloutTourPhase == 1 && elapsed >= overviewFrames)
+        {
+            beginPhase(2);
+        }
+        else if (proofFalloutTourPhase == 2)
+        {
+            setTourMovement(0.f);
+            proofFalloutTourActor = MWWorld::Ptr();
+            const ESM4::Reference* marker = currentTourMarker();
+            if (marker == nullptr)
+            {
+                Log(Debug::Error) << "FNV dirty-dozen tour: missing authored map marker \""
+                                  << proofFalloutTourLocations[proofFalloutTourIndex] << "\"";
+                mStateManager->requestQuit();
+                proofFalloutTourPhase = -1;
+            }
+            else
+            {
+                if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+                    mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+                mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, 0);
+                if (!mWindowManager->focusFalloutMapMarker(marker->mId, 1.6f))
+                {
+                    Log(Debug::Error) << "FNV dirty-dozen tour: could not focus authored marker "
+                                      << marker->mId;
+                    mStateManager->requestQuit();
+                    proofFalloutTourPhase = -1;
+                }
+                else
+                {
+                    Log(Debug::Info) << "FNV dirty-dozen tour: map stop=" << (proofFalloutTourIndex + 1)
+                                     << "/" << proofFalloutTourLocations.size() << " name=\""
+                                     << marker->mFullName << "\" marker=" << marker->mId
+                                     << " frame=" << frameNumber;
+                    beginPhase(3);
+                }
+            }
+        }
+        else if (proofFalloutTourPhase == 3 && elapsed >= mapFrames)
+        {
+            const ESM4::Reference* marker = currentTourMarker();
+            if (marker == nullptr || !mWindowManager->requestFalloutFastTravel(marker->mId))
+            {
+                Log(Debug::Error) << "FNV dirty-dozen tour: could not select stop="
+                                  << (proofFalloutTourIndex + 1);
+                mStateManager->requestQuit();
+                proofFalloutTourPhase = -1;
+            }
+            else
+                beginPhase(4);
+        }
+        else if (proofFalloutTourPhase == 4 && elapsed >= confirmationFrames)
+        {
+            mWindowManager->confirmFalloutFastTravel();
+            Log(Debug::Info) << "FNV dirty-dozen tour: confirmed stop=" << (proofFalloutTourIndex + 1)
+                             << " frame=" << frameNumber;
+            beginPhase(5);
+        }
+        else if (proofFalloutTourPhase == 5)
+        {
+            const ESM4::Reference* marker = currentTourMarker();
+            const MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const osg::Vec3f playerPosition = player.getRefData().getPosition().asVec3();
+            const float dx = marker != nullptr ? playerPosition.x() - marker->mPos.pos[0] : 1e9f;
+            const float dy = marker != nullptr ? playerPosition.y() - marker->mPos.pos[1] : 1e9f;
+            std::vector<MWWorld::Ptr> nearbyActors;
+            mMechanicsManager->getActorsInRange(playerPosition, 8192.f, nearbyActors);
+            const std::size_t livingSceneActors = static_cast<std::size_t>(
+                std::count_if(nearbyActors.begin(), nearbyActors.end(), [&](const MWWorld::Ptr& actor) {
+                    return actor != player && !actor.isEmpty() && actor.getCellRef().getCount() > 0;
+                }));
+            const bool arrived = marker != nullptr && dx * dx + dy * dy <= 8192.f * 8192.f;
+            if (elapsed >= minimumReadyFrames && arrived && livingSceneActors > 0)
+            {
+                MWWorld::Ptr closestActor;
+                float closestDistanceSquared = std::numeric_limits<float>::max();
+                for (const MWWorld::Ptr& actor : nearbyActors)
+                {
+                    if (actor == player || actor.isEmpty() || actor.getCellRef().getCount() <= 0)
+                        continue;
+                    const osg::Vec3f delta
+                        = actor.getRefData().getPosition().asVec3() - playerPosition;
+                    const float distanceSquared = delta.length2();
+                    if (distanceSquared < closestDistanceSquared)
+                    {
+                        closestDistanceSquared = distanceSquared;
+                        closestActor = actor;
+                    }
+                }
+
+                std::string focusedActor;
+                if (!closestActor.isEmpty())
+                {
+                    proofFalloutTourActor = closestActor;
+                    focusedActor = std::string(closestActor.getClass().getName(closestActor));
+                    if (MWRender::Camera* camera = mWorld->getCamera())
+                    {
+                        const osg::Vec3d cameraPosition = camera->getPosition();
+                        osg::Vec3d actorCenter = closestActor.getRefData().getPosition().asVec3();
+                        actorCenter.z() += 96.0;
+                        const osg::Vec3d delta = actorCenter - cameraPosition;
+                        const double horizontal
+                            = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+                        proofFalloutTourLookYaw
+                            = -static_cast<float>(std::atan2(delta.x(), delta.y()));
+                        proofFalloutTourLookPitch
+                            = static_cast<float>(std::atan2(delta.z(), horizontal));
+                        camera->setYaw(proofFalloutTourLookYaw, true);
+                        camera->setPitch(proofFalloutTourLookPitch, true);
+                        camera->updateCamera();
+                    }
+                }
+                Log(Debug::Info) << "FNV dirty-dozen tour: ready stop=" << (proofFalloutTourIndex + 1)
+                                 << " name=\"" << marker->mFullName << "\" actors=" << livingSceneActors
+                                 << " focusedActor=\"" << focusedActor << "\" focusedDistance="
+                                 << std::sqrt(closestDistanceSquared)
+                                 << " player=(" << playerPosition.x() << "," << playerPosition.y() << ","
+                                 << playerPosition.z() << ") frame=" << frameNumber;
+                beginPhase(6);
+            }
+            else if (elapsed >= readyTimeoutFrames)
+            {
+                Log(Debug::Error) << "FNV dirty-dozen tour: readiness failed stop="
+                                  << (proofFalloutTourIndex + 1) << " arrived=" << (arrived ? 1 : 0)
+                                  << " actors=" << livingSceneActors << " frame=" << frameNumber;
+                mStateManager->requestQuit();
+                proofFalloutTourPhase = -1;
+            }
+        }
+        else if (proofFalloutTourPhase == 6)
+        {
+            setTourMovement(elapsed < walkFrames ? 0.65f : 0.f);
+            if (MWRender::Camera* camera = mWorld->getCamera())
+            {
+                if (elapsed <= walkFrames && !proofFalloutTourActor.isEmpty()
+                    && proofFalloutTourActor.getCellRef().getCount() > 0)
+                {
+                    const osg::Vec3d cameraPosition = camera->getPosition();
+                    osg::Vec3d actorCenter = proofFalloutTourActor.getRefData().getPosition().asVec3();
+                    actorCenter.z() += 96.0;
+                    const osg::Vec3d delta = actorCenter - cameraPosition;
+                    const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+                    proofFalloutTourLookYaw = -static_cast<float>(std::atan2(delta.x(), delta.y()));
+                    proofFalloutTourLookPitch = static_cast<float>(std::atan2(delta.z(), horizontal));
+                }
+                const float lookProgress = elapsed <= walkFrames
+                    ? 0.f
+                    : std::min(1.f, static_cast<float>(elapsed - walkFrames)
+                            / static_cast<float>(lookFrames - walkFrames));
+                camera->setYaw(proofFalloutTourLookYaw + lookProgress * 0.28f, true);
+                camera->setPitch(proofFalloutTourLookPitch, true);
+                camera->updateCamera();
+            }
+            if (elapsed >= lookFrames)
+            {
+                setTourMovement(0.f);
+                Log(Debug::Info) << "FNV dirty-dozen tour: viewed stop=" << (proofFalloutTourIndex + 1)
+                                 << " frame=" << frameNumber;
+                ++proofFalloutTourIndex;
+                if (proofFalloutTourIndex >= proofFalloutTourLocations.size())
+                {
+                    Log(Debug::Info) << "FNV dirty-dozen tour: result=pass stops="
+                                     << proofFalloutTourLocations.size() << " frame=" << frameNumber;
+                    mStateManager->requestQuit();
+                    proofFalloutTourPhase = -1;
+                }
+                else
+                    beginPhase(2);
+            }
+        }
+    }
+
+    const bool fnvInteractionRequested = proofEnvEnabled("OPENMW_FNV_INTERACTION_AUDIT");
+    const bool fnvInteractionDoorOnly = proofEnvEnabled("OPENMW_FNV_INTERACTION_DOOR_ONLY");
+    if (fnvInteractionRequested && fnvInteractionPhase >= 0 && proofRunning
+        && !nativeFalloutSaveOwnsCamera() && mWorld != nullptr
+        && mWindowManager != nullptr)
+    {
+        // The native audit deliberately activates actors and crosses cell doors after the Lua
+        // worker is normally released for the frame.  Serialize only this opt-in audit path so
+        // those scene mutations cannot invalidate the worker's shared nearby-object lists.
+        mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+        const auto interactionGateSummary = [&]() {
+            std::ostringstream stream;
+            stream << "actor=" << (fnvInteractionActorPass ? 1 : 0)
+                   << " dialogue=" << (fnvInteractionDialoguePass ? 1 : 0)
+                   << " quest=" << (fnvInteractionQuestPass ? 1 : 0)
+                   << " doorIn=" << (fnvInteractionDoorInPass ? 1 : 0)
+                   << " interiorActors=" << (fnvInteractionInteriorActorsPass ? 1 : 0)
+                   << " radio=" << (fnvInteractionRadioPass ? 1 : 0)
+                   << " doorOut=" << (fnvInteractionDoorOutPass ? 1 : 0);
+            return stream.str();
+        };
+        const auto finishInteraction = [&](bool pass, std::string_view reason) {
+            Log(pass ? Debug::Info : Debug::Error)
+                << "FNV interaction audit: result=" << (pass ? "pass" : "fail")
+                << " reason=\"" << reason << "\" " << interactionGateSummary()
+                << " frame=" << frameNumber;
+            fnvInteractionPhase = -1;
+            mStateManager->requestQuit();
+        };
+        const auto advanceInteraction = [&](int phase) {
+            fnvInteractionPhase = phase;
+            fnvInteractionPhaseFrame = frameNumber;
+            fnvInteractionPhaseStartTime = frameStart;
+            Log(Debug::Info) << "FNV interaction audit: phase=" << phase << " frame=" << frameNumber;
+        };
+        const auto queueInteractionCapture = [&](std::string_view label) {
+            if (mScreenCaptureHandler == nullptr)
+                return;
+            Log(Debug::Info) << "FNV interaction audit: queuing native capture label=" << label
+                             << " frame=" << frameNumber;
+            mScreenCaptureHandler->setFramesToCapture(1);
+            mScreenCaptureHandler->captureNextFrame(*mViewer);
+        };
+        const auto findActiveRef = [&](std::uint32_t rawFormId) {
+            const ESM::FormId formId = ESM::FormId::fromUint32(rawFormId);
+            MWWorld::Ptr found;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                    {
+                        found = ptr;
+                        return false;
+                    }
+                    return true;
+                });
+                if (!found.isEmpty())
+                    break;
+            }
+            return found;
+        };
+        const auto countActiveRef = [&](std::uint32_t rawFormId) {
+            const ESM::FormId formId = ESM::FormId::fromUint32(rawFormId);
+            int count = 0;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                        ++count;
+                    return true;
+                });
+            }
+            return count;
+        };
+        const auto activateInteractionTarget = [&](const MWWorld::Ptr& target, std::string_view label) {
+            if (target.isEmpty())
+            {
+                Log(Debug::Error) << "FNV interaction audit: activation target missing label=" << label;
+                return false;
+            }
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            std::unique_ptr<MWWorld::Action> action = target.getClass().activate(target, player);
+            const bool actionable = action != nullptr && !action->isNullAction();
+            Log(actionable ? Debug::Info : Debug::Error)
+                << "FNV interaction audit: activate label=" << label << " target=" << target.toString()
+                << " type=" << target.getTypeDescription() << " actionable=" << (actionable ? 1 : 0);
+            if (actionable)
+                action->execute(player);
+            return actionable;
+        };
+        const auto playerCellId = [&]() {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            if (player.isEmpty() || player.getCell() == nullptr || player.getCell()->getCell() == nullptr)
+                return ESM::RefId();
+            return player.getCell()->getCell()->getId();
+        };
+        const auto aimInteractionCameraAt = [&](const MWWorld::Ptr& target, std::string_view label,
+                                                    float aimOffsetZ) {
+            if (nativeFalloutSaveOwnsCamera())
+                return false;
+
+            MWRender::Camera* camera = mWorld->getCamera();
+            if (camera == nullptr || target.isEmpty())
+                return false;
+
+            const osg::Vec3d cameraPosition = camera->getPosition();
+            osg::Vec3d aimPosition = target.getRefData().getPosition().asVec3();
+            aimPosition.z() += aimOffsetZ;
+            const osg::Vec3d delta = aimPosition - cameraPosition;
+            const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+            if (horizontal < 1.0)
+                return false;
+
+            const float pitch = static_cast<float>(std::atan2(delta.z(), horizontal));
+            const float yaw = -static_cast<float>(std::atan2(delta.x(), delta.y()));
+            camera->setPitch(pitch, true);
+            camera->setYaw(yaw, true);
+            camera->setRoll(0.f);
+            camera->instantTransition();
+            camera->updateCamera();
+            Log(Debug::Info) << "FNV interaction audit: aim label=" << label
+                             << " cameraPos=(" << cameraPosition.x() << "," << cameraPosition.y() << ","
+                             << cameraPosition.z() << ") targetPos=(" << aimPosition.x() << ","
+                             << aimPosition.y() << "," << aimPosition.z() << ") pitch=" << pitch
+                             << " yaw=" << yaw;
+            return true;
+        };
+        const unsigned int phaseFrames = frameNumber - fnvInteractionPhaseFrame;
+        const double phaseSeconds = fnvInteractionPhaseStartTime != 0
+            ? timer->delta_s(fnvInteractionPhaseStartTime, frameStart)
+            : 0.0;
+        const double phaseTimeoutSeconds
+            = std::max(5.f, readProofFloat("OPENMW_FNV_INTERACTION_PHASE_TIMEOUT_SECONDS", 45.f));
+
+        if (fnvInteractionPhase == 0 && proofWorldReady
+            && proofWorldReadyFrames
+                >= std::max(1, readProofInt("OPENMW_FNV_INTERACTION_SETTLE_FRAMES", 900)))
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const int level = player.getClass().getCreatureStats(player).getLevel();
+            fnvInteractionActor = findActiveRef(0x1104c80);
+            if (fnvInteractionActor.isEmpty())
+            {
+                finishInteraction(false, "Easy Pete authored reference is not active outside Goodsprings");
+            }
+            else
+            {
+                const osg::Vec3f actorPosition = fnvInteractionActor.getRefData().getPosition().asVec3();
+                const osg::Vec3f retailChair(-67966.9297f, 3447.8076f, 8387.3105f);
+                const float chairDistance = (actorPosition - retailChair).length();
+                const bool inCombat = fnvInteractionActor.getClass()
+                                          .getCreatureStats(fnvInteractionActor)
+                                          .getAiSequence()
+                                          .isInCombat();
+                const int activeCopies = countActiveRef(0x1104c80);
+                fnvInteractionActorSettledPosition = actorPosition;
+                fnvInteractionActorPass
+                    = level == 1 && activeCopies == 1 && chairDistance <= 192.f && !inCombat;
+                Log(fnvInteractionActorPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: actor settle level=" << level << " refCopies=" << activeCopies
+                    << " pos=(" << actorPosition.x() << "," << actorPosition.y() << "," << actorPosition.z()
+                    << ") retailChairDistance=" << chairDistance << " inCombat=" << (inCombat ? 1 : 0)
+                    << " result=" << (fnvInteractionActorPass ? "pass" : "fail");
+                aimInteractionCameraAt(fnvInteractionActor, "outside-easy-pete-settled",
+                    readProofFloat("OPENMW_FNV_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueInteractionCapture("outside-easy-pete-settled");
+                advanceInteraction(fnvInteractionDoorOnly ? 3 : 8);
+            }
+        }
+        else if (fnvInteractionPhase == 8 && phaseFrames >= 8)
+        {
+            if (!activateInteractionTarget(fnvInteractionActor, "easy-pete-dialogue"))
+                finishInteraction(false, "Easy Pete activation returned a null action");
+            else
+                advanceInteraction(1);
+        }
+        else if (fnvInteractionPhase == 1)
+        {
+            const bool dialogueOpen = mWindowManager->containsMode(MWGui::GM_Dialogue);
+            const bool voiceActive = mSoundManager != nullptr && mSoundManager->sayActive(fnvInteractionActor);
+            fnvInteractionGreetingAudioSeen = fnvInteractionGreetingAudioSeen || voiceActive;
+            if (dialogueOpen && fnvInteractionGreetingAudioSeen && !voiceActive && phaseFrames >= 5)
+            {
+                struct InteractionDialogueCallback final : MWBase::DialogueManager::ResponseCallback
+                {
+                    bool mHadText = false;
+                    void addResponse(std::string_view title, std::string_view text) override
+                    {
+                        mHadText = mHadText || !text.empty();
+                        Log(Debug::Info) << "FNV interaction audit: dialogue response title=\"" << title
+                                         << "\" text=\"" << text << "\"";
+                    }
+                } callback;
+                constexpr std::string_view topic = "Why are you called Easy Pete?";
+                mDialogueManager->keywordSelected(topic, &callback);
+                fnvInteractionDialoguePass = dialogueOpen && callback.mHadText;
+                queueInteractionCapture("easy-pete-authored-topic");
+                advanceInteraction(2);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishInteraction(false, "Easy Pete greeting GUI or authored voice did not complete");
+        }
+        else if (fnvInteractionPhase == 2)
+        {
+            const bool voiceActive = mSoundManager != nullptr && mSoundManager->sayActive(fnvInteractionActor);
+            fnvInteractionTopicAudioSeen = fnvInteractionTopicAudioSeen || voiceActive;
+            if (fnvInteractionTopicAudioSeen && !voiceActive && phaseFrames >= 5)
+            {
+                fnvInteractionDialoguePass = fnvInteractionDialoguePass && fnvInteractionGreetingAudioSeen
+                    && fnvInteractionTopicAudioSeen;
+                mDialogueManager->goodbyeSelected();
+                mWindowManager->removeGuiMode(MWGui::GM_Dialogue);
+                const bool stageSet = mWorld->getESM4QuestRuntime().setStage("VCG02", 5);
+                const MWWorld::ESM4QuestState* quest = mWorld->getESM4QuestRuntime().search("VCG02");
+                fnvInteractionQuestPass = stageSet && quest != nullptr && quest->mCurrentStage == 5
+                    && quest->mStageDone.contains(5) && quest->mStageDone.at(5);
+                Log(fnvInteractionQuestPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: quest VCG02 stage=5 state="
+                    << (quest != nullptr ? static_cast<int>(quest->mCurrentStage) : -1)
+                    << " notificationQueued=" << (fnvInteractionQuestPass ? 1 : 0)
+                    << " result=" << (fnvInteractionQuestPass ? "pass" : "fail");
+                advanceInteraction(3);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishInteraction(false, "Easy Pete authored topic voice did not complete");
+        }
+        else if (fnvInteractionPhase == 3)
+        {
+            if (!fnvInteractionDoorOnly && !fnvInteractionQuestCaptureQueued && phaseFrames >= 10)
+            {
+                fnvInteractionQuestCaptureQueued = true;
+                queueInteractionCapture("quest-notification");
+            }
+            if (phaseFrames >= 90)
+            {
+                MWWorld::Ptr door = findActiveRef(0x110636f);
+                const ESM::RefId expectedInterior(ESM::FormId::fromUint32(0x1106185));
+                const bool authoredPair = !door.isEmpty() && door.getClass().isDoor()
+                    && door.getCellRef().getTeleport() && door.getCellRef().getDestCell() == expectedInterior;
+                fnvInteractionDoorInPass
+                    = authoredPair && activateInteractionTarget(door, "prospector-saloon-front-door");
+                Log(fnvInteractionDoorInPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: exterior door sourceRef=FormId:0x110636f expectedCell="
+                    << expectedInterior.toDebugString() << " authoredPair=" << (authoredPair ? 1 : 0)
+                    << " result=" << (fnvInteractionDoorInPass ? "pass" : "fail");
+                if (!fnvInteractionDoorInPass)
+                    finishInteraction(false, "Prospector Saloon exterior XTEL action failed");
+                else
+                    advanceInteraction(4);
+            }
+        }
+        else if (fnvInteractionPhase == 4)
+        {
+            const ESM::RefId expectedInterior(ESM::FormId::fromUint32(0x1106185));
+            if (playerCellId() == expectedInterior && phaseFrames >= 180)
+            {
+                int actorCount = 0;
+                for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+                {
+                    if (cellstore == nullptr)
+                        continue;
+                    cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                        if (!ptr.isEmpty() && ptr.getClass().isActor())
+                            ++actorCount;
+                        return true;
+                    });
+                }
+                const bool sunny = !findActiveRef(0x1104e85).isEmpty();
+                const bool trudy = !findActiveRef(0x1104c6d).isEmpty();
+                const bool cheyenne = !findActiveRef(0x110588e).isEmpty();
+                fnvInteractionInteriorActorsPass = actorCount >= 2 && (sunny || trudy) && cheyenne;
+                Log(fnvInteractionInteriorActorsPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: saloon interior cell=" << playerCellId().toDebugString()
+                    << " actors=" << actorCount << " Sunny=" << (sunny ? 1 : 0)
+                    << " Trudy=" << (trudy ? 1 : 0) << " Cheyenne=" << (cheyenne ? 1 : 0)
+                    << " result=" << (fnvInteractionInteriorActorsPass ? "pass" : "fail");
+                MWWorld::Ptr interiorProofActor = findActiveRef(0x110588e);
+                if (interiorProofActor.isEmpty())
+                    interiorProofActor = !findActiveRef(0x1104e85).isEmpty() ? findActiveRef(0x1104e85)
+                                                                          : findActiveRef(0x1104c6d);
+                aimInteractionCameraAt(interiorProofActor, "saloon-interior-actors",
+                    readProofFloat("OPENMW_FNV_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueInteractionCapture("saloon-interior-actors");
+
+                fnvInteractionRadio = findActiveRef(0x1109087);
+                fnvInteractionRadioSound = {};
+                if (!fnvInteractionRadio.isEmpty() && fnvInteractionRadio.getType() == ESM4::Activator::sRecordId)
+                {
+                    const ESM4::Activator& activator = *fnvInteractionRadio.get<ESM4::Activator>()->mBase;
+                    ESM::FormId broadcast = activator.mLoopingSound;
+                    if (broadcast.isZeroOrUnset())
+                        broadcast = activator.mRadioTemplate;
+                    if (broadcast.isZeroOrUnset() && !activator.mRadioStation.isZeroOrUnset())
+                    {
+                        const ESM4::TalkingActivator* station = mWorld->getStore()
+                            .get<ESM4::TalkingActivator>()
+                            .search(ESM::RefId(activator.mRadioStation));
+                        if (station != nullptr)
+                            broadcast = !station->mLoopSound.isZeroOrUnset() ? station->mLoopSound
+                                                                            : station->mRadioTemplate;
+                    }
+                    fnvInteractionRadioSound = ESM::RefId(broadcast);
+                }
+                const bool radioAction = activateInteractionTarget(fnvInteractionRadio, "goodsprings-radio");
+                const bool radioPlaying = radioAction && mUseSound && mSoundManager != nullptr
+                    && !fnvInteractionRadioSound.empty()
+                    && mSoundManager->getSoundPlaying(fnvInteractionRadio, fnvInteractionRadioSound);
+                fnvInteractionRadioPass = radioPlaying;
+                Log(fnvInteractionRadioPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: radio sourceRef=FormId:0x1109087 sound="
+                    << fnvInteractionRadioSound.toDebugString() << " soundEnabled=" << (mUseSound ? 1 : 0)
+                    << " playing=" << (radioPlaying ? 1 : 0)
+                    << " result=" << (fnvInteractionRadioPass ? "pass" : "fail");
+                advanceInteraction(5);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishInteraction(false, "Prospector Saloon interior did not become active");
+        }
+        else if (fnvInteractionPhase == 5)
+        {
+            const bool radioStillPlaying = mSoundManager != nullptr && !fnvInteractionRadio.isEmpty()
+                && !fnvInteractionRadioSound.empty()
+                && mSoundManager->getSoundPlaying(fnvInteractionRadio, fnvInteractionRadioSound);
+            fnvInteractionRadioPass = fnvInteractionRadioPass && radioStillPlaying;
+            if (!fnvInteractionRadioCaptureQueued && phaseFrames >= 45)
+            {
+                fnvInteractionRadioCaptureQueued = true;
+                aimInteractionCameraAt(fnvInteractionRadio, "goodsprings-radio-on",
+                    readProofFloat("OPENMW_FNV_INTERACTION_RADIO_AIM_Z", 24.f));
+                queueInteractionCapture("goodsprings-radio-on");
+            }
+            if (fnvInteractionRadioCaptureQueued && phaseFrames >= 53)
+            {
+                MWWorld::Ptr exitDoor = findActiveRef(0x110618e);
+                const bool authoredExit = !exitDoor.isEmpty() && exitDoor.getClass().isDoor()
+                    && exitDoor.getCellRef().getTeleport();
+                fnvInteractionDoorOutPass
+                    = authoredExit && activateInteractionTarget(exitDoor, "prospector-saloon-exit-door");
+                Log(fnvInteractionDoorOutPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: interior exit sourceRef=FormId:0x110618e authoredPair="
+                    << (authoredExit ? 1 : 0) << " radioStillPlaying=" << (radioStillPlaying ? 1 : 0)
+                    << " result=" << (fnvInteractionDoorOutPass ? "pass" : "fail");
+                if (!fnvInteractionDoorOutPass)
+                    finishInteraction(false, "Prospector Saloon interior XTEL action failed");
+                else
+                    advanceInteraction(6);
+            }
+        }
+        else if (fnvInteractionPhase == 6)
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const bool outside = !player.isEmpty() && player.getCell() != nullptr && player.getCell()->isExterior();
+            if (outside && phaseFrames >= 180)
+            {
+                MWWorld::Ptr peteAfterReturn = findActiveRef(0x1104c80);
+                const int activeCopies = countActiveRef(0x1104c80);
+                float actorDrift = std::numeric_limits<float>::infinity();
+                bool actorInCombat = true;
+                if (!peteAfterReturn.isEmpty())
+                {
+                    actorDrift = (peteAfterReturn.getRefData().getPosition().asVec3()
+                                     - fnvInteractionActorSettledPosition)
+                                     .length();
+                    actorInCombat = peteAfterReturn.getClass()
+                                        .getCreatureStats(peteAfterReturn)
+                                        .getAiSequence()
+                                        .isInCombat();
+                }
+                fnvInteractionActorPass = fnvInteractionActorPass && activeCopies == 1
+                    && actorDrift <= 256.f && !actorInCombat;
+                Log(fnvInteractionActorPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: exterior return cell=" << playerCellId().toDebugString()
+                    << " EasyPeteCopies=" << activeCopies << " actorDrift=" << actorDrift
+                    << " actorInCombat=" << (actorInCombat ? 1 : 0)
+                    << " weather=" << mWorld->getCurrentWeatherScriptId()
+                    << " weatherTransition=" << mWorld->getWeatherTransition()
+                    << " result=" << (fnvInteractionActorPass ? "pass" : "fail");
+                aimInteractionCameraAt(peteAfterReturn, "outside-return-weather-actor",
+                    readProofFloat("OPENMW_FNV_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueInteractionCapture("outside-return-weather-actor");
+                advanceInteraction(7);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishInteraction(false, "Prospector Saloon exit did not return to the exterior");
+        }
+        else if (fnvInteractionPhase == 7 && phaseFrames >= 8)
+        {
+            const bool pass = fnvInteractionActorPass && fnvInteractionDoorInPass
+                && fnvInteractionInteriorActorsPass && fnvInteractionRadioPass && fnvInteractionDoorOutPass
+                && (fnvInteractionDoorOnly || (fnvInteractionDialoguePass && fnvInteractionQuestPass));
+            finishInteraction(pass,
+                pass ? (fnvInteractionDoorOnly ? "complete authored door circuit"
+                                               : "complete authored interaction circuit")
+                     : "one or more authored interaction gates failed");
+        }
+    }
+
+    const bool fnvGoodspringsActorAuditRequested
+        = proofEnvEnabled("OPENMW_FNV_GOODSPRINGS_ACTOR_AUDIT");
+    if (fnvGoodspringsActorAuditRequested && proofRunning && proofWorldReady
+        && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        // A saved Pip-Boy mode pauses simulation. The actor audit must observe live package/animation execution.
+        // Input is isolated above, so this only clears a mode restored by the loaded save; it no longer competes
+        // with physical input and repeatedly rebuilds the paper-doll scene.
+        if (mWindowManager->containsMode(MWGui::GM_Inventory))
+            mWindowManager->removeGuiMode(MWGui::GM_Inventory);
+
+        struct GoodspringsActorAuditTarget
+        {
+            std::string_view mLabel;
+            std::uint32_t mReference;
+            osg::Vec3f mAuthoredPosition;
+            float mAuthoredYaw;
+            ESM::RefId mInteriorCell;
+            int mExpectedPackage;
+            unsigned int mSampleFrames;
+            bool mRequireTravel;
+            bool mRequireCombat;
+            bool mRequireAuthoredAnchor;
+        };
+        struct GoodspringsActorAuditState
+        {
+            osg::Vec3f mFirstPosition;
+            osg::Vec3f mPreviousPosition;
+            float mFirstAnimationTime = std::numeric_limits<float>::quiet_NaN();
+            float mPreviousAnimationTime = std::numeric_limits<float>::quiet_NaN();
+            float mTotalTravel = 0.f;
+            float mMaximumStep = 0.f;
+            float mMinimumZ = std::numeric_limits<float>::infinity();
+            float mMaximumZ = -std::numeric_limits<float>::infinity();
+            float mMinimumFacingDot = 1.f;
+            float mAnchorDistance = std::numeric_limits<float>::infinity();
+            float mAuthoredYawError = std::numeric_limits<float>::infinity();
+            float mRenderedForwardDot = -1.f;
+            unsigned int mSamples = 0;
+            unsigned int mGroundedSamples = 0;
+            unsigned int mMovingSamples = 0;
+            unsigned int mFacingReferenceSamples = 0;
+            unsigned int mFacingSamples = 0;
+            unsigned int mAnimationSamples = 0;
+            unsigned int mAnimationAdvanceSamples = 0;
+            unsigned int mAnimationLoopWraps = 0;
+            unsigned int mDogAnimationSourceSamples = 0;
+            unsigned int mDogAnimationSourceMismatchSamples = 0;
+            unsigned int mExpectedPackageSamples = 0;
+            unsigned int mCombatSamples = 0;
+            std::string mAnimationGroup;
+            std::string mAnimationSource;
+            bool mPass = false;
+            std::string mFailure;
+        };
+
+        // These are real authored references from the canonical Goodsprings census. The audit moves only the
+        // player between their authored cells; it never stages, enables, repositions, or drives an actor.
+        static const std::array<GoodspringsActorAuditTarget, 14> targets = { {
+            { "victor", 0x11073e8, osg::Vec3f(-72314.5f, -5998.995f, 8312.f), 0.0000006258f,
+                ESM::RefId(), -1, 300, false, false, true },
+            { "bighorner-south", 0x110769d, osg::Vec3f(-71884.938f, -4167.562f, 8239.664f), 5.410522f,
+                ESM::RefId(), 0, 600, false, false, false },
+            { "bighorner-west-01", 0x110706e, osg::Vec3f(-69717.367f, -1103.671f, 8104.f), 0.768998f,
+                ESM::RefId(), 0, 240, false, false, false },
+            { "bighorner-west-02", 0x115ef63, osg::Vec3f(-69849.406f, -713.539f, 8105.812f), 6.193186f,
+                ESM::RefId(), 0, 240, false, false, false },
+            { "bighorner-west-03", 0x1107077, osg::Vec3f(-70112.203f, -1018.393f, 8111.649f), 2.110000f,
+                ESM::RefId(), 0, 240, false, false, false },
+            { "bighorner-north-01", 0x1109a39, osg::Vec3f(-70053.609f, 6021.109f, 8496.f), 4.712390f,
+                ESM::RefId(), 0, 240, false, false, false },
+            { "bighorner-north-02", 0x1106b16, osg::Vec3f(-71550.914f, 6246.456f, 8502.403f), 5.593186f,
+                ESM::RefId(), 0, 240, false, false, false },
+            { "cheyenne", 0x110588e, osg::Vec3f(153.364f, -464.028f, 3456.f), 3.100010f,
+                ESM::RefId(ESM::FormId::fromUint32(0x1106185)), 3, 360, false, false, false },
+            { "coyote", 0x1157b3b, osg::Vec3f(-58562.f, -5984.f, 8439.875f), 0.f,
+                ESM::RefId(), 0, 600, true, false, false },
+            { "gecko", 0x1157b3d, osg::Vec3f(-69248.f, -17219.f, 8818.688f), 2.216570f,
+                ESM::RefId(), 5, 600, true, true, false },
+            { "fiend-melee-vault3", 0x10f2dfe, osg::Vec3f(3117.7844f, 6401.6606f, 6656.f), 0.f,
+                ESM::RefId(ESM::FormId::fromUint32(0x10ec3a2)), 5, 600, true, true, false },
+            { "fiend-bat-vault3", 0x10f2dfc, osg::Vec3f(3132.4290f, 6835.7295f, 6656.f), 0.f,
+                ESM::RefId(ESM::FormId::fromUint32(0x10ec3a2)), 5, 600, true, true, false },
+            { "fiend-gun-mojave", 0x1178904, osg::Vec3f(-25004.6758f, 64453.75f, 4320.f), 1.0764047f,
+                ESM::RefId(), 5, 600, false, true, false },
+            { "ambient-raven", 0x114c44a, osg::Vec3f(-69456.f, -3284.f, 8520.f), 0.f,
+                ESM::RefId(), -1, 240, false, false, false },
+        } };
+        static std::array<GoodspringsActorAuditState, targets.size()> targetStates;
+        static int targetIndex = -1;
+        static int targetPhase = 0;
+        static unsigned int phaseFrame = 0;
+        static MWWorld::Ptr targetPtr;
+        static bool auditFinished = false;
+        static bool victorCaptureQueued = false;
+        const std::string_view targetFilter = [] {
+            const char* value = std::getenv("OPENMW_FNV_GOODSPRINGS_ACTOR_AUDIT_TARGET");
+            return value != nullptr ? std::string_view(value) : std::string_view();
+        }();
+
+        const auto findNextActorAuditTarget = [&](int previous) {
+            for (int index = previous + 1; index < static_cast<int>(targets.size()); ++index)
+            {
+                if (targetFilter.empty()
+                    || Misc::StringUtils::ciEqual(targets[static_cast<std::size_t>(index)].mLabel, targetFilter))
+                    return index;
+            }
+            return -1;
+        };
+
+        const auto findActiveActorAuditRef = [&](std::uint32_t rawFormId) {
+            const ESM::FormId formId = ESM::FormId::fromUint32(rawFormId);
+            MWWorld::Ptr found;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                    {
+                        found = ptr;
+                        return false;
+                    }
+                    return true;
+                });
+                if (!found.isEmpty())
+                    break;
+            }
+            return found;
+        };
+        const auto actorAuditPackageName = [](int package) -> std::string_view {
+            switch (package)
+            {
+                case -1:
+                    return "None";
+                case 0:
+                    return "Wander";
+                case 1:
+                    return "Travel";
+                case 3:
+                    return "Follow";
+                case 5:
+                    return "Combat";
+                default:
+                    return "Other";
+            }
+        };
+        const auto actorAuditRenderedForward = [](const MWWorld::Ptr& ptr) {
+            const float gameplayYaw = ptr.getRefData().getPosition().rot[2];
+            osg::Vec3f renderedForward(std::sin(gameplayYaw), std::cos(gameplayYaw), 0.f);
+            if (ptr.getRefData().getBaseNode() == nullptr)
+                return renderedForward;
+
+            bool tes4Npc = false;
+            bool falloutNpc = false;
+            bool falloutCreature = false;
+            if (ptr.getType() == ESM::REC_NPC_4)
+            {
+                const MWWorld::LiveCellRef<ESM4::Npc>* npc = ptr.get<ESM4::Npc>();
+                tes4Npc = npc != nullptr && npc->mBase != nullptr && npc->mBase->mIsTES4;
+                falloutNpc = npc != nullptr && npc->mBase != nullptr
+                    && (npc->mBase->mIsFO3 || npc->mBase->mIsFONV);
+            }
+            else if (ptr.getType() == ESM::REC_CREA4)
+            {
+                const MWWorld::LiveCellRef<ESM4::Creature>* creature = ptr.get<ESM4::Creature>();
+                falloutCreature
+                    = creature != nullptr && creature->mBase != nullptr && creature->mBase->mIsFONV;
+            }
+
+            renderedForward = ptr.getRefData().getBaseNode()->getAttitude()
+                * MWWorld::getActorModelLocalForward(tes4Npc, falloutNpc, falloutCreature);
+            renderedForward.z() = 0.f;
+            if (renderedForward.length2() > 0.f)
+                renderedForward.normalize();
+            return renderedForward;
+        };
+        const auto visitActorAuditTarget = [&](int index) {
+            const GoodspringsActorAuditTarget& target = targets[static_cast<std::size_t>(index)];
+            const osg::Vec3f authoredForward(std::sin(target.mAuthoredYaw), std::cos(target.mAuthoredYaw), 0.f);
+            const float playerDistance = std::clamp(
+                readProofFloat("OPENMW_FNV_GOODSPRINGS_ACTOR_AUDIT_DISTANCE", 384.f), 64.f, 4096.f);
+            ESM::Position playerPosition;
+            playerPosition.pos[0] = target.mAuthoredPosition.x() + authoredForward.x() * playerDistance;
+            playerPosition.pos[1] = target.mAuthoredPosition.y() + authoredForward.y() * playerDistance;
+            playerPosition.pos[2] = target.mAuthoredPosition.z() + 48.f;
+            playerPosition.rot[0] = 0.f;
+            playerPosition.rot[1] = 0.f;
+            playerPosition.rot[2] = target.mAuthoredYaw + osg::PI;
+
+            ESM::RefId cellId = target.mInteriorCell;
+            if (cellId.empty())
+            {
+                ESM::Position probe = playerPosition;
+                cellId = mWorld->findExteriorPosition("Goodsprings", probe);
+            }
+            if (cellId.empty())
+            {
+                targetStates[static_cast<std::size_t>(index)].mFailure = "authored cell did not resolve";
+                Log(Debug::Error) << "FNV Goodsprings actor audit: visit target=" << target.mLabel
+                                  << " result=fail reason=cell-not-resolved";
+                return false;
+            }
+
+            mWorld->changeToCell(cellId, playerPosition, false, true);
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            if (!player.isEmpty())
+            {
+                player = mWorld->moveObject(player, playerPosition.asVec3(), true, true);
+                mWorld->rotateObject(player,
+                    osg::Vec3f(playerPosition.rot[0], playerPosition.rot[1], playerPosition.rot[2]));
+                mWorld->adjustPosition(player, true);
+            }
+            targetPtr = MWWorld::Ptr();
+            targetPhase = 1;
+            phaseFrame = frameNumber;
+            Log(Debug::Info) << "FNV Goodsprings actor audit: visit index=" << index
+                             << " target=" << target.mLabel << " ref=FormId:0x" << std::hex
+                             << target.mReference << std::dec << " cell=" << cellId.toDebugString()
+                             << " playerPos=(" << playerPosition.pos[0] << "," << playerPosition.pos[1]
+                             << "," << playerPosition.pos[2] << ") playerDistance=" << playerDistance;
+            return true;
+        };
+        const auto finishActorAuditTarget = [&]() {
+            const GoodspringsActorAuditTarget& target = targets[static_cast<std::size_t>(targetIndex)];
+            GoodspringsActorAuditState& state = targetStates[static_cast<std::size_t>(targetIndex)];
+            const float groundedFraction = state.mSamples != 0
+                ? static_cast<float>(state.mGroundedSamples) / static_cast<float>(state.mSamples)
+                : 0.f;
+            const float facingFraction = state.mFacingReferenceSamples != 0
+                ? static_cast<float>(state.mFacingSamples) / static_cast<float>(state.mFacingReferenceSamples)
+                : 1.f;
+            const bool grounded = groundedFraction >= 0.5f;
+            const bool animation = state.mSamples != 0
+                && state.mAnimationSamples * 2 >= state.mSamples
+                && state.mAnimationAdvanceSamples != 0;
+            const bool package = target.mExpectedPackage < 0
+                || state.mExpectedPackageSamples != 0
+                || (target.mRequireCombat && state.mCombatSamples != 0);
+            // An actor can complete its approach during the cell-settling window before sampling starts.
+            // Preserve that real authored movement through its displacement from the census anchor instead of
+            // demanding that an actor already in contact pace around after combat begins.
+            const float observedTravel = std::max(state.mTotalTravel, state.mAnchorDistance);
+            const bool travelled = !target.mRequireTravel || observedTravel >= 8.f;
+            const bool combat = !target.mRequireCombat || state.mCombatSamples != 0;
+            const bool facing = state.mFacingReferenceSamples == 0 || facingFraction >= 0.6f;
+            const bool noWarp = state.mMaximumStep <= 96.f;
+            const bool noVerticalWarp = state.mMaximumZ - state.mMinimumZ <= 192.f;
+            const bool authoredAnchor = !target.mRequireAuthoredAnchor
+                || (state.mAnchorDistance <= 64.f && state.mAuthoredYawError <= 0.1f
+                    && state.mRenderedForwardDot >= 0.9f);
+            const bool dogTarget = target.mLabel == "cheyenne" || target.mLabel == "coyote";
+            const bool dogAnimationSource = !dogTarget
+                || (state.mDogAnimationSourceSamples != 0 && state.mDogAnimationSourceMismatchSamples == 0);
+            state.mPass = grounded && animation && package && travelled && combat && facing && noWarp
+                && noVerticalWarp && authoredAnchor && dogAnimationSource && state.mFailure.empty();
+            if (!state.mPass && state.mFailure.empty())
+            {
+                std::ostringstream failure;
+                if (!grounded) failure << "grounding ";
+                if (!animation) failure << "animation ";
+                if (!package) failure << "package ";
+                if (!travelled) failure << "travel ";
+                if (!combat) failure << "combat ";
+                if (!facing) failure << "facing ";
+                if (!noWarp) failure << "warp ";
+                if (!noVerticalWarp) failure << "vertical-warp ";
+                if (!authoredAnchor) failure << "authored-anchor ";
+                if (!dogAnimationSource) failure << "dog-animation-source ";
+                state.mFailure = failure.str();
+            }
+            Log(state.mPass ? Debug::Info : Debug::Error)
+                << "FNV Goodsprings actor audit: target=" << target.mLabel
+                << " ref=FormId:0x" << std::hex << target.mReference << std::dec
+                << " result=" << (state.mPass ? "pass" : "fail")
+                << " reason=\"" << state.mFailure << "\" samples=" << state.mSamples
+                << " groundedFraction=" << groundedFraction
+                << " package=" << actorAuditPackageName(target.mExpectedPackage)
+                << " packageSamples=" << state.mExpectedPackageSamples
+                << " combatSamples=" << state.mCombatSamples
+                << " animationGroup=\"" << state.mAnimationGroup << "\""
+                << " animationSource=\"" << state.mAnimationSource << "\""
+                << " animationSamples=" << state.mAnimationSamples
+                << " animationAdvanceSamples=" << state.mAnimationAdvanceSamples
+                << " animationLoopWraps=" << state.mAnimationLoopWraps
+                << " dogAnimationSourceSamples=" << state.mDogAnimationSourceSamples
+                << " dogAnimationSourceMismatchSamples=" << state.mDogAnimationSourceMismatchSamples
+                << " travel=" << state.mTotalTravel << " observedTravel=" << observedTravel
+                << " maxStep=" << state.mMaximumStep
+                << " zRange=" << (state.mMaximumZ - state.mMinimumZ)
+                << " movingSamples=" << state.mMovingSamples
+                << " facingReferenceSamples=" << state.mFacingReferenceSamples
+                << " facingFraction=" << facingFraction
+                << " minimumFacingDot=" << state.mMinimumFacingDot
+                << " anchorDistance=" << state.mAnchorDistance
+                << " authoredYawError=" << state.mAuthoredYawError
+                << " renderedForwardDot=" << state.mRenderedForwardDot;
+        };
+
+        if (!auditFinished && targetIndex < 0 && proofWorldReadyFrames >= 240)
+        {
+            if (!mWorld->getGodModeState())
+                mWorld->toggleGodMode();
+            targetIndex = findNextActorAuditTarget(-1);
+            if (targetIndex < 0)
+            {
+                Log(Debug::Error) << "FNV Goodsprings actor audit: result=fail passed=0 total=0"
+                                  << " failures=\"unknown target filter:" << targetFilter << "\"";
+                auditFinished = true;
+                mStateManager->requestQuit();
+            }
+            else if (!visitActorAuditTarget(targetIndex))
+                targetPhase = 3;
+        }
+        else if (!auditFinished && targetIndex >= 0 && targetPhase == 1
+            && frameNumber - phaseFrame >= 150)
+        {
+            targetPtr = findActiveActorAuditRef(targets[static_cast<std::size_t>(targetIndex)].mReference);
+            if (targetPtr.isEmpty() || !targetPtr.getClass().isActor())
+            {
+                GoodspringsActorAuditState& state = targetStates[static_cast<std::size_t>(targetIndex)];
+                state.mFailure = "authored actor reference did not become active";
+                state.mPass = false;
+                Log(Debug::Error) << "FNV Goodsprings actor audit: target="
+                                  << targets[static_cast<std::size_t>(targetIndex)].mLabel
+                                  << " result=fail reason=actor-not-active";
+                targetPhase = 3;
+                phaseFrame = frameNumber;
+            }
+            else
+            {
+                GoodspringsActorAuditState& state = targetStates[static_cast<std::size_t>(targetIndex)];
+                const GoodspringsActorAuditTarget& target = targets[static_cast<std::size_t>(targetIndex)];
+                state = {};
+                state.mFirstPosition = targetPtr.getRefData().getPosition().asVec3();
+                state.mPreviousPosition = state.mFirstPosition;
+                state.mAnchorDistance = (state.mFirstPosition - target.mAuthoredPosition).length();
+                state.mAuthoredYawError = std::abs(Misc::normalizeAngle(
+                    targetPtr.getRefData().getPosition().rot[2] - target.mAuthoredYaw));
+                if (targetPtr.getRefData().getBaseNode() != nullptr)
+                {
+                    const osg::Vec3f renderedForward = actorAuditRenderedForward(targetPtr);
+                    const osg::Vec3f authoredForward(
+                        std::sin(target.mAuthoredYaw), std::cos(target.mAuthoredYaw), 0.f);
+                    state.mRenderedForwardDot = renderedForward * authoredForward;
+                }
+                targetPhase = 2;
+                phaseFrame = frameNumber;
+                Log(Debug::Info) << "FNV Goodsprings actor audit: sampling target=" << target.mLabel
+                                 << " ptr=" << targetPtr.toString() << " pos=(" << state.mFirstPosition.x()
+                                 << "," << state.mFirstPosition.y() << "," << state.mFirstPosition.z()
+                                 << ") yaw=" << targetPtr.getRefData().getPosition().rot[2];
+            }
+        }
+        else if (!auditFinished && targetIndex >= 0 && targetPhase == 2 && !targetPtr.isEmpty())
+        {
+            const GoodspringsActorAuditTarget& target = targets[static_cast<std::size_t>(targetIndex)];
+            GoodspringsActorAuditState& state = targetStates[static_cast<std::size_t>(targetIndex)];
+            const osg::Vec3f position = targetPtr.getRefData().getPosition().asVec3();
+            const osg::Vec3f step = position - state.mPreviousPosition;
+            const float horizontalStep = osg::Vec2f(step.x(), step.y()).length();
+            state.mTotalTravel += horizontalStep;
+            state.mMaximumStep = std::max(state.mMaximumStep, horizontalStep);
+            state.mMinimumZ = std::min(state.mMinimumZ, position.z());
+            state.mMaximumZ = std::max(state.mMaximumZ, position.z());
+            ++state.mSamples;
+            if (mWorld->isOnGround(targetPtr))
+                ++state.mGroundedSamples;
+
+            // Ignore sub-pixel physics settling/jitter when measuring locomotion. Combatants are measured
+            // against their target every frame because authored combat can strafe or backpedal while facing it.
+            osg::Vec3f facingReference;
+            bool hasFacingReference = false;
+            if (horizontalStep > 0.25f)
+            {
+                ++state.mMovingSamples;
+                if (!target.mRequireCombat)
+                {
+                    facingReference.set(step.x(), step.y(), 0.f);
+                    facingReference.normalize();
+                    hasFacingReference = true;
+                }
+            }
+            if (target.mRequireCombat)
+            {
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                if (!player.isEmpty())
+                {
+                    const osg::Vec3f toPlayer = player.getRefData().getPosition().asVec3() - position;
+                    facingReference.set(toPlayer.x(), toPlayer.y(), 0.f);
+                    if (facingReference.length2() > 0.f)
+                    {
+                        facingReference.normalize();
+                        hasFacingReference = true;
+                    }
+                }
+            }
+            if (hasFacingReference)
+            {
+                ++state.mFacingReferenceSamples;
+                const float facingDot = facingReference * actorAuditRenderedForward(targetPtr);
+                state.mMinimumFacingDot = std::min(state.mMinimumFacingDot, facingDot);
+                if (facingDot >= 0.25f)
+                    ++state.mFacingSamples;
+            }
+
+            const MWMechanics::AiSequence& sequence
+                = targetPtr.getClass().getCreatureStats(targetPtr).getAiSequence();
+            const int package = static_cast<int>(sequence.getTypeId());
+            if (package == target.mExpectedPackage)
+                ++state.mExpectedPackageSamples;
+            if (sequence.isInCombat())
+                ++state.mCombatSamples;
+
+            // Keep the selected authored actor visible throughout the proof. This changes only the unattended
+            // audit camera; actor positions, packages, controls, and combat decisions remain entirely native.
+            if (MWRender::Camera* camera = mWorld->getCamera())
+            {
+                const osg::Vec3d cameraPosition = camera->getPosition();
+                osg::Vec3d aimPosition = mWorld->getActorHeadTransform(targetPtr).getTrans();
+                const osg::Vec3d delta = aimPosition - cameraPosition;
+                const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+                if (horizontal > 1.0)
+                {
+                    camera->setPitch(static_cast<float>(std::atan2(delta.z(), horizontal)), true);
+                    camera->setYaw(-static_cast<float>(std::atan2(delta.x(), delta.y())), true);
+                    camera->setRoll(0.f);
+                    camera->instantTransition();
+                    camera->updateCamera();
+                }
+            }
+
+            if (MWRender::Animation* animation = mWorld->getAnimation(targetPtr))
+            {
+                std::string group(animation->getActiveGroup(MWRender::BoneGroup_LowerBody));
+                if (group.empty())
+                    group = std::string(animation->getActiveGroup(MWRender::BoneGroup_Torso));
+                if (!group.empty())
+                {
+                    ++state.mAnimationSamples;
+                    const float animationTime = animation->getCurrentTime(group);
+                    if (state.mAnimationGroup == group && std::isfinite(state.mPreviousAnimationTime)
+                        && std::abs(animationTime - state.mPreviousAnimationTime) > 0.00001f)
+                    {
+                        ++state.mAnimationAdvanceSamples;
+                        if (animationTime + 0.00001f < state.mPreviousAnimationTime)
+                            ++state.mAnimationLoopWraps;
+                    }
+                    if (state.mAnimationGroup.empty())
+                        state.mFirstAnimationTime = animationTime;
+                    const std::string source = animation->getAnimationSourceName(group);
+                    if (target.mLabel == "cheyenne" || target.mLabel == "coyote")
+                    {
+                        ++state.mDogAnimationSourceSamples;
+                        const std::string lowerSource = Misc::StringUtils::lowerCase(source);
+                        const bool swimmingSource = lowerSource.find("/swim") != std::string::npos
+                            || lowerSource.find("\\swim") != std::string::npos;
+                        const bool neutralSource = group != "idle"
+                            || Misc::StringUtils::ciEndsWith(lowerSource, "/mtidle.kf")
+                            || Misc::StringUtils::ciEndsWith(lowerSource, "\\mtidle.kf");
+                        const bool dedicatedRunSource = group != "runforward"
+                            || (!Misc::StringUtils::ciEndsWith(lowerSource, "/mtforward.kf")
+                                && !Misc::StringUtils::ciEndsWith(lowerSource, "\\mtforward.kf"));
+                        if (swimmingSource || !neutralSource || !dedicatedRunSource)
+                            ++state.mDogAnimationSourceMismatchSamples;
+                    }
+                    state.mAnimationGroup = std::move(group);
+                    state.mAnimationSource = source;
+                    state.mPreviousAnimationTime = animationTime;
+                }
+            }
+            state.mPreviousPosition = position;
+
+            if (targetIndex == 0 && !victorCaptureQueued && state.mSamples >= 30
+                && mScreenCaptureHandler != nullptr)
+            {
+                victorCaptureQueued = true;
+                if (MWRender::Camera* camera = mWorld->getCamera())
+                {
+                    const osg::Vec3d cameraPosition = camera->getPosition();
+                    osg::Vec3d aimPosition = position;
+                    aimPosition.z() += 72.f;
+                    const osg::Vec3d delta = aimPosition - cameraPosition;
+                    const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+                    if (horizontal > 1.0)
+                    {
+                        camera->setPitch(static_cast<float>(std::atan2(delta.z(), horizontal)), true);
+                        camera->setYaw(-static_cast<float>(std::atan2(delta.x(), delta.y())), true);
+                        camera->setRoll(0.f);
+                        camera->instantTransition();
+                        camera->updateCamera();
+                    }
+                }
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+                Log(Debug::Info) << "FNV Goodsprings actor audit: queued Victor authored-facing capture";
+            }
+
+            if (frameNumber - phaseFrame >= target.mSampleFrames)
+            {
+                finishActorAuditTarget();
+                targetPhase = 3;
+                phaseFrame = frameNumber;
+            }
+        }
+        else if (!auditFinished && targetIndex >= 0 && targetPhase == 3
+            && frameNumber - phaseFrame >= 8)
+        {
+            targetIndex = findNextActorAuditTarget(targetIndex);
+            if (targetIndex < 0)
+            {
+                unsigned int passCount = 0;
+                unsigned int targetCount = 0;
+                std::ostringstream failures;
+                for (std::size_t index = 0; index < targetStates.size(); ++index)
+                {
+                    if (!targetFilter.empty()
+                        && !Misc::StringUtils::ciEqual(targets[index].mLabel, targetFilter))
+                        continue;
+                    ++targetCount;
+                    if (targetStates[index].mPass)
+                        ++passCount;
+                    else
+                    {
+                        if (failures.tellp() > 0)
+                            failures << ',';
+                        failures << targets[index].mLabel << ':' << targetStates[index].mFailure;
+                    }
+                }
+                const bool pass = targetCount != 0 && passCount == targetCount;
+                Log(pass ? Debug::Info : Debug::Error)
+                    << "FNV Goodsprings actor audit: result=" << (pass ? "pass" : "fail")
+                    << " passed=" << passCount << " total=" << targetCount
+                    << " failures=\"" << failures.str() << "\"";
+                auditFinished = true;
+                mStateManager->requestQuit();
+            }
+            else if (!visitActorAuditTarget(targetIndex))
+            {
+                targetPhase = 3;
+                phaseFrame = frameNumber;
+            }
+        }
+    }
+
+    const bool authoredInteractionRequested = proofEnvEnabled("OPENMW_AUTHORED_INTERACTION_AUDIT");
+    if (authoredInteractionRequested && authoredInteractionPhase >= 0 && proofRunning
+        && !nativeFalloutSaveOwnsCamera() && mWorld != nullptr && mWindowManager != nullptr)
+    {
+        // This audit uses only normal activation actions, but it deliberately crosses cells and
+        // repositions the player between authored interaction points. Keep those mutations on the
+        // main thread and outside the Lua worker's nearby-object traversal window.
+        mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+        const auto envText = [](const char* name) -> std::string_view {
+            const char* value = std::getenv(name);
+            return value != nullptr ? std::string_view(value) : std::string_view();
+        };
+        const auto formIdFromEnv = [&](const char* name) {
+            const std::string_view value = envText(name);
+            const std::optional<ESM::FormId> parsed = parseProofFormId(value);
+            return parsed.value_or(ESM::FormId());
+        };
+        const std::string_view auditLabel = [&]() {
+            const std::string_view configured = envText("OPENMW_AUTHORED_INTERACTION_LABEL");
+            return configured.empty() ? std::string_view("unnamed") : configured;
+        }();
+        const ESM::FormId actorFormId = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_ACTOR_REF");
+        const ESM::FormId doorInFormId = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_DOOR_IN_REF");
+        const ESM::FormId interiorCellFormId
+            = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_INTERIOR_CELL");
+        const ESM::FormId interiorActorFormId
+            = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_INTERIOR_ACTOR_REF");
+        const ESM::FormId radioFormId = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_RADIO_REF");
+        const ESM::FormId doorOutFormId = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_DOOR_OUT_REF");
+
+        const auto findActiveRef = [&](ESM::FormId formId) {
+            MWWorld::Ptr found;
+            if (formId.isZeroOrUnset())
+                return found;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                    {
+                        found = ptr;
+                        return false;
+                    }
+                    return true;
+                });
+                if (!found.isEmpty())
+                    break;
+            }
+            return found;
+        };
+        const auto countActiveRef = [&](ESM::FormId formId) {
+            int count = 0;
+            if (formId.isZeroOrUnset())
+                return count;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                        ++count;
+                    return true;
+                });
+            }
+            return count;
+        };
+        const auto playerCellId = [&]() {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            if (player.isEmpty() || player.getCell() == nullptr || player.getCell()->getCell() == nullptr)
+                return ESM::RefId();
+            return player.getCell()->getCell()->getId();
+        };
+        const auto queueCapture = [&](std::string_view label) {
+            if (mScreenCaptureHandler == nullptr)
+                return;
+            Log(Debug::Info) << "Authored interaction audit: label=" << auditLabel
+                             << " queueCapture=" << label << " frame=" << frameNumber;
+            mScreenCaptureHandler->setFramesToCapture(1);
+            mScreenCaptureHandler->captureNextFrame(*mViewer);
+        };
+        const auto activateTarget = [&](const MWWorld::Ptr& target, std::string_view label) {
+            if (target.isEmpty())
+                return false;
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            std::unique_ptr<MWWorld::Action> action = target.getClass().activate(target, player);
+            const bool actionable = action != nullptr && !action->isNullAction();
+            Log(actionable ? Debug::Info : Debug::Error)
+                << "Authored interaction audit: label=" << auditLabel << " activate=" << label
+                << " target=" << target.toString() << " type=" << target.getTypeDescription()
+                << " actionable=" << (actionable ? 1 : 0);
+            if (actionable)
+                action->execute(player);
+            return actionable;
+        };
+        const auto aimCameraAt = [&](const MWWorld::Ptr& target, std::string_view label, float offsetZ) {
+            if (nativeFalloutSaveOwnsCamera())
+                return false;
+
+            MWRender::Camera* camera = mWorld->getCamera();
+            if (camera == nullptr || target.isEmpty())
+                return false;
+            const osg::Vec3d cameraPosition = camera->getPosition();
+            osg::Vec3d aimPosition = target.getRefData().getPosition().asVec3();
+            aimPosition.z() += offsetZ;
+            const osg::Vec3d delta = aimPosition - cameraPosition;
+            const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+            if (horizontal < 1.0)
+                return false;
+            camera->setPitch(static_cast<float>(std::atan2(delta.z(), horizontal)), true);
+            camera->setYaw(-static_cast<float>(std::atan2(delta.x(), delta.y())), true);
+            camera->setRoll(0.f);
+            camera->instantTransition();
+            camera->updateCamera();
+            Log(Debug::Info) << "Authored interaction audit: label=" << auditLabel << " aim=" << label
+                             << " cameraPos=(" << cameraPosition.x() << "," << cameraPosition.y() << ","
+                             << cameraPosition.z() << ") targetPos=(" << aimPosition.x() << ","
+                             << aimPosition.y() << "," << aimPosition.z() << ")";
+            return true;
+        };
+        const auto gateSummary = [&]() {
+            std::ostringstream stream;
+            stream << "actor=" << (authoredInteractionActorPass ? 1 : 0)
+                   << " dialogue=" << (authoredInteractionDialoguePass ? 1 : 0)
+                   << " doorIn=" << (authoredInteractionDoorInPass ? 1 : 0)
+                   << " interiorActors=" << (authoredInteractionInteriorActorsPass ? 1 : 0)
+                   << " radio=" << (authoredInteractionRadioPass ? 1 : 0)
+                   << " doorOut=" << (authoredInteractionDoorOutPass ? 1 : 0);
+            return stream.str();
+        };
+        const auto finishAudit = [&](bool pass, std::string_view reason) {
+            Log(pass ? Debug::Info : Debug::Error)
+                << "Authored interaction audit: label=" << auditLabel
+                << " result=" << (pass ? "pass" : "fail") << " reason=\"" << reason << "\" "
+                << gateSummary() << " frame=" << frameNumber;
+            authoredInteractionPhase = -1;
+            mStateManager->requestQuit();
+        };
+        const auto advanceAudit = [&](int phase) {
+            authoredInteractionPhase = phase;
+            authoredInteractionPhaseFrame = frameNumber;
+            authoredInteractionPhaseStartTime = frameStart;
+            Log(Debug::Info) << "Authored interaction audit: label=" << auditLabel
+                             << " phase=" << phase << " frame=" << frameNumber;
+        };
+        const unsigned int phaseFrames = frameNumber - authoredInteractionPhaseFrame;
+        const double phaseSeconds = authoredInteractionPhaseStartTime != 0
+            ? timer->delta_s(authoredInteractionPhaseStartTime, frameStart)
+            : 0.0;
+        const double phaseTimeoutSeconds = std::max(
+            5.f, readProofFloat("OPENMW_AUTHORED_INTERACTION_PHASE_TIMEOUT_SECONDS", 45.f));
+
+        if (authoredInteractionPhase == 0 && proofWorldReady
+            && proofWorldReadyFrames
+                >= std::max(1, readProofInt("OPENMW_AUTHORED_INTERACTION_SETTLE_FRAMES", 240)))
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            player.getClass().getCreatureStats(player).setLevel(1);
+            if (player.getClass().isNpc())
+                player.getClass().getNpcStats(player).setLevelProgress(0);
+            authoredInteractionActor = findActiveRef(actorFormId);
+            if (authoredInteractionActor.isEmpty())
+                finishAudit(false, "authored exterior actor is not active");
+            else
+            {
+                const osg::Vec3f playerPosition = player.getRefData().getPosition().asVec3();
+                const osg::Vec3f actorPosition
+                    = authoredInteractionActor.getRefData().getPosition().asVec3();
+                const float actorDistance = (actorPosition - playerPosition).length();
+                const bool actorInCombat = authoredInteractionActor.getClass()
+                                               .getCreatureStats(authoredInteractionActor)
+                                               .getAiSequence()
+                                               .isInCombat();
+                const int actorCopies = countActiveRef(actorFormId);
+                authoredInteractionActorSettledPosition = actorPosition;
+                authoredInteractionActorPass = actorCopies == 1 && !actorInCombat
+                    && actorDistance <= readProofFloat("OPENMW_AUTHORED_INTERACTION_MAX_ACTOR_DISTANCE", 1024.f);
+                Log(authoredInteractionActorPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel << " actorSettle level="
+                    << player.getClass().getCreatureStats(player).getLevel() << " copies=" << actorCopies
+                    << " distance=" << actorDistance << " inCombat=" << (actorInCombat ? 1 : 0)
+                    << " pos=(" << actorPosition.x() << "," << actorPosition.y() << ","
+                    << actorPosition.z() << ") result="
+                    << (authoredInteractionActorPass ? "pass" : "fail");
+                if (!nativeFalloutSaveOwnsCamera())
+                {
+                    if (MWRender::Camera* camera = mWorld->getCamera())
+                    {
+                        camera->attachTo(player);
+                        camera->setMode(MWRender::Camera::Mode::FirstPerson, true);
+                        camera->setPreferredCameraDistance(0.f);
+                        camera->processViewChange();
+                        camera->update(0.f, false);
+                        camera->instantTransition();
+                        camera->updateCamera();
+                    }
+                }
+                aimCameraAt(authoredInteractionActor, "exterior-actor",
+                    readProofFloat("OPENMW_AUTHORED_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueCapture("exterior-actor");
+                advanceAudit(1);
+            }
+        }
+        else if (authoredInteractionPhase == 1 && phaseFrames >= 8)
+        {
+            if (!activateTarget(authoredInteractionActor, "exterior-actor-dialogue"))
+                finishAudit(false, "exterior actor activation returned a null action");
+            else
+                advanceAudit(2);
+        }
+        else if (authoredInteractionPhase == 2)
+        {
+            const bool dialogueOpen = mWindowManager->containsMode(MWGui::GM_Dialogue);
+            const bool voiceActive
+                = mSoundManager != nullptr && mSoundManager->sayActive(authoredInteractionActor);
+            authoredInteractionGreetingAudioSeen
+                = authoredInteractionGreetingAudioSeen || voiceActive;
+            if (dialogueOpen && authoredInteractionGreetingAudioSeen && !voiceActive && phaseFrames >= 5)
+            {
+                struct AuthoredInteractionDialogueCallback final
+                    : MWBase::DialogueManager::ResponseCallback
+                {
+                    bool mHadText = false;
+                    void addResponse(std::string_view title, std::string_view text) override
+                    {
+                        mHadText = mHadText || !text.empty();
+                        Log(Debug::Info) << "Authored interaction audit: dialogueResponse title=\""
+                                         << title << "\" text=\"" << text << "\"";
+                    }
+                } callback;
+                const std::string_view topic = envText("OPENMW_AUTHORED_INTERACTION_DIALOGUE_TOPIC");
+                if (!topic.empty())
+                    mDialogueManager->keywordSelected(topic, &callback);
+                authoredInteractionDialoguePass = mUseSound && dialogueOpen
+                    && authoredInteractionGreetingAudioSeen && (topic.empty() || callback.mHadText);
+                queueCapture("authored-dialogue-topic");
+                if (topic.empty())
+                {
+                    mDialogueManager->goodbyeSelected();
+                    mWindowManager->removeGuiMode(MWGui::GM_Dialogue);
+                    authoredInteractionTopicAudioSeen = true;
+                }
+                advanceAudit(3);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishAudit(false, "authored greeting GUI or voice did not complete");
+        }
+        else if (authoredInteractionPhase == 3)
+        {
+            const std::string_view topic = envText("OPENMW_AUTHORED_INTERACTION_DIALOGUE_TOPIC");
+            const bool voiceActive
+                = mSoundManager != nullptr && mSoundManager->sayActive(authoredInteractionActor);
+            authoredInteractionTopicAudioSeen = authoredInteractionTopicAudioSeen || voiceActive;
+            if ((topic.empty() || (authoredInteractionTopicAudioSeen && !voiceActive)) && phaseFrames >= 5)
+            {
+                authoredInteractionDialoguePass = authoredInteractionDialoguePass
+                    && authoredInteractionTopicAudioSeen;
+                if (!topic.empty())
+                {
+                    mDialogueManager->goodbyeSelected();
+                    mWindowManager->removeGuiMode(MWGui::GM_Dialogue);
+                }
+                const std::string_view preDoorScript
+                    = envText("OPENMW_AUTHORED_INTERACTION_PRE_DOOR_SCRIPT");
+                if (!preDoorScript.empty())
+                {
+                    Log(Debug::Info) << "Authored interaction audit: label=" << auditLabel
+                                     << " executePreDoorScript=\"" << preDoorScript << "\"";
+                    mWindowManager->executeInConsole(std::filesystem::path(preDoorScript));
+                }
+                advanceAudit(4);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishAudit(false, "authored dialogue topic voice did not complete");
+        }
+        else if (authoredInteractionPhase == 4)
+        {
+            const unsigned int settleFrames = static_cast<unsigned int>(std::max(
+                8, readProofInt("OPENMW_AUTHORED_INTERACTION_PRE_DOOR_SETTLE_FRAMES", 180)));
+            if (phaseFrames >= settleFrames)
+            {
+                MWWorld::Ptr door = findActiveRef(doorInFormId);
+                const ESM::RefId expectedInterior(interiorCellFormId);
+                const bool authoredPair = !door.isEmpty() && door.getClass().isDoor()
+                    && door.getCellRef().getTeleport()
+                    && (interiorCellFormId.isZeroOrUnset()
+                        || door.getCellRef().getDestCell() == expectedInterior);
+                if (!door.isEmpty())
+                    aimCameraAt(door, "exterior-door", 48.f);
+                authoredInteractionDoorInPass = authoredPair && activateTarget(door, "exterior-door");
+                Log(authoredInteractionDoorInPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel
+                    << " exteriorDoor=" << doorInFormId.toUint32()
+                    << " expectedInterior=" << expectedInterior.toDebugString()
+                    << " authoredPair=" << (authoredPair ? 1 : 0)
+                    << " result=" << (authoredInteractionDoorInPass ? "pass" : "fail");
+                if (!authoredInteractionDoorInPass)
+                    finishAudit(false, "authored exterior door action failed");
+                else
+                    advanceAudit(5);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishAudit(false, "authored exterior door did not become active");
+        }
+        else if (authoredInteractionPhase == 5)
+        {
+            const bool expectedCellActive = interiorCellFormId.isZeroOrUnset()
+                ? !mWorld->getPlayerPtr().getCell()->isExterior()
+                : playerCellId() == ESM::RefId(interiorCellFormId);
+            if (expectedCellActive && phaseFrames >= 180)
+            {
+                int actorCount = 0;
+                for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+                {
+                    if (cellstore == nullptr)
+                        continue;
+                    cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                        if (!ptr.isEmpty() && ptr.getClass().isActor())
+                            ++actorCount;
+                        return true;
+                    });
+                }
+                MWWorld::Ptr interiorActor = findActiveRef(interiorActorFormId);
+                const bool requiredActorPresent
+                    = interiorActorFormId.isZeroOrUnset() || !interiorActor.isEmpty();
+                authoredInteractionInteriorActorsPass = actorCount >= 1 && requiredActorPresent;
+                Log(authoredInteractionInteriorActorsPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel
+                    << " interiorCell=" << playerCellId().toDebugString() << " actors=" << actorCount
+                    << " requiredActor=" << interiorActorFormId.toUint32()
+                    << " requiredActorPresent=" << (requiredActorPresent ? 1 : 0)
+                    << " result=" << (authoredInteractionInteriorActorsPass ? "pass" : "fail");
+                if (!interiorActor.isEmpty())
+                    aimCameraAt(interiorActor, "interior-actor",
+                        readProofFloat("OPENMW_AUTHORED_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueCapture("interior-actors");
+
+                authoredInteractionRadioPass = radioFormId.isZeroOrUnset();
+                if (!radioFormId.isZeroOrUnset())
+                {
+                    authoredInteractionRadio = findActiveRef(radioFormId);
+                    authoredInteractionRadioSound = {};
+                    if (!authoredInteractionRadio.isEmpty()
+                        && authoredInteractionRadio.getType() == ESM4::Activator::sRecordId)
+                    {
+                        const ESM4::Activator& activator
+                            = *authoredInteractionRadio.get<ESM4::Activator>()->mBase;
+                        ESM::FormId broadcast = activator.mLoopingSound;
+                        if (broadcast.isZeroOrUnset())
+                            broadcast = activator.mRadioTemplate;
+                        if (broadcast.isZeroOrUnset() && !activator.mRadioStation.isZeroOrUnset())
+                        {
+                            const ESM4::TalkingActivator* station = mWorld->getStore()
+                                .get<ESM4::TalkingActivator>()
+                                .search(ESM::RefId(activator.mRadioStation));
+                            if (station != nullptr)
+                                broadcast = !station->mLoopSound.isZeroOrUnset()
+                                    ? station->mLoopSound
+                                    : station->mRadioTemplate;
+                        }
+                        authoredInteractionRadioSound = ESM::RefId(broadcast);
+                    }
+                    const bool radioAction
+                        = activateTarget(authoredInteractionRadio, "interior-radio");
+                    const bool radioPlaying = mSoundManager != nullptr
+                        && ((!authoredInteractionRadioSound.empty()
+                                && mSoundManager->getSoundPlaying(
+                                    authoredInteractionRadio, authoredInteractionRadioSound))
+                            || mSoundManager->sayActive(authoredInteractionRadio));
+                    authoredInteractionRadioPass = radioAction && mUseSound && radioPlaying;
+                }
+                Log(authoredInteractionRadioPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel
+                    << " radio=" << radioFormId.toUint32()
+                    << " sound=" << authoredInteractionRadioSound.toDebugString()
+                    << " soundEnabled=" << (mUseSound ? 1 : 0)
+                    << " result=" << (authoredInteractionRadioPass ? "pass" : "fail");
+                advanceAudit(6);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishAudit(false, "authored interior did not become active");
+        }
+        else if (authoredInteractionPhase == 6)
+        {
+            if (!radioFormId.isZeroOrUnset())
+            {
+                const bool radioStillPlaying = mSoundManager != nullptr
+                    && !authoredInteractionRadio.isEmpty()
+                    && ((!authoredInteractionRadioSound.empty()
+                            && mSoundManager->getSoundPlaying(
+                                authoredInteractionRadio, authoredInteractionRadioSound))
+                        || mSoundManager->sayActive(authoredInteractionRadio));
+                authoredInteractionRadioPass = authoredInteractionRadioPass && radioStillPlaying;
+                if (!authoredInteractionRadioCaptureQueued && phaseFrames >= 45)
+                {
+                    authoredInteractionRadioCaptureQueued = true;
+                    aimCameraAt(authoredInteractionRadio, "interior-radio",
+                        readProofFloat("OPENMW_AUTHORED_INTERACTION_RADIO_AIM_Z", 24.f));
+                    queueCapture("interior-radio-on");
+                }
+            }
+            else
+                authoredInteractionRadioCaptureQueued = true;
+
+            if (authoredInteractionRadioCaptureQueued && phaseFrames >= 53)
+            {
+                MWWorld::Ptr exitDoor = findActiveRef(doorOutFormId);
+                const bool authoredExit = !exitDoor.isEmpty() && exitDoor.getClass().isDoor()
+                    && exitDoor.getCellRef().getTeleport();
+                authoredInteractionDoorOutPass
+                    = authoredExit && activateTarget(exitDoor, "interior-exit-door");
+                Log(authoredInteractionDoorOutPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel
+                    << " interiorExit=" << doorOutFormId.toUint32()
+                    << " authoredPair=" << (authoredExit ? 1 : 0)
+                    << " result=" << (authoredInteractionDoorOutPass ? "pass" : "fail");
+                if (!authoredInteractionDoorOutPass)
+                    finishAudit(false, "authored interior exit action failed");
+                else
+                    advanceAudit(7);
+            }
+        }
+        else if (authoredInteractionPhase == 7)
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const bool outside = !player.isEmpty() && player.getCell() != nullptr
+                && player.getCell()->isExterior();
+            if (outside && phaseFrames >= 180)
+            {
+                MWWorld::Ptr actorAfterReturn = findActiveRef(actorFormId);
+                const bool requireActorOnReturn
+                    = proofEnvEnabled("OPENMW_AUTHORED_INTERACTION_REQUIRE_ACTOR_ON_RETURN");
+                const int actorCopies = countActiveRef(actorFormId);
+                float actorDrift = std::numeric_limits<float>::infinity();
+                bool actorInCombat = false;
+                if (!actorAfterReturn.isEmpty())
+                {
+                    actorDrift = (actorAfterReturn.getRefData().getPosition().asVec3()
+                                     - authoredInteractionActorSettledPosition)
+                                     .length();
+                    actorInCombat = actorAfterReturn.getClass()
+                                        .getCreatureStats(actorAfterReturn)
+                                        .getAiSequence()
+                                        .isInCombat();
+                }
+                const bool actorReturnPass = requireActorOnReturn
+                    ? (!actorAfterReturn.isEmpty() && actorCopies == 1 && !actorInCombat
+                        && actorDrift
+                            <= readProofFloat("OPENMW_AUTHORED_INTERACTION_MAX_ACTOR_DRIFT", 512.f))
+                    : (actorAfterReturn.isEmpty() || (actorCopies == 1 && !actorInCombat));
+                authoredInteractionActorPass = authoredInteractionActorPass && actorReturnPass;
+                Log(authoredInteractionActorPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel << " exteriorReturnCell="
+                    << playerCellId().toDebugString() << " actorCopies=" << actorCopies
+                    << " actorDrift=" << actorDrift << " actorInCombat=" << (actorInCombat ? 1 : 0)
+                    << " weather=" << mWorld->getCurrentWeatherScriptId()
+                    << " weatherTransition=" << mWorld->getWeatherTransition()
+                    << " result=" << (authoredInteractionActorPass ? "pass" : "fail");
+                if (!actorAfterReturn.isEmpty())
+                    aimCameraAt(actorAfterReturn, "exterior-return-actor",
+                        readProofFloat("OPENMW_AUTHORED_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueCapture("exterior-return");
+                advanceAudit(8);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishAudit(false, "authored exit did not return to an exterior");
+        }
+        else if (authoredInteractionPhase == 8 && phaseFrames >= 8)
+        {
+            const bool pass = authoredInteractionActorPass && authoredInteractionDialoguePass
+                && authoredInteractionDoorInPass && authoredInteractionInteriorActorsPass
+                && authoredInteractionRadioPass && authoredInteractionDoorOutPass;
+            finishAudit(pass, pass ? "complete authored interaction circuit"
+                                   : "one or more authored interaction gates failed");
+        }
+    }
+
+    const bool proofScreenshotFrameReached = !proofSidecarEnabled
+        && proofScreenshotFrameIndex < proofScreenshotFrames.size()
+        && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
+    const bool proofScreenshotReadyFramesReached
+        = !proofSidecarEnabled && !proofScreenshotReadyQueued && proofScreenshotReadyFrames >= 0
+        && proofWorldReadyFrames >= proofScreenshotReadyFrames;
+    bool worldViewerCameraReadyForScreenshot = true;
+    if (!worldViewerStaticStartCamera && std::getenv("OPENMW_WORLD_VIEWER_REQUIRE_CAMERA_SETTLED") != nullptr
+        && std::getenv("OPENMW_WORLD_VIEWER_START_POS_X") != nullptr && mWorld != nullptr)
+    {
+        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+        const osg::Vec3f cameraPos = mWorld->getCamera()->getPosition();
+        const osg::Vec3f playerPos = player.getRefData().getPosition().asVec3();
+        const float cameraDistanceToPlayer = (cameraPos - playerPos).length();
+        worldViewerCameraReadyForScreenshot = cameraDistanceToPlayer < 4096.f;
+        if (!worldViewerCameraReadyForScreenshot && !worldViewerCameraWaitLogged)
+        {
+            Log(Debug::Info) << "World viewer proof: waiting for camera settle before screenshot frame=" << frameNumber
+                             << " distanceToPlayer=" << cameraDistanceToPlayer << " cameraPos=(" << cameraPos.x()
+                             << "," << cameraPos.y() << "," << cameraPos.z() << ") playerPos=(" << playerPos.x()
+                             << "," << playerPos.y() << "," << playerPos.z() << ")";
+            worldViewerCameraWaitLogged = true;
+        }
+    }
+    const int proofActorAlignedScreenshotDelay = getProofFrame("OPENMW_PROOF_ACTOR_ALIGNED_SCREENSHOT_DELAY");
+    const int proofActorAlignedScreenshotMinFrame = getProofFrame("OPENMW_PROOF_ACTOR_ALIGNED_SCREENSHOT_MIN_FRAME");
+    const bool proofActorAlignedScreenshotReached = !proofSidecarEnabled
+        && !proofActorAlignedScreenshotQueued && proofActorCameraAligned
+        && proofActorAlignedScreenshotDelay >= 0 && proofActorCameraAlignedFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofActorCameraAlignedFrame + proofActorAlignedScreenshotDelay)
+        && (proofActorAlignedScreenshotMinFrame < 0
+            || frameNumber >= static_cast<unsigned>(proofActorAlignedScreenshotMinFrame));
+    const bool proofPortraitClearRequired
+        = std::getenv("OPENMW_WORLD_VIEWER_REQUIRE_PORTRAIT_CLEAR") != nullptr;
+    const bool proofPortraitCapturePending
+        = proofScreenshotFrameReached || proofScreenshotReadyFramesReached || proofActorAlignedScreenshotReached;
+    bool proofActorVisualReady = true;
+    const bool proofActorPoseReadyForScreenshot = proofSidecarEnabled || !proofActorBatchActive || !proofActorPoseSweepEnabled
+        || (proofActorPoseBatchIndex == proofActorBatchIndex && proofActorPoseCycleComplete);
+    unsigned int proofActorVisibleDrawables = 0;
+    unsigned int proofActorVisibleRigs = 0;
+    unsigned int proofActorResolvedRigs = 0;
+    unsigned int proofActorCullReadyRigs = 0;
+    unsigned int proofActorMaximumCullTraversal = 0;
+    unsigned int proofActorRootParents = 0;
+    unsigned int proofActorRootMask = 0;
+    if (proofRequiresActorForScreenshot && proofActorCameraAligned && proofPortraitCapturePending)
+    {
+        MWWorld::Ptr proofVisualActor;
+        if (proofSayActor != nullptr && *proofSayActor != '\0')
+            proofVisualActor = resolveProofActor(proofSayActor);
+        osg::Node* proofVisualRoot
+            = proofVisualActor.isEmpty() ? nullptr : proofVisualActor.getRefData().getBaseNode();
+        if (proofVisualRoot != nullptr)
+        {
+            proofActorRootParents = proofVisualRoot->getNumParents();
+            proofActorRootMask = proofVisualRoot->getNodeMask();
+            FalloutProofDrawableCullVisitor visitor(
+                static_cast<unsigned int>(std::max(0, proofActorCameraAlignedFrame)));
+            proofVisualRoot->accept(visitor);
+            proofActorVisibleDrawables = visitor.mVisibleDrawables;
+            proofActorVisibleRigs = visitor.mVisibleRigs;
+            proofActorResolvedRigs = visitor.mResolvedRigs;
+            proofActorCullReadyRigs = visitor.mCullReadyRigs;
+            proofActorMaximumCullTraversal = visitor.mMaximumCullTraversal;
+        }
+        proofActorVisualReady = proofActorPhaseTimedOut
+            || (!proofVisualActor.isEmpty() && proofVisualActor.getRefData().isEnabled()
+                && proofVisualRoot != nullptr && proofActorRootParents > 0 && proofActorRootMask != 0
+                && proofActorVisibleDrawables > 0
+                && (proofActorVisibleRigs == 0
+                    || (proofActorResolvedRigs > 0 && proofActorCullReadyRigs > 0)));
+    }
+    bool proofPortraitClear = !proofPortraitClearRequired;
+    std::string proofPortraitRejectReason;
+    FalloutProofPortraitPose proofPortraitPose;
+    float proofPortraitHeadX = -1.f;
+    float proofPortraitHeadY = -1.f;
+    float proofPortraitLeftHandOffsetZ = std::numeric_limits<float>::quiet_NaN();
+    float proofPortraitRightHandOffsetZ = std::numeric_limits<float>::quiet_NaN();
+    float proofPortraitHeadMotion = std::numeric_limits<float>::quiet_NaN();
+    float proofPortraitForwardDot = std::numeric_limits<float>::quiet_NaN();
+    if (proofPortraitClearRequired && proofPortraitCapturePending && mWorld != nullptr && mViewer != nullptr)
+    {
+        const char* actorRefText = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_REF");
+        MWWorld::Ptr portraitActor;
+        if (actorRefText != nullptr && *actorRefText != '\0')
+        {
+            const ESM::RefId actorRef = makeProofRefId(actorRefText);
+            portraitActor = mWorld->searchPtr(actorRef, true, false);
+            if (portraitActor.isEmpty())
+            {
+                if (const ESM::FormId* formId = actorRef.getIf<ESM::FormId>())
+                    portraitActor = MWBase::Environment::get().getWorldModel()->getPtr(*formId);
+            }
+        }
+        proofPortraitPose = resolveFalloutProofPortraitPose(portraitActor);
+
+        bool frameClear = true;
+        if (!proofPortraitPose.mHeadResolved)
+        {
+            frameClear = false;
+            proofPortraitRejectReason = "head-unresolved";
+        }
+
+        const osg::Camera* renderCamera = mViewer->getCamera();
+        const osg::Viewport* viewport = renderCamera != nullptr ? renderCamera->getViewport() : nullptr;
+        if (frameClear && viewport != nullptr && viewport->width() > 0.0 && viewport->height() > 0.0)
+        {
+            const osg::Vec3d window = proofPortraitPose.mHeadCenter * renderCamera->getViewMatrix()
+                * renderCamera->getProjectionMatrix() * viewport->computeWindowMatrix();
+            proofPortraitHeadX = static_cast<float>((window.x() - viewport->x()) / viewport->width());
+            proofPortraitHeadY = static_cast<float>((window.y() - viewport->y()) / viewport->height());
+            const float minHeadX = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MIN_HEAD_X", 0.30f);
+            const float maxHeadX = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MAX_HEAD_X", 0.70f);
+            const float minHeadY = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MIN_HEAD_Y", 0.38f);
+            const float maxHeadY = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MAX_HEAD_Y", 0.72f);
+            if (proofPortraitHeadX < minHeadX || proofPortraitHeadX > maxHeadX
+                || proofPortraitHeadY < minHeadY || proofPortraitHeadY > maxHeadY)
+            {
+                frameClear = false;
+                proofPortraitRejectReason = "head-outside-portrait-safe-area";
+            }
+        }
+        else if (frameClear)
+        {
+            frameClear = false;
+            proofPortraitRejectReason = "viewport-unresolved";
+        }
+
+        const float maximumHandOffsetZ
+            = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MAX_HAND_OFFSET_Z", -18.f);
+        if (proofPortraitPose.mLeftHandResolved)
+        {
+            proofPortraitLeftHandOffsetZ
+                = static_cast<float>(proofPortraitPose.mLeftHandCenter.z() - proofPortraitPose.mHeadCenter.z());
+            if (proofPortraitLeftHandOffsetZ > maximumHandOffsetZ)
+            {
+                frameClear = false;
+                proofPortraitRejectReason = "left-hand-near-face";
+            }
+        }
+        else
+        {
+            frameClear = false;
+            proofPortraitRejectReason = "left-hand-unresolved";
+        }
+        if (proofPortraitPose.mRightHandResolved)
+        {
+            proofPortraitRightHandOffsetZ
+                = static_cast<float>(proofPortraitPose.mRightHandCenter.z() - proofPortraitPose.mHeadCenter.z());
+            if (proofPortraitRightHandOffsetZ > maximumHandOffsetZ)
+            {
+                frameClear = false;
+                proofPortraitRejectReason = "right-hand-near-face";
+            }
+        }
+        else
+        {
+            frameClear = false;
+            proofPortraitRejectReason = "right-hand-unresolved";
+        }
+
+        if (proofPortraitPose.mHeadResolved && proofPortraitPreviousHeadResolved)
+        {
+            proofPortraitHeadMotion
+                = static_cast<float>((proofPortraitPose.mHeadCenter - proofPortraitPreviousHead).length());
+            proofPortraitForwardDot
+                = static_cast<float>(proofPortraitPose.mHeadForward * proofPortraitPreviousForward);
+            const float maximumHeadMotion
+                = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MAX_HEAD_MOTION", 1.5f);
+            const float minimumForwardDot
+                = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MIN_FORWARD_DOT", 0.995f);
+            if (proofPortraitHeadMotion > maximumHeadMotion || proofPortraitForwardDot < minimumForwardDot)
+            {
+                frameClear = false;
+                proofPortraitRejectReason = "head-pose-unstable";
+            }
+        }
+        else if (proofPortraitPose.mHeadResolved)
+        {
+            frameClear = false;
+            proofPortraitRejectReason = "head-stability-warmup";
+        }
+
+        if (proofPortraitPose.mHeadResolved)
+        {
+            proofPortraitPreviousHead = proofPortraitPose.mHeadCenter;
+            proofPortraitPreviousForward = proofPortraitPose.mHeadForward;
+            proofPortraitPreviousHeadResolved = true;
+        }
+        else
+            proofPortraitPreviousHeadResolved = false;
+
+        proofPortraitClearFrames = frameClear ? proofPortraitClearFrames + 1 : 0;
+        const int requiredClearFrames
+            = std::max(1, readProofInt("OPENMW_WORLD_VIEWER_PORTRAIT_CLEAR_FRAMES", 8));
+        proofPortraitClear = frameClear && proofPortraitClearFrames >= requiredClearFrames;
+        if (frameClear && !proofPortraitClear)
+            proofPortraitRejectReason = "clear-frame-settling";
+        if (!proofPortraitClear && (static_cast<int>(frameNumber) - proofPortraitLastRejectLogFrame >= 30
+            || proofPortraitClearFrames == requiredClearFrames - 1))
+        {
+            proofPortraitLastRejectLogFrame = static_cast<int>(frameNumber);
+            Log(Debug::Info) << "World viewer portrait acceptance: frame=" << frameNumber
+                             << " screenshotIndex=" << proofScreenshotFrameIndex << " headNormalized=("
+                             << proofPortraitHeadX << "," << proofPortraitHeadY << ") handOffsetZ=("
+                             << proofPortraitLeftHandOffsetZ << "," << proofPortraitRightHandOffsetZ
+                             << ") headMotion=" << proofPortraitHeadMotion << " forwardDot="
+                             << proofPortraitForwardDot << " clearFrames=" << proofPortraitClearFrames << "/"
+                             << requiredClearFrames << " status=reject reason=" << proofPortraitRejectReason;
+        }
+    }
+    if ((proofScreenshotFrameReached || proofScreenshotReadyFramesReached || proofActorAlignedScreenshotReached)
+        && mScreenCaptureHandler != nullptr)
+    {
+        if (!proofWorldReady && !proofScreenshotWaitLogged)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: waiting to capture screenshot until world is ready state="
+                             << static_cast<int>(mStateManager->getState()) << " loadingGui=" << proofLoadingGui
+                             << " frame=" << frameNumber;
+            proofScreenshotWaitLogged = true;
+        }
+        if (!proofWorldReady)
+        {
+            worldViewerTrace(frameNumber, "screenshot-wait-render.begin");
+            mViewer->renderingTraversals();
+            worldViewerTrace(frameNumber, "screenshot-wait-render.end");
+            worldViewerTrace(frameNumber, "screenshot-wait-lua-finish.begin");
+            mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+            worldViewerTrace(frameNumber, "screenshot-wait-lua-finish.end");
+            return true;
+        }
         if (proofRequiresActorForScreenshot && !proofActorCameraAligned)
         {
             if (!proofActorScreenshotWaitLogged)
@@ -2208,17 +14860,6 @@ void OMW::Engine::prepareEngine()
     }
 
     listener->loadingOn();
-    if (proofEnvEnabled("OPENMW_FNV_FIRST_SMOKE"))
-    {
-        if (mScreenCaptureHandler == nullptr)
-            Log(Debug::Error) << "FNV first smoke: loading-screen native capture handler unavailable";
-        else
-        {
-            mScreenCaptureHandler->setFramesToCapture(1);
-            mScreenCaptureHandler->captureNextFrame(*mViewer);
-            Log(Debug::Info) << "FNV first smoke: queued native loading-screen capture";
-        }
-    }
     {
         using namespace std::chrono_literals;
         while (dataLoading.wait_for(50ms) != std::future_status::ready)

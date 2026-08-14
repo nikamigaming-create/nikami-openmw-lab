@@ -1768,36 +1768,23 @@ namespace NifOsg
     {
         if (!ctrl->mInterpolator.empty())
         {
-            if (ctrl->mInterpolator->mRecordType == Nif::RC_NiPoint3Interpolator)
-            {
-                const auto* interpolator
-                    = static_cast<const Nif::NiPoint3Interpolator*>(ctrl->mInterpolator.getPtr());
-                mData = Vec3Interpolator(interpolator);
-                mHasValue = !mData.empty() || isReasonableVec3(interpolator->mDefaultValue, 1000000.f);
-            }
+            if (ctrl->mInterpolator->recType == Nif::RC_NiPoint3Interpolator)
+                mData = Vec3Interpolator(static_cast<const Nif::NiPoint3Interpolator*>(ctrl->mInterpolator.getPtr()));
             else if (ctrl->mInterpolator->recType == Nif::RC_NiBlendPoint3Interpolator)
             {
                 const auto* interpolator
                     = static_cast<const Nif::NiBlendPoint3Interpolator*>(ctrl->mInterpolator.getPtr());
-                if (isReasonableVec3(interpolator->mValue, 1000000.f))
-                {
-                    mData = Vec3Interpolator(nullptr, interpolator->mValue);
-                    mHasValue = true;
-                }
+                mData = Vec3Interpolator(nullptr, interpolator->mValue);
             }
         }
         else if (!ctrl->mData.empty())
-        {
             mData = Vec3Interpolator(ctrl->mData->mKeyList, osg::Vec3f(1, 1, 1));
-            mHasValue = !mData.empty();
-        }
     }
 
     MaterialColorController::MaterialColorController(const MaterialColorController& copy, const osg::CopyOp& copyop)
         : StateSetUpdater(copy, copyop)
         , Controller(copy)
         , mData(copy.mData)
-        , mHasValue(copy.mHasValue)
         , mTargetColor(copy.mTargetColor)
         , mBaseMaterial(copy.mBaseMaterial)
     {
@@ -1811,7 +1798,7 @@ namespace NifOsg
 
     void MaterialColorController::apply(osg::StateSet* stateset, osg::NodeVisitor* nv)
     {
-        if (hasInput() && mHasValue)
+        if (hasInput())
         {
             osg::Vec3f value = mData.interpKey(getInputValue(nv));
             osg::Material* mat = static_cast<osg::Material*>(stateset->getAttribute(osg::StateAttribute::MATERIAL));
