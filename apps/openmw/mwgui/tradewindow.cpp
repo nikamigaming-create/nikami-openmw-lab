@@ -6,6 +6,7 @@
 #include <MyGUI_ImageBox.h>
 #include <MyGUI_InputManager.h>
 
+#include <components/debug/debuglog.hpp>
 #include <components/misc/rng.hpp>
 #include <components/misc/strings/format.hpp>
 #include <components/widgets/numericeditbox.hpp>
@@ -21,6 +22,7 @@
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/esmstore.hpp"
 
+#include "../mwclass/esm4npc.hpp"
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/creaturestats.hpp"
 
@@ -211,6 +213,15 @@ namespace MWGui
         mCurrentBalance = 0;
         mCurrentMerchantOffer = 0;
         mFlatFalloutTrade = isFlatFalloutMerchant(actor);
+        if (actor.getType() == ESM4::Npc::sRecordId)
+        {
+            const auto* direct = actor.get<ESM4::Npc>();
+            const auto* traits = MWClass::ESM4Npc::getTraitsRecord(actor);
+            Log(Debug::Info) << "FNV barter: merchant=" << actor.toString()
+                             << " directFONV=" << (direct != nullptr && direct->mBase != nullptr && direct->mBase->mIsFONV)
+                             << " traitsFONV=" << (traits != nullptr && traits->mIsFONV)
+                             << " flat=" << mFlatFalloutTrade;
+        }
         mCurrency = mFlatFalloutTrade
             ? findFlatFalloutCurrency(*MWBase::Environment::get().getESMStore())
             : MWWorld::ContainerStore::sGoldId;
