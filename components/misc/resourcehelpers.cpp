@@ -142,6 +142,14 @@ VFS::Path::Normalized Misc::ResourceHelpers::correctTexturePath(
 
 VFS::Path::Normalized Misc::ResourceHelpers::correctIconPath(VFS::Path::NormalizedView resPath, const VFS::Manager& vfs)
 {
+    // TES4/Fallout ICON subrecords are texture-relative (for example
+    // "interface/icons/pipboyimages/...") while TES3 icons are relative to
+    // the top-level icons directory. Prefer the texture-relative form when
+    // it exists, then retain the TES3 lookup contract.
+    const VFS::Path::Normalized textureRelative = correctResourcePath({ { textures } }, resPath, vfs, dds);
+    if (vfs.exists(textureRelative))
+        return textureRelative;
+
     return correctResourcePath({ { icons } }, resPath, vfs, dds);
 }
 

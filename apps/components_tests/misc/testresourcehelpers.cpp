@@ -103,6 +103,28 @@ namespace Misc::ResourceHelpers
             EXPECT_EQ(correctResourcePath({ { sound } }, path, *vfs, mp3), "sound/sound");
         }
 
+        TEST(MiscResourceHelpersCorrectIconPath, shouldResolveFalloutTextureRelativeIcon)
+        {
+            constexpr VFS::Path::NormalizedView recordPath(
+                "interface/icons/pipboyimages/weapons/weapons_10mm_pistol.dds");
+            constexpr VFS::Path::NormalizedView archivePath(
+                "textures/interface/icons/pipboyimages/weapons/weapons_10mm_pistol.dds");
+            const std::unique_ptr<const VFS::Manager> vfs
+                = TestingOpenMW::createTestVFS({ { archivePath, nullptr } });
+
+            EXPECT_EQ(correctIconPath(recordPath, *vfs), archivePath);
+        }
+
+        TEST(MiscResourceHelpersCorrectIconPath, shouldRetainMorrowindIconLookup)
+        {
+            constexpr VFS::Path::NormalizedView recordPath("k/health.tga");
+            constexpr VFS::Path::NormalizedView archivePath("icons/k/health.dds");
+            const std::unique_ptr<const VFS::Manager> vfs
+                = TestingOpenMW::createTestVFS({ { archivePath, nullptr } });
+
+            EXPECT_EQ(correctIconPath(recordPath, *vfs), archivePath);
+        }
+
         struct MiscResourceHelpersCorrectResourcePathShouldRemoveExtraPrefix : TestWithParam<VFS::Path::NormalizedView>
         {
         };

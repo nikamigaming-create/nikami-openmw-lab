@@ -68,6 +68,10 @@ namespace MWGui
 
         void setGuiMode(GuiMode mode);
 
+        /// Reflow and validate the Fallout inventory contents after the pause-menu
+        /// controller has assigned its final full-screen rectangle.
+        bool refreshFalloutPaneLayout();
+
         void onInventoryUpdate(const MWWorld::Ptr& ptr) override;
 
         /// Cycle to previous/next weapon

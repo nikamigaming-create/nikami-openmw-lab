@@ -148,7 +148,7 @@ namespace MWGui
 
         mAvatarImage->eventMouseButtonClick += MyGUI::newDelegate(this, &InventoryWindow::onAvatarClicked);
         mAvatarImage->setRenderItemTexture(mPreviewTexture.get());
-        // The widget is Y-down, the RTT image is Y-up, so this UV is inverted
+        // The widget is Y-down, the RTT image is Y-up, so this UV is inverted.
         mAvatarImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
 
         getWidget(mItemView, "ItemView");
@@ -286,6 +286,23 @@ namespace MWGui
                 ++logged;
             }
         }
+    }
+
+    bool InventoryWindow::refreshFalloutPaneLayout()
+    {
+        adjustPanes();
+        updatePreviewSize();
+
+        const MyGUI::IntCoord window = mMainWidget->getCoord();
+        const MyGUI::IntCoord right = mRightPane->getCoord();
+        const MyGUI::IntCoord items = mItemView->getCoord();
+        const bool valid = right.width >= 320 && right.height >= 240 && items.width >= 300 && items.height >= 180;
+        Log(valid ? Debug::Info : Debug::Error)
+            << "FNV/ESM4 inventory pane geometry: window=" << window.left << "," << window.top << ","
+            << window.width << "," << window.height << " right=" << right.left << "," << right.top << ","
+            << right.width << "," << right.height << " items=" << items.left << "," << items.top << ","
+            << items.width << "," << items.height << " valid=" << valid;
+        return valid;
     }
 
     void InventoryWindow::updatePlayer()
@@ -698,8 +715,8 @@ namespace MWGui
             const int height = std::min<int>(preview->getTextureHeight(), imageSize.height * scale);
             preview->setViewport(width, height);
             preview->update();
-            image->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(
-                0.f, 0.f, width / float(preview->getTextureWidth()), height / float(preview->getTextureHeight())));
+            image->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f,
+                height / float(preview->getTextureHeight()), width / float(preview->getTextureWidth()), 0.f));
         };
 
         const float scale = MWBase::Environment::get().getWindowManager()->getScalingFactor();
@@ -727,9 +744,16 @@ namespace MWGui
         const MyGUI::IntSize viewport = getPreviewViewportSize();
         mPreview->setViewport(viewport.width, viewport.height);
         mPreview->update();
-        mAvatarImage->getSubWidgetMain()->_setUVSet(
-            MyGUI::FloatRect(0.f, 0.f, viewport.width / float(mPreview->getTextureWidth()),
-                viewport.height / float(mPreview->getTextureHeight())));
+        const float viewportU = viewport.width / float(mPreview->getTextureWidth());
+        const float viewportV = viewport.height / float(mPreview->getTextureHeight());
+        if (hasFalloutContent())
+        {
+            mAvatarImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, viewportV, viewportU, 0.f));
+            Log(Debug::Info) << "FNV visual assertion: inventory paper doll uses upright cropped RTT orientation"
+                             << " uv=0," << viewportV << "," << viewportU << ",0";
+        }
+        else
+            mAvatarImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, viewportU, viewportV));
 
         if (hasFalloutContent())
         {

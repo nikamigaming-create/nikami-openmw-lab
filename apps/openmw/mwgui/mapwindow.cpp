@@ -969,7 +969,15 @@ namespace MWGui
                 throw std::runtime_error("Fallout WastelandNV has no authored MNAM world-map geometry");
             const int mapWidth = static_cast<int>(geometry->mWidth);
             const int mapHeight = static_cast<int>(geometry->mHeight);
-            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, mapWidth, mapHeight));
+            const int textureWidth = mGlobalMapTexture->getWidth();
+            const int textureHeight = mGlobalMapTexture->getHeight();
+            if (textureWidth <= 0 || textureHeight <= 0)
+                throw std::runtime_error("Fallout authored world-map texture has invalid dimensions");
+            // MNAM dimensions are the logical map coordinate space, not necessarily the
+            // pixel dimensions of the authored DDS (WastelandNV uses a 1024px texture
+            // over a 2048-unit map). Cropping with MNAM exposed the texture's white
+            // out-of-bounds area instead of scaling it across the canvas.
+            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, textureWidth, textureHeight));
             mGlobalMapOverlay->setVisible(false);
             mGlobalMapOverlay->setImageTexture({});
             mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, mapWidth, mapHeight));
@@ -977,7 +985,8 @@ namespace MWGui
             mGlobalMapOverlay->setSize(mapWidth, mapHeight);
             mGlobalMap->setCanvasSize(mapWidth, mapHeight);
             mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
-            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture bound " << mapTexture << " authoredMNAM="
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture bound " << mapTexture << " texture="
+                             << textureWidth << "x" << textureHeight << " authoredMNAM="
                              << mapWidth << "x" << mapHeight << " cellsNW=(" << geometry->mNorthWestCellX << ","
                              << geometry->mNorthWestCellY << ") cellsSE=(" << geometry->mSouthEastCellX << ","
                              << geometry->mSouthEastCellY << ")";
@@ -1737,7 +1746,11 @@ namespace MWGui
                 throw std::runtime_error("Fallout WastelandNV has no authored MNAM world-map geometry");
             const int mapWidth = static_cast<int>(geometry->mWidth);
             const int mapHeight = static_cast<int>(geometry->mHeight);
-            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, mapWidth, mapHeight));
+            const int textureWidth = mGlobalMapTexture->getWidth();
+            const int textureHeight = mGlobalMapTexture->getHeight();
+            if (textureWidth <= 0 || textureHeight <= 0)
+                throw std::runtime_error("Fallout authored world-map texture has invalid dimensions");
+            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, textureWidth, textureHeight));
             mGlobalMapOverlay->setVisible(false);
             mGlobalMapOverlay->setImageTexture({});
             mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, mapWidth, mapHeight));

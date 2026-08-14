@@ -193,7 +193,8 @@ namespace MWGui
         catch (const MyGUI::Exception& e)
         {
             mCompassHeading = nullptr;
-            Log(Debug::Info) << "FNV/ESM4 proof: optional CompassHeading HUD widget unavailable: " << e.what();
+            Log(falloutContent ? Debug::Error : Debug::Info)
+                << "FNV visual assertion: CompassHeading HUD widget unavailable: " << e.what();
         }
 
         getWidget(mCrosshair, "Crosshair");
@@ -231,7 +232,6 @@ namespace MWGui
             const int barHeight = 18;
             const int barGap = 7;
             const int mapSize = 150;
-            const int mapInset = 5;
             const int iconSize = 54;
             const int iconStatusHeight = 7;
 
@@ -246,12 +246,27 @@ namespace MWGui
             mSpellBox->setCoord(margin + barWidth + 18 + iconSize + 8, iconTop, iconSize, iconSize + iconStatusHeight);
             mSneakBox->setCoord(margin + barWidth + 18 + (iconSize + 8) * 2, iconTop, iconSize, iconSize);
 
-            mMinimapBox->setCoord(viewSize.width - margin - mapSize, viewSize.height - margin - mapSize, mapSize, mapSize);
-            if (mMinimapBox->getChildCount() > 0)
-                mMinimapBox->getChildAt(0)->setCoord(0, 0, mapSize, mapSize);
-            mMinimap->setCoord(mapInset, mapInset, mapSize - mapInset * 2, mapSize - mapInset * 2);
-            mCompass->setCoord((mapSize - 72) / 2, (mapSize - 72) / 2, 72, 72);
-            mMinimapButton->setCoord(0, 0, mapSize - mapInset * 2, mapSize - mapInset * 2);
+            // FNV uses a horizontal compass ribbon during gameplay; the
+            // square local-map RTT belongs in the Pip-Boy map, not the HUD.
+            mMinimapBox->setVisible(false);
+            constexpr int compassWidth = 420;
+            constexpr int compassHeight = 44;
+            mFalloutCompassBar = mMainWidget->createWidget<MyGUI::Widget>("HUD_Box",
+                MyGUI::IntCoord((viewSize.width - compassWidth) / 2,
+                    viewSize.height - margin - compassHeight, compassWidth, compassHeight),
+                MyGUI::Align::HCenter | MyGUI::Align::Bottom);
+            auto* ticks = mFalloutCompassBar->createWidget<MyGUI::TextBox>("SandText",
+                MyGUI::IntCoord(8, 2, compassWidth - 16, 18), MyGUI::Align::HStretch | MyGUI::Align::Top);
+            ticks->setCaption("|       |       |       |       |       |       |       |");
+            ticks->setTextAlign(MyGUI::Align::Center);
+            ticks->setTextColour(MyGUI::Colour(0.25f, 1.f, 0.25f, 1.f));
+            ticks->setNeedMouseFocus(false);
+            mCompassHeading = mFalloutCompassBar->createWidget<MyGUI::TextBox>("SandText",
+                MyGUI::IntCoord(8, 18, compassWidth - 16, 22), MyGUI::Align::HStretch | MyGUI::Align::Bottom);
+            mCompassHeading->setCaption("N");
+            mCompassHeading->setTextAlign(MyGUI::Align::Center);
+            mCompassHeading->setTextColour(MyGUI::Colour(0.25f, 1.f, 0.25f, 1.f));
+            mCompassHeading->setNeedMouseFocus(false);
 
             mEffectBox->setPosition(viewSize.width - margin - mapSize - 28, viewSize.height - margin - 24);
 
@@ -261,9 +276,9 @@ namespace MWGui
             mSneakBoxBaseLeft = mSneakBox->getLeft();
             mMinimapBoxBaseRight = viewSize.width - mMinimapBox->getRight();
             mEffectBoxBaseRight = viewSize.width - mEffectBox->getRight();
-            Log(Debug::Info) << "FNV/ESM4 proof: flat Fallout HUD scaled HP/AP and compass to "
-                             << barWidth << "x" << barHeight << " bars, " << mapSize << "x" << mapSize
-                             << " minimap";
+            Log(Debug::Info) << "FNV visual assertion: flat Fallout HUD uses " << barWidth << "x" << barHeight
+                             << " HP/AP bars and " << compassWidth << "x" << compassHeight
+                             << " horizontal compass; gameplay local-map RTT disabled";
         }
 
         mMainWidget->eventMouseButtonClick += MyGUI::newDelegate(this, &HUD::onWorldClicked);
@@ -545,7 +560,7 @@ namespace MWGui
     {
         LocalMapBase::setPlayerDir(x, y);
 
-        if (!isVr || !hasFalloutContent() || mCompassHeading == nullptr)
+        if (!hasFalloutContent() || mCompassHeading == nullptr)
             return;
 
         static constexpr const char* headings[8] = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
@@ -780,17 +795,18 @@ namespace MWGui
         // Cinematics and character generation own HUD visibility. Fallout
         // content must honor that regular UI contract rather than restoring
         // fallback widgets over the authored scene.
-        const bool falloutVr = isVr && hasFalloutContent();
+        const bool falloutContent = hasFalloutContent();
         healthFrame->setVisible(visible);
         magickaFrame->setVisible(visible);
-        fatigueFrame->setVisible(falloutVr ? false : visible);
+        fatigueFrame->setVisible(falloutContent ? false : visible);
         mHealth->setVisible(visible);
         mMagicka->setVisible(visible);
-        mStamina->setVisible(falloutVr ? false : visible);
+        mStamina->setVisible(falloutContent ? false : visible);
         updatePositions();
         if (compatibilityUiTelemetryEnabled())
             Log(Debug::Info) << "OpenNV compatibility UI telemetry: HMS visible=" << visible
-                             << " staminaVisible=" << (falloutVr ? false : visible) << " falloutVr=" << falloutVr;
+                             << " staminaVisible=" << (falloutContent ? false : visible)
+                             << " falloutContent=" << falloutContent;
     }
 
     void HUD::setWeapVisible(bool visible)
@@ -821,7 +837,10 @@ namespace MWGui
     {
         // Keep visibility with the gameplay/UI state. A cinematic or
         // character-generation sequence must not leak the minimap.
-        mMinimapBox->setVisible(visible);
+        const bool flatFalloutCompass = !isVr && hasFalloutContent() && mFalloutCompassBar != nullptr;
+        mMinimapBox->setVisible(flatFalloutCompass ? false : visible);
+        if (mFalloutCompassBar != nullptr)
+            mFalloutCompassBar->setVisible(visible);
         updatePositions();
         if (compatibilityUiTelemetryEnabled())
             Log(Debug::Info) << "OpenNV compatibility UI telemetry: minimap visible=" << visible;

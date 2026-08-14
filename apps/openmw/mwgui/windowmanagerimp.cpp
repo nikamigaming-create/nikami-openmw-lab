@@ -869,13 +869,25 @@ namespace MWGui
 
         const bool falloutContent = isFalloutContentLoaded();
 
-        // Fallout uses Pip-Boy surfaces, not OpenMW's minimized Morrowind window icons.
+        // Fallout's modal inventory/map live on the Pip-Boy surface, but the
+        // ordinary gameplay HUD must remain visible while no GUI owns the
+        // screen. Hiding these here reduced native FNV gameplay to a crosshair.
         if (falloutContent)
         {
-            setMinimapVisibility(false);
-            setWeaponVisibility(false);
+            const bool falloutGameplayHudVisible = gameplayOverlayVisible && gameMode;
+            setMinimapVisibility(falloutGameplayHudVisible);
+            setWeaponVisibility(falloutGameplayHudVisible);
             setSpellVisibility(false);
-            setHMSVisibility(false);
+            setHMSVisibility(falloutGameplayHudVisible);
+
+            static std::optional<bool> loggedFalloutGameplayHudVisible;
+            if (!loggedFalloutGameplayHudVisible.has_value()
+                || *loggedFalloutGameplayHudVisible != falloutGameplayHudVisible)
+            {
+                Log(Debug::Info) << "FNV visual assertion: gameplay HUD visible="
+                                 << falloutGameplayHudVisible << " hp=1 ap=1 compass=1 weapon=1";
+                loggedFalloutGameplayHudVisible = falloutGameplayHudVisible;
+            }
         }
         else
         {
@@ -1035,6 +1047,9 @@ namespace MWGui
                             loggedActiveWidth = paneWidth;
                             loggedActiveHeight = paneHeight;
                             setWindowCoord(windows[i], MyGUI::IntCoord(margin, top, paneWidth, paneHeight));
+                            if (i == 1 && mInventoryWindow != nullptr
+                                && !mInventoryWindow->refreshFalloutPaneLayout())
+                                Log(Debug::Error) << "FNV/ESM4 proof: active inventory item pane failed layout validation";
                             continue;
                         }
 

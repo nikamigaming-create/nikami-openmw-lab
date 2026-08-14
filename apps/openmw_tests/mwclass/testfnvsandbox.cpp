@@ -85,6 +85,23 @@ namespace
         EXPECT_FALSE(MWClass::isFalloutSandboxMarkerClaimed(markerId));
     }
 
+    TEST(FnvSandboxTest, GivesEveryAuthoredIdleAStableSourceSpecificGroup)
+    {
+        MWClass::FalloutSandboxIdle raking;
+        raking.mId = form(0x0108957a);
+        raking.mModel = "meshes/characters/_male/idleanims/raking.kf";
+
+        MWClass::FalloutSandboxIdle sweeping = raking;
+        sweeping.mId = form(0x0108957b);
+
+        const std::string rakingGroup = MWClass::getFalloutSandboxAnimationGroup(raking);
+        const std::string sweepingGroup = MWClass::getFalloutSandboxAnimationGroup(sweeping);
+        EXPECT_TRUE(rakingGroup.starts_with("specialidle_"));
+        EXPECT_TRUE(sweepingGroup.starts_with("specialidle_"));
+        EXPECT_NE(rakingGroup, sweepingGroup);
+        EXPECT_EQ(rakingGroup, "specialidle_0x108957a");
+    }
+
     TEST(FnvPackageTest, PreservesAuthoredTravelRadiusWithSafeExactMinimum)
     {
         EXPECT_FALSE(MWClass::getFnvTravelCompletionRadius(-1).has_value());
@@ -195,7 +212,7 @@ namespace
         ASSERT_EQ(markers[0].mIdles.size(), 1u);
         EXPECT_EQ(markers[0].mIdles[0].mId, idleId);
         EXPECT_EQ(markers[0].mIdles[0].mModel, "meshes/characters/_male/idleanims/raking.kf");
-        EXPECT_EQ(markers[0].mIdles[0].mAnimatedObjectModel, "meshes/animobjects/aorake.nif");
+        EXPECT_EQ(markers[0].mIdles[0].mAnimatedObjectModel, "animobjects/aorake.nif");
         EXPECT_EQ(store.get<ESM4::AnimObject>().getSize(), 1u);
 
         // Candidate membership stays pinned to the package origin (x=10), even after the actor walks near the

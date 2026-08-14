@@ -100,6 +100,14 @@
                         <Property key="ImageTexture" value="textures\compass.dds"/>
                     </Widget>
 
+                    <Widget type="TextBox" skin="SandText" position="0 18 61 24" align="HCenter VCenter" name="CompassHeading">
+                        <Property key="Visible" value="false"/>
+                        <Property key="TextAlign" value="Center"/>
+                        <Property key="TextShadow" value="true"/>
+                        <Property key="TextShadowColour" value="0 0 0"/>
+                        <Property key="NeedMouse" value="false"/>
+                    </Widget>
+
                     <Widget type="Button" skin="" position_real="0 0 1 1" name="MiniMapButton" align="Stretch">
                         <Property key="Depth" value="10"/>
                     </Widget>

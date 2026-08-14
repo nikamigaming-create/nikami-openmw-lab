@@ -4581,7 +4581,7 @@ namespace MWRender
 
     bool isSyntheticFalloutLoopingGroup(std::string_view group)
     {
-        return group == "idle" || group == "idle2" || group == "stand" || group == "weaponpose"
+        return group == "idle" || group == "idle2" || group.starts_with("specialidle") || group == "stand" || group == "weaponpose"
             || group == "swimidle" || group == "kneel" || group == "prone" || group == "walk"
             || group == "talk" || group == "flyforward"
             || group.starts_with("walk") || group.starts_with("run")
