@@ -160,7 +160,9 @@ namespace MWGui
 
     void ContainerWindow::setPtr(const MWWorld::Ptr& container)
     {
-        if (container.isEmpty() || (container.getType() != ESM::REC_CONT && !container.getClass().isActor()))
+        if (container.isEmpty()
+            || (container.getType() != ESM::REC_CONT && container.getType() != ESM::REC_CONT4
+                && !container.getClass().isActor()))
             throw std::runtime_error("Invalid argument in ContainerWindow::setPtr");
         bool lootAnyway = mTreatNextOpenAsLoot;
         mTreatNextOpenAsLoot = false;

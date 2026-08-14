@@ -10,6 +10,8 @@
 
 #include <components/misc/notnullptr.hpp>
 
+#include <array>
+
 namespace osg
 {
     class Group;
@@ -62,6 +64,11 @@ namespace MWGui
         /// Select one of Fallout's physical Pip-Boy item categories while
         /// retaining the real inventory model and row widgets.
         void setFalloutPipBoyCategory(int submenu);
+
+        /// Return the live category captions already owned by the native
+        /// inventory window. The fifth Fallout category is the ammo half of
+        /// the normal combined Misc / Ammo filter caption.
+        std::array<std::string, 5> getFalloutPipBoyCategoryLabels() const;
 
         /// Activate an exact real row through the same production callback used
         /// by a physical Pip-Boy controller selection.  Proof scheduling may

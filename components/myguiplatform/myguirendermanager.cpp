@@ -437,6 +437,7 @@ namespace MyGUIPlatform
         bool mUpdate;
         std::string mFilter;
         MyGUI::IntCoord mContentRect;
+        unsigned int mPipBoyScreenBatchTraceCount = 0;
     };
 
     void GuiCameraUpdate::operator()(GUICamera* camera, osg::NodeVisitor* nv)
@@ -573,11 +574,25 @@ namespace MyGUIPlatform
     void GUICamera::doRender(MyGUI::IVertexBuffer* buffer, MyGUI::ITexture* texture, size_t count)
 //## VR_PATCH END
     {
+        if (count == 0)
+            return;
+
+        auto* const osgBuffer = static_cast<OSGVertexBuffer*>(buffer);
+        osg::VertexBufferObject* const vertexBuffer = osgBuffer != nullptr ? osgBuffer->getVertexBuffer() : nullptr;
+        osg::Array* const vertexArray = osgBuffer != nullptr ? osgBuffer->getVertexArray() : nullptr;
+        if (vertexBuffer == nullptr || vertexArray == nullptr)
+        {
+            Log(Debug::Error) << "MyGUI render batch rejected: filter=" << mFilter << " vertices=" << count
+                              << " vertexBuffer=" << (vertexBuffer != nullptr)
+                              << " vertexArray=" << (vertexArray != nullptr);
+            return;
+        }
+
         Drawable::Batch batch;
         batch.mVertexCount = count;
-        batch.mVertexBuffer = static_cast<OSGVertexBuffer*>(buffer)->getVertexBuffer();
-        batch.mArray = static_cast<OSGVertexBuffer*>(buffer)->getVertexArray();
-        static_cast<OSGVertexBuffer*>(buffer)->markUsed();
+        batch.mVertexBuffer = vertexBuffer;
+        batch.mArray = vertexArray;
+        osgBuffer->markUsed();
 
         if (OSGTexture* osgtexture = static_cast<OSGTexture*>(texture))
         {
@@ -592,8 +607,7 @@ namespace MyGUIPlatform
 
         if (mFilter == "PipBoyScreen" && count > 0)
         {
-            static unsigned sPipBoyScreenBatchTraceCount = 0;
-            if (sPipBoyScreenBatchTraceCount++ < 8 && batch.mArray != nullptr)
+            if (mPipBoyScreenBatchTraceCount++ < 24 && batch.mArray != nullptr)
             {
                 const auto* const bytes = static_cast<const unsigned char*>(batch.mArray->getDataPointer());
                 const auto readFloat = [&bytes](std::size_t offset) {
@@ -603,10 +617,24 @@ namespace MyGUIPlatform
                     return *reinterpret_cast<const unsigned int*>(bytes + offset);
                 };
                 const std::size_t last = (count - 1) * sizeof(MyGUI::Vertex);
+                float minimumX = readFloat(0);
+                float maximumX = minimumX;
+                float minimumY = readFloat(sizeof(float));
+                float maximumY = minimumY;
+                for (std::size_t index = 1; index < count; ++index)
+                {
+                    const std::size_t offset = index * sizeof(MyGUI::Vertex);
+                    minimumX = std::min(minimumX, readFloat(offset));
+                    maximumX = std::max(maximumX, readFloat(offset));
+                    minimumY = std::min(minimumY, readFloat(offset + sizeof(float)));
+                    maximumY = std::max(maximumY, readFloat(offset + sizeof(float)));
+                }
                 Log(Debug::Info) << "FNV Pip-Boy RTT glyph batch: vertices=" << count
                                  << " texture=" << (batch.mTexture != nullptr ? batch.mTexture->getName() : "none")
                                  << " firstXY=(" << readFloat(0) << ',' << readFloat(sizeof(float)) << ')'
                                  << " lastXY=(" << readFloat(last) << ',' << readFloat(last + sizeof(float)) << ')'
+                                 << " bounds=(" << minimumX << ',' << minimumY << ")-("
+                                 << maximumX << ',' << maximumY << ')'
                                  << " firstColor=0x" << std::hex << readColor(sizeof(float) * 3) << std::dec;
             }
         }

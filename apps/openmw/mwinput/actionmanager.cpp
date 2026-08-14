@@ -180,7 +180,8 @@ namespace MWInput
                 const bool fighting = input->getControlSwitch("playerfighting");
                 const bool gui = window->isGuiMode();
                 const bool useDown
-                    = mBindingsManager->actionIsActive(A_Use) || mFalloutVatsProofUseDown;
+                    = mBindingsManager->actionIsActive(A_Use) || mFalloutVatsProofUseDown
+                    || mFalloutUnattendedUseDown;
                 const bool armed = stats.getDrawState() == MWMechanics::DrawState::Weapon;
                 const bool attack = MWMechanics::shouldApplyFalloutPlayerUseInput(
                     mFalloutVats.getPhase(), controls, fighting, gui, armed, useDown);

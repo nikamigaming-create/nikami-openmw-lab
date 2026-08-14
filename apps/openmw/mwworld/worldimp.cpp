@@ -1715,6 +1715,12 @@ namespace MWWorld
                     mIdsRebuilt = true;
                 }
 
+                // Dynamic NPC records precede PLAY in OpenMW saves. Validate
+                // their race/class references before Player::load creates NPC
+                // custom data, which performs required lookups immediately.
+                // The normal post-read validation is too late for FNV saves
+                // whose compatibility Player references FNV_Wastelander.
+                mStore.validateDynamic();
                 mStore.checkPlayer();
                 mPlayer->readRecord(reader, type);
                 break;

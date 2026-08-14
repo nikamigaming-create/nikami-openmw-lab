@@ -73,6 +73,11 @@ namespace MWInput
 
     InputManager::~InputManager() {}
 
+    void InputManager::setFalloutUnattendedUseDown(bool down)
+    {
+        mActionManager->setFalloutUnattendedUseDown(down);
+    }
+
     void InputManager::update(float dt, bool disableControls, bool disableEvents)
     {
         mControlsDisabled = disableControls;

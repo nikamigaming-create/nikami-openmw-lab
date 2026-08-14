@@ -448,6 +448,29 @@ namespace MWGui
                          << " category=" << category << " source=restored-save330-inventory-model";
     }
 
+    std::array<std::string, 5> InventoryWindow::getFalloutPipBoyCategoryLabels() const
+    {
+        const auto caption = [](const MyGUI::Button* button) {
+            return button != nullptr ? button->getCaption().asUTF8() : std::string();
+        };
+        std::string misc = caption(mFilterMisc);
+        std::string ammo;
+        const std::size_t separator = misc.find('/');
+        if (separator != std::string::npos)
+        {
+            ammo = misc.substr(separator + 1);
+            misc.erase(separator);
+            const auto trim = [](std::string& value) {
+                const std::size_t first = value.find_first_not_of(" \t");
+                const std::size_t last = value.find_last_not_of(" \t");
+                value = first == std::string::npos ? std::string() : value.substr(first, last - first + 1);
+            };
+            trim(misc);
+            trim(ammo);
+        }
+        return { caption(mFilterWeapon), caption(mFilterApparel), caption(mFilterMagic), misc, ammo };
+    }
+
     bool InventoryWindow::activateFalloutPipBoyItem(const ESM::RefId& formId)
     {
         if (mSortModel == nullptr || mTradeModel == nullptr || mGuiMode != GM_Inventory || formId.empty())

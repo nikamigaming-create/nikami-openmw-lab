@@ -9,6 +9,7 @@
 #include <set>
 
 #include <components/misc/strings/algorithm.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/vfs/manager.hpp>
 
 namespace
@@ -63,6 +64,15 @@ namespace
             while (true)
             {
                 skipSpace();
+                // Bethesda's menu archive mixes BOM-less XML with UTF-8 BOM
+                // prefab fragments (for example vertical_fade_line.xml).
+                // Each include is parsed as its own fragment, so accept the
+                // encoding marker at a fragment boundary as XML readers do.
+                if (startsWith("\xEF\xBB\xBF"))
+                {
+                    mPosition += 3;
+                    continue;
+                }
                 if (!skipComment())
                     return;
             }
@@ -121,14 +131,21 @@ namespace
             }
             MWGui::FnvMenuXmlNode node;
             node.mType = parseName();
-            if (node.mType.empty() || !parseAttributes(node))
+            if (node.mType.empty())
+                return std::nullopt;
+            // GECK's permissive reader accepts a missing '>' before an
+            // immediate closing tag. The shipped item_stats_display.xml uses
+            // exactly `<systemcolor</systemcolor>`, so preserve the empty tile
+            // instead of rejecting the entire authored inventory menu.
+            const bool implicitOpenEnd = mPosition < mXml.size() && mXml[mPosition] == '<';
+            if (!implicitOpenEnd && !parseAttributes(node))
                 return std::nullopt;
             if (startsWith("/>"))
             {
                 mPosition += 2;
                 return node;
             }
-            if (mPosition >= mXml.size() || mXml[mPosition++] != '>')
+            if (!implicitOpenEnd && (mPosition >= mXml.size() || mXml[mPosition++] != '>'))
             {
                 mError = MWGui::FnvMenuXmlParseError::UnexpectedToken;
                 return std::nullopt;
@@ -421,6 +438,9 @@ namespace MWGui
                     = contents ? parseFnvMenuXmlFragment(*contents, &parseError) : std::nullopt;
                 if (!fragment)
                 {
+                    Log(Debug::Error) << "FNV menu XML include rejected: include=" << source
+                                      << " error=" << getFnvMenuXmlParseErrorName(
+                                             contents ? parseError : FnvMenuXmlParseError::UnexpectedToken);
                     if (error != nullptr)
                         *error = contents ? parseError : FnvMenuXmlParseError::UnexpectedToken;
                     return false;
@@ -450,8 +470,8 @@ namespace MWGui
         return evaluateSequence(trait, context);
     }
 
-    std::optional<float> evaluateFnvMenuNamedScalarTrait(const FnvMenuXmlNode& root,
-        std::string_view nodeName, std::string_view traitName, const FnvMenuLayoutEvaluationContext& context)
+    std::optional<float> evaluateFnvMenuNodeScalarTrait(const FnvMenuXmlNode& root,
+        const FnvMenuXmlNode& initial, std::string_view traitName, const FnvMenuLayoutEvaluationContext& context)
     {
         const auto findParent = [&root](const FnvMenuXmlNode* target) -> const FnvMenuXmlNode* {
             const auto visit = [&](auto&& self, const FnvMenuXmlNode& node) -> const FnvMenuXmlNode* {
@@ -472,9 +492,6 @@ namespace MWGui
             return name.empty() && &node == &root ? root.getAttribute("name") : name;
         };
 
-        const FnvMenuXmlNode* initial = root.findDescendantByName(nodeName);
-        if (initial == nullptr)
-            return std::nullopt;
         std::set<std::pair<const FnvMenuXmlNode*, std::string>> active;
         const auto evaluate = [&](auto&& self, const FnvMenuXmlNode& node,
                                   std::string_view requestedTrait) -> std::optional<float> {
@@ -487,7 +504,13 @@ namespace MWGui
             const auto key = std::pair{ &node, std::string(requestedTrait) };
             if (!active.insert(key).second)
                 return std::nullopt;
-            const FnvMenuXmlNode* trait = node.findChild(requestedTrait);
+            // GECK menu prefabs are included before a menu supplies its local
+            // overrides.  The last trait with a given name is therefore the
+            // effective value (for example IM_InventoryList overrides the
+            // list_box.xml geometry after its include).
+            const auto traitIt = std::find_if(node.mChildren.rbegin(), node.mChildren.rend(),
+                [requestedTrait](const FnvMenuXmlNode& child) { return child.mType == requestedTrait; });
+            const FnvMenuXmlNode* trait = traitIt == node.mChildren.rend() ? nullptr : &*traitIt;
             if (trait == nullptr)
             {
                 active.erase(key);
@@ -503,6 +526,10 @@ namespace MWGui
                             return context.mScreenHeight;
                         return std::nullopt;
                     }
+                    if (source == "globals()")
+                        return context.mDynamicTraitResolver
+                            ? context.mDynamicTraitResolver("globals()", sourceTrait)
+                            : std::nullopt;
                     const FnvMenuXmlNode* sourceNode = nullptr;
                     if (source == "me()")
                         sourceNode = &node;
@@ -530,7 +557,14 @@ namespace MWGui
             active.erase(key);
             return result;
         };
-        return evaluate(evaluate, *initial, traitName);
+        return evaluate(evaluate, initial, traitName);
+    }
+
+    std::optional<float> evaluateFnvMenuNamedScalarTrait(const FnvMenuXmlNode& root,
+        std::string_view nodeName, std::string_view traitName, const FnvMenuLayoutEvaluationContext& context)
+    {
+        const FnvMenuXmlNode* node = root.findDescendantByName(nodeName);
+        return node == nullptr ? std::nullopt : evaluateFnvMenuNodeScalarTrait(root, *node, traitName, context);
     }
 
     std::string normalizeFnvMenuTexturePath(std::string_view path)
@@ -547,7 +581,7 @@ namespace MWGui
     }
 
     std::optional<FnvMenuXmlDocument> loadFnvMenuXml(
-        const VFS::Manager& vfs, std::string_view path, FnvMenuXmlParseError* error)
+        const VFS::Manager& vfs, std::string_view path, FnvMenuXmlParseError* error, bool expandIncludes)
     {
         const auto read = [&vfs](std::string_view candidate) -> std::optional<std::string> {
             const Files::IStreamPtr stream = vfs.find(VFS::Path::Normalized(candidate));
@@ -566,6 +600,8 @@ namespace MWGui
         std::optional<FnvMenuXmlDocument> document = parseFnvMenuXml(*contents, error);
         if (!document)
             return std::nullopt;
+        if (!expandIncludes)
+            return document;
 
         const std::size_t slash = path.find_last_of("/\\");
         const std::string parent = slash == std::string_view::npos ? std::string{} : std::string(path.substr(0, slash + 1));
@@ -573,7 +609,10 @@ namespace MWGui
             [&](std::string_view source) -> std::optional<std::string> {
                 if (std::optional<std::string> direct = read(parent + std::string(source)))
                     return direct;
-                return read("menus/prefabs/" + std::string(source));
+                if (std::optional<std::string> prefab = read("menus/prefabs/" + std::string(source)))
+                    return prefab;
+                Log(Debug::Error) << "FNV menu XML include missing: menu=" << path << " include=" << source;
+                return std::nullopt;
             },
             error);
         return expanded ? document : std::nullopt;

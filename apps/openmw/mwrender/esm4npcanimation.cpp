@@ -24,6 +24,8 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <functional>
 #include <set>
@@ -101,6 +103,60 @@ namespace MWRender
 {
     namespace
     {
+        std::optional<float> readFalloutPipBoyFieldOfView(Resource::ResourceSystem* resourceSystem)
+        {
+            const VFS::Manager* const vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
+            const VFS::Path::Normalized esmPath("falloutnv.esm");
+            if (vfs == nullptr || !vfs->exists(esmPath))
+                return std::nullopt;
+
+            constexpr std::string_view directoryPrefix = "DIR: ";
+            const std::string archive = vfs->getArchive(esmPath);
+            if (!archive.starts_with(directoryPrefix))
+                return std::nullopt;
+
+            const std::filesystem::path iniPath
+                = std::filesystem::path(archive.substr(directoryPrefix.size())).parent_path() / "Fallout_default.ini";
+            std::ifstream stream(iniPath);
+            std::string line;
+            while (stream && std::getline(stream, line))
+            {
+                const std::size_t separator = line.find('=');
+                if (separator == std::string::npos)
+                    continue;
+                std::string key = line.substr(0, separator);
+                key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char value) {
+                    return std::isspace(value) != 0;
+                }), key.end());
+                Misc::StringUtils::lowerCaseInPlace(key);
+                if (key != "fpipboy1stpersonfov")
+                    continue;
+                try
+                {
+                    const float value = std::stof(line.substr(separator + 1));
+                    if (std::isfinite(value) && value > 0.f && value < 180.f)
+                    {
+                        // This value drives Fallout's first-person model projection, not the
+                        // world-camera projection. Retained xNVSE Save330 frames show the
+                        // model callback changing from 55 to the authored value 47 directly.
+                        // Converting 47 through the 4:3 world-FOV helper yields 36.1233 and
+                        // incorrectly enlarges the wrist model.
+                        const float verticalFov = value;
+                        Log(Debug::Info) << "FNV Pip-Boy projection: referenceFov=" << value
+                                         << " verticalFov=" << verticalFov
+                                         << " source=" << iniPath.string()
+                                         << " key=fPipboy1stPersonFOV";
+                        return verticalFov;
+                    }
+                }
+                catch (const std::exception&)
+                {
+                    return std::nullopt;
+                }
+            }
+            return std::nullopt;
+        }
+
         class FirstPersonArmorArmsOnlyVisitor final : public osg::NodeVisitor
         {
         public:
@@ -134,15 +190,13 @@ namespace MWRender
 
                 const std::string name = Misc::StringUtils::lowerCase(drawable.getName());
                 const bool genericArms = name == "arms" || Misc::StringUtils::ciStartsWith(name, "arms:");
-                const bool namedPipBoyOn
-                    = name == "pipboyon" || Misc::StringUtils::ciStartsWith(name, "pipboyon:");
-                const bool keep = genericArms || namedPipBoyOn;
+                // Only the first-person Arms partition belongs in this actor-space
+                // composition. Retained native review rejected the outfit's two
+                // PipBoyOn body partitions: forcing them into the first-person rig
+                // produced displaced black geometry and did not repair either cuff.
+                const bool keep = genericArms;
                 if (keep)
-                {
-                    // Keep retail's complete two-arm mesh and both PipBoyOn sleeve/cuff meshes intact.
-                    // Removing skin partitions here creates the missing arm and open sleeve seams.
                     ++mKept;
-                }
                 else
                 {
                     drawable.setNodeMask(0u);
@@ -1769,7 +1823,7 @@ namespace MWRender
         {
         public:
             explicit PipBoyScreenTextureVisitor(osg::Texture2D* texture, osg::Texture2D* mapTexture, bool showMap,
-                float mapZoom, float mapPanX, float mapPanY)
+                float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
                 , mTexture(texture)
                 , mMapTexture(mapTexture)
@@ -1777,27 +1831,28 @@ namespace MWRender
                 , mMapZoom(mapZoom)
                 , mMapPanX(mapPanX)
                 , mMapPanY(mapPanY)
+                , mMapClip(mapClip)
             {
             }
 
             void apply(osg::Node& node) override
             {
                 const bool isScreenOwner = isPipBoyScreenOwner(node);
-                bindIfPipBoyScreen(node);
+                const osg::StateSet* previousScreenState = mInheritedPipBoyScreenState;
                 if (isScreenOwner)
-                    ++mPipBoyScreenOwnerDepth;
+                    mInheritedPipBoyScreenState = node.getStateSet();
                 traverse(node);
                 if (isScreenOwner)
-                    --mPipBoyScreenOwnerDepth;
+                    mInheritedPipBoyScreenState = previousScreenState;
             }
 
             void apply(osg::Geode& geode) override
             {
                 const bool isScreenOwner = isPipBoyScreenOwner(geode);
-                bindIfPipBoyScreen(geode);
-                const bool ownsOrInheritsScreen = isScreenOwner || mPipBoyScreenOwnerDepth != 0;
+                const osg::StateSet* previousScreenState = mInheritedPipBoyScreenState;
                 if (isScreenOwner)
-                    ++mPipBoyScreenOwnerDepth;
+                    mInheritedPipBoyScreenState = geode.getStateSet();
+                const bool ownsOrInheritsScreen = mInheritedPipBoyScreenState != nullptr;
                 for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
                 {
                     if (osg::Drawable* drawable = geode.getDrawable(index))
@@ -1809,58 +1864,62 @@ namespace MWRender
                 }
                 traverse(geode);
                 if (isScreenOwner)
-                    --mPipBoyScreenOwnerDepth;
+                    mInheritedPipBoyScreenState = previousScreenState;
             }
 
             void apply(osg::Drawable& drawable) override
             {
-                const bool ownsOrInheritsScreen
-                    = isPipBoyScreenOwner(drawable) || mPipBoyScreenOwnerDepth != 0;
+                const osg::StateSet* screenState = isPipBoyScreenOwner(drawable)
+                    ? drawable.getStateSet() : mInheritedPipBoyScreenState;
+                const bool ownsOrInheritsScreen = screenState != nullptr;
                 auditPipBoyScreenUv(dynamic_cast<osg::Geometry*>(&drawable), "drawable", ownsOrInheritsScreen);
-                bindIfPipBoyScreen(drawable);
+                bindIfPipBoyScreen(drawable, screenState);
                 if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
                 {
                     if (osg::Geometry* source = rig->getSourceGeometry())
                     {
                         auditPipBoyScreenUv(source, "source", ownsOrInheritsScreen);
-                        bindIfPipBoyScreen(*source);
+                        bindIfPipBoyScreen(*source, screenState);
                     }
                     for (unsigned int i = 0; i < 2; ++i)
                     {
                         if (osg::Geometry* geometry = rig->getRenderGeometry(i))
                         {
                             auditPipBoyScreenUv(geometry, "render", ownsOrInheritsScreen);
-                            bindIfPipBoyScreen(*geometry);
+                            bindIfPipBoyScreen(*geometry, screenState);
                         }
                     }
                 }
             }
 
             const std::vector<osg::ref_ptr<osg::StateSet>>& getBoundStateSets() const { return mBoundStateSets; }
+            const std::vector<osg::ref_ptr<osg::Node>>& getBoundNodes() const { return mBoundNodes; }
+            const std::vector<osg::ref_ptr<osg::Drawable>>& getBoundDrawables() const { return mBoundDrawables; }
             static void setLiveTexture(osg::StateSet& stateSet, osg::Texture2D* texture, osg::Texture2D* mapTexture,
-                bool showMap, float mapZoom, float mapPanX, float mapPanY)
+                bool showMap, float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip)
             {
                 float screenAspect = 1.f;
                 if (const osg::Uniform* uniform = stateSet.getUniform("pipBoyScreenAspect"))
                     uniform->get(screenAspect);
-                decorateStateSet(stateSet, texture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, screenAspect);
+                decorateStateSet(stateSet, texture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip, screenAspect);
             }
 
         private:
             template <class StateOwner>
             static bool isPipBoyScreenOwner(const StateOwner& owner)
             {
-                // Fallout's authored PipBoyArm NIF uses the same Screen.dds
-                // material on more than one display surface (including
-                // pipboyscreen:0 and ScreenLit:8). The texture reference is
-                // the data contract; filtering by a guessed node name leaves
-                // the primary glass black and updates only the small overlay.
-                return isPipBoyScreen(owner.getStateSet());
+                // PipBoyArm.nif has two nearly coincident Screen.dds surfaces.
+                // Retail/xNVSE evidence identifies pipboyscreen as the live
+                // display; ScreenLit is the authored lighting layer and must
+                // retain its original material.
+                std::string name = owner.getName();
+                Misc::StringUtils::lowerCaseInPlace(name);
+                return name.starts_with("pipboyscreen") && isPipBoyScreen(owner.getStateSet());
             }
 
             static void auditPipBoyScreenUv(osg::Geometry* geometry, std::string_view phase, bool screenOwner)
             {
-                if (geometry == nullptr || !screenOwner || std::getenv("OPENMW_FNV_HAND_POSE_AUDIT") == nullptr)
+                if (geometry == nullptr || !screenOwner)
                     return;
 
                 static std::set<const osg::Geometry*> logged;
@@ -1973,6 +2032,7 @@ namespace MWRender
                         uniform float pipBoyMapZoom;
                         uniform float pipBoyMapAspect;
                         uniform vec2 pipBoyMapPan;
+                        uniform vec4 pipBoyMapClip;
                         varying vec2 pipBoyTerminalUv;
 
                         void main()
@@ -1987,8 +2047,8 @@ namespace MWRender
                             // and zoomed directly on the authored Pip-Boy glass.
                             if (pipBoyMapEnabled > 0.5)
                             {
-                                const vec2 mapOrigin = vec2(0.08, 0.26);
-                                const vec2 mapSize = vec2(0.84, 0.53);
+                                vec2 mapOrigin = pipBoyMapClip.xy;
+                                vec2 mapSize = pipBoyMapClip.zw;
                                 vec2 mapUv = (pipBoyTerminalUv - mapOrigin) / mapSize;
                                 if (mapUv.x >= 0.0 && mapUv.x <= 1.0 && mapUv.y >= 0.0 && mapUv.y <= 1.0)
                                 {
@@ -1997,7 +2057,7 @@ namespace MWRender
                                     // stretched into the wide display viewport.
                                     // Fit the real source aspect first, leaving
                                     // the unused glass black, then pan/zoom it.
-                                    const float viewportAspect = mapSize.x / mapSize.y;
+                                    float viewportAspect = mapSize.x / mapSize.y;
                                     float mapAspect = max(pipBoyMapAspect, 0.01);
                                     if (mapAspect > viewportAspect)
                                         mapUv.y = (mapUv.y - 0.5) * (mapAspect / viewportAspect) + 0.5;
@@ -2050,7 +2110,8 @@ namespace MWRender
             }
 
             static void decorateStateSet(osg::StateSet& stateSet, osg::Texture2D* texture, osg::Texture2D* mapTexture,
-                bool showMap, float mapZoom, float mapPanX, float mapPanY, float screenAspect)
+                bool showMap, float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip,
+                float screenAspect)
             {
                 constexpr auto flags = osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE;
                 stateSet.setTextureAttributeAndModes(0, texture, flags);
@@ -2067,13 +2128,12 @@ namespace MWRender
                     terminalWidth = texture->getImage()->s();
                     terminalHeight = texture->getImage()->t();
                 }
-                const float terminalAspect = terminalWidth > 0 && terminalHeight > 0
-                    ? static_cast<float>(terminalWidth) / static_cast<float>(terminalHeight)
-                    : 1.f;
                 const float safeScreenAspect = std::max(screenAspect, 0.01f);
-                const osg::Vec2f terminalUvScale(
-                    std::min(1.f, safeScreenAspect / terminalAspect),
-                    std::min(1.f, terminalAspect / safeScreenAspect));
+                // The 512x512 Pip-Boy RTT already contains the complete
+                // authored pane in its final normalized coordinates. The
+                // former aspect-fit multiplier sampled only 77.8% of its Y
+                // range on the 1.284:1 curved glass and clipped the title/list.
+                const osg::Vec2f terminalUvScale(1.f, 1.f);
                 stateSet.addUniform(new osg::Uniform("pipBoyScreenAspect", safeScreenAspect));
                 stateSet.addUniform(new osg::Uniform("pipBoyTerminalUvScale", terminalUvScale));
                 stateSet.addUniform(new osg::Uniform("pipBoyMapTexture", 1));
@@ -2094,31 +2154,55 @@ namespace MWRender
                 }
                 stateSet.addUniform(new osg::Uniform("pipBoyMapAspect", mapAspect));
                 stateSet.addUniform(new osg::Uniform("pipBoyMapPan", osg::Vec2f(mapPanX, mapPanY)));
+                stateSet.addUniform(new osg::Uniform("pipBoyMapClip", mapClip));
             }
 
             template <class StateOwner>
-            void bindIfPipBoyScreen(StateOwner& owner)
+            void bindIfPipBoyScreen(StateOwner& owner, const osg::StateSet* source)
             {
-                if (!isPipBoyScreenOwner(owner))
+                if (source == nullptr)
                     return;
 
-                const osg::StateSet* source = owner.getStateSet();
+                if (osg::Node* node = dynamic_cast<osg::Node*>(&owner))
+                    mBoundNodes.emplace_back(node);
+                if (osg::Drawable* drawable = dynamic_cast<osg::Drawable*>(&owner))
+                    mBoundDrawables.emplace_back(drawable);
+
                 auditPipBoyScreenTextureTransform(*source, owner.getName());
 
                 float screenAspect = 1.f;
+                std::size_t vertexCount = 0;
+                osg::BoundingBox geometryBounds;
                 if (const osg::Geometry* geometry = dynamic_cast<const osg::Geometry*>(&owner))
                 {
-                    const osg::BoundingBox bounds = geometry->getBoundingBox();
-                    std::array<float, 3> extents = { bounds.xMax() - bounds.xMin(), bounds.yMax() - bounds.yMin(),
-                        bounds.zMax() - bounds.zMin() };
+                    geometryBounds = geometry->getBoundingBox();
+                    vertexCount = geometry->getVertexArray() != nullptr
+                        ? geometry->getVertexArray()->getNumElements() : 0;
+                    std::array<float, 3> extents = {
+                        geometryBounds.xMax() - geometryBounds.xMin(),
+                        geometryBounds.yMax() - geometryBounds.yMin(),
+                        geometryBounds.zMax() - geometryBounds.zMin() };
                     std::sort(extents.begin(), extents.end(), std::greater<float>());
                     if (extents[1] > 0.0001f)
                         screenAspect = extents[0] / extents[1];
                 }
 
+                static std::set<std::string> loggedOwners;
+                const std::string ownerKey = owner.getName() + ":" + std::to_string(vertexCount);
+                if (loggedOwners.insert(ownerKey).second)
+                {
+                    Log(Debug::Info) << "FNV Pip-Boy screen owner: name=" << owner.getName()
+                                     << " geometry=" << (vertexCount > 0)
+                                     << " vertices=" << vertexCount
+                                     << " boundsMin=(" << geometryBounds.xMin() << ',' << geometryBounds.yMin()
+                                     << ',' << geometryBounds.zMin() << ") boundsMax=(" << geometryBounds.xMax()
+                                     << ',' << geometryBounds.yMax() << ',' << geometryBounds.zMax() << ')'
+                                     << " derivedAspect=" << screenAspect;
+                }
+
                 osg::ref_ptr<osg::StateSet> bound = new osg::StateSet(*source, osg::CopyOp::SHALLOW_COPY);
-                decorateStateSet(
-                    *bound, mTexture, mMapTexture, mShowMap, mMapZoom, mMapPanX, mMapPanY, screenAspect);
+                decorateStateSet(*bound, mTexture, mMapTexture, mShowMap, mMapZoom, mMapPanX, mMapPanY,
+                    mMapClip, screenAspect);
                 owner.setStateSet(bound);
                 mBoundStateSets.push_back(std::move(bound));
             }
@@ -2129,76 +2213,11 @@ namespace MWRender
             float mMapZoom = 1.f;
             float mMapPanX = 0.f;
             float mMapPanY = 0.f;
-            unsigned int mPipBoyScreenOwnerDepth = 0;
+            osg::Vec4f mMapClip;
+            const osg::StateSet* mInheritedPipBoyScreenState = nullptr;
             std::vector<osg::ref_ptr<osg::StateSet>> mBoundStateSets;
-        };
-
-        // Locate the authored physical controls so UI input moves the actual
-        // Pip-Boy nodes, not a detached screen-space substitute.
-        class PipBoyControlLocator final : public osg::NodeVisitor
-        {
-        public:
-            PipBoyControlLocator()
-                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
-            {
-            }
-
-            void apply(osg::Node& node) override
-            {
-                inspectNodeName(node, node.getName());
-                traverse(node);
-            }
-
-            void apply(osg::Geode& geode) override
-            {
-                inspectNodeName(geode, geode.getName());
-                for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
-                {
-                    osg::Drawable* const drawable = geode.getDrawable(index);
-                    if (drawable != nullptr)
-                        remember("drawable", drawable->getName());
-                }
-                traverse(geode);
-            }
-
-            osg::Node* mTabKnob = nullptr;
-            osg::Node* mScrollKnob = nullptr;
-            std::array<osg::Node*, 3> mButtons{};
-            std::array<osg::Node*, 3> mGlows{};
-            std::vector<std::string> mRelevantNames;
-
-        private:
-            void remember(std::string_view kind, std::string_view name)
-            {
-                if (name.empty() || mRelevantNames.size() >= 48)
-                    return;
-                const std::string lower = Misc::StringUtils::lowerCase(name);
-                if (lower.find("pip") == std::string::npos && lower.find("knob") == std::string::npos
-                    && lower.find("button") == std::string::npos && lower.find("glow") == std::string::npos)
-                    return;
-                mRelevantNames.emplace_back(std::string(kind) + ':' + std::string(name));
-            }
-
-            void inspectNodeName(osg::Node& node, std::string_view name)
-            {
-                remember("node", name);
-                if (Misc::StringUtils::ciStartsWith(name, "TabKnob"))
-                    mTabKnob = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "ScrollKnob"))
-                    mScrollKnob = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "PipBoyButton01"))
-                    mButtons[0] = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "PipBoyButton02"))
-                    mButtons[1] = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "PipBoyButton03"))
-                    mButtons[2] = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "StatsGlow"))
-                    mGlows[0] = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "ItemsGlow"))
-                    mGlows[1] = &node;
-                else if (Misc::StringUtils::ciStartsWith(name, "DataGlow"))
-                    mGlows[2] = &node;
-            }
+            std::vector<osg::ref_ptr<osg::Node>> mBoundNodes;
+            std::vector<osg::ref_ptr<osg::Drawable>> mBoundDrawables;
         };
 
         void overrideFalloutPartTexture(std::string_view texture, std::string_view textureType, unsigned int unit,
@@ -3661,6 +3680,61 @@ namespace MWRender
 
         bool getNodeWorldMatrixUnderAncestor(osg::Node* node, const osg::Node* ancestor, osg::Matrix& result);
 
+        class FalloutPipBoyScreenSurfaceCollector final : public osg::NodeVisitor
+        {
+        public:
+            FalloutPipBoyScreenSurfaceCollector(const osg::Matrix& worldToCamera, const osg::Node* livePartRoot)
+                : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+                , mWorldToCamera(worldToCamera)
+                , mLivePartRoot(livePartRoot)
+            {
+            }
+
+            void apply(osg::Node& node) override { traverse(node); }
+            void apply(osg::Geode& geode) override { traverse(geode); }
+            void apply(osg::Drawable& drawable) override
+            {
+                std::string name = drawable.getName();
+                Misc::StringUtils::lowerCaseInPlace(name);
+                if (!name.starts_with("pipboyscreen"))
+                    return;
+                SceneUtil::RigGeometry* const rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable);
+                const osg::Geometry* geometry = rig != nullptr ? rig->getLastFrameGeometry()
+                                                               : dynamic_cast<osg::Geometry*>(&drawable);
+                const osg::Vec3Array* vertices = geometry != nullptr
+                    ? dynamic_cast<const osg::Vec3Array*>(geometry->getVertexArray()) : nullptr;
+                if (vertices == nullptr)
+                    return;
+                osg::Matrix geometryToWorld;
+                bool resolved = false;
+                for (unsigned int parentIndex = 0; parentIndex < drawable.getNumParents(); ++parentIndex)
+                {
+                    if (getNodeWorldMatrixUnderAncestor(drawable.getParent(parentIndex), mLivePartRoot, geometryToWorld))
+                    {
+                        resolved = true;
+                        break;
+                    }
+                }
+                if (!resolved)
+                    return;
+                ++mResolvedDrawables;
+                for (const osg::Vec3f& vertex : *vertices)
+                {
+                    const osg::Vec3d point = osg::Vec3d(vertex) * geometryToWorld * mWorldToCamera;
+                    mBounds.expandBy(osg::Vec3f(point.x(), point.y(), point.z()));
+                    ++mVertices;
+                }
+            }
+
+            osg::BoundingBox mBounds;
+            unsigned int mVertices = 0;
+            unsigned int mResolvedDrawables = 0;
+
+        private:
+            osg::Matrix mWorldToCamera;
+            const osg::Node* mLivePartRoot = nullptr;
+        };
+
         struct FalloutWristSurfaceSample
         {
             std::vector<osg::Vec3f> mCameraVertices;
@@ -3760,6 +3834,33 @@ namespace MWRender
             osg::Vec3f mWristCamera;
             float mRadiusSquared;
         };
+
+        struct FalloutWristSurfaceGap
+        {
+            float mDistance = 1.e30f;
+            osg::Vec3f mFirst;
+            osg::Vec3f mSecond;
+        };
+
+        FalloutWristSurfaceGap minimumFalloutWristSurfaceGap(
+            const FalloutWristSurfaceSample& first, const FalloutWristSurfaceSample& second)
+        {
+            FalloutWristSurfaceGap result;
+            for (const osg::Vec3f& firstVertex : first.mCameraVertices)
+            {
+                for (const osg::Vec3f& secondVertex : second.mCameraVertices)
+                {
+                    const float distance = (firstVertex - secondVertex).length();
+                    if (distance < result.mDistance)
+                    {
+                        result.mDistance = distance;
+                        result.mFirst = firstVertex;
+                        result.mSecond = secondVertex;
+                    }
+                }
+            }
+            return result;
+        }
 
         bool isFallout3OrNewVegas(const ESM4::Npc& npc)
         {
@@ -8794,6 +8895,9 @@ namespace MWRender
         constexpr std::string_view skeleton = "meshes/characters/_1stperson/skeleton.nif";
         constexpr std::string_view baseIdle = "meshes/characters/_1stperson/mtidle.kf";
         constexpr std::string_view h2hAimOverlay = "meshes/characters/_1stperson/h2haim.kf";
+        mDefaultFirstPersonFieldOfView = state.mFieldOfView;
+        mPipBoyFirstPersonFieldOfView
+            = readFalloutPipBoyFieldOfView(mResourceSystem).value_or(mDefaultFirstPersonFieldOfView);
         const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
         if (traits == nullptr || !traits->mIsFONV)
             throw std::runtime_error("native first-person profile requires an FNV NPC");
@@ -8875,14 +8979,21 @@ namespace MWRender
                 mFirstPersonArmorArmsPart = attachedNode;
                 FirstPersonArmorArmsOnlyVisitor armsOnly;
                 attachedNode->accept(armsOnly);
-                const bool exactArmPartition = armsOnly.mKept == 3 && armsOnly.mHidden == 3;
+                const std::string loweredPath = Misc::StringUtils::lowerCase(std::string(path));
+                const bool nakedUpperBody = loweredPath.ends_with("characters/_male/upperbody.nif")
+                    || loweredPath.ends_with("characters/_male/femaleupperbody.nif");
+                const std::size_t expectedKept = nakedUpperBody ? 2 : 1;
+                const std::size_t expectedHidden = nakedUpperBody ? 0 : 5;
+                const bool exactArmPartition
+                    = armsOnly.mKept == expectedKept && armsOnly.mHidden == expectedHidden;
                 Log(exactArmPartition ? Debug::Info : Debug::Error)
                     << "FNV first-person armor filter: actor=" << traits->mEditorId
                     << " selected=" << path << " keptArms=" << armsOnly.mKept
-                    << " hiddenNonArms=" << armsOnly.mHidden << " expected=3/3 intact=1";
+                    << " hiddenNonArms=" << armsOnly.mHidden << " expected="
+                    << expectedKept << '/' << expectedHidden
+                    << " source=" << (nakedUpperBody ? "authored-naked-upperbody" : "equipped-outfit");
                 if (!exactArmPartition)
-                    throw std::runtime_error(
-                        "native FNV first-person armor did not expose intact Arms plus both PipBoyOn sleeves");
+                    throw std::runtime_error("native FNV first-person armor did not expose the exact Arms partition");
             }
             if (attached)
                 ++mFirstPersonAttachedPartCount;
@@ -8903,25 +9014,9 @@ namespace MWRender
         if (state.mPipBoy)
         {
             mPipBoyArmPart = attach("pipboy-arm", pipBoy, true, false, "Bip01 L ForeTwist");
-            osg::Group* const wristParent = mPipBoyArmPart != nullptr && mPipBoyArmPart->getNumParents() > 0
-                ? mPipBoyArmPart->getParent(0)
-                : nullptr;
-            if (wristParent != nullptr)
-            {
-                mPipBoyPresentationRoot = new osg::MatrixTransform;
-                mPipBoyPresentationRoot->setName("FNV Pip-Boy Authored Wrist Presentation");
-                mPipBoyPresentationRoot->setNodeMask(0);
-                if (wristParent->replaceChild(mPipBoyArmPart, mPipBoyPresentationRoot))
-                {
-                    mPipBoyPresentationRoot->addChild(mPipBoyArmPart);
-                    initializePipBoyPhysicalControls();
-                    Log(Debug::Info) << "FNV Pip-Boy physical: wristAttachment=ready model=" << pipBoy
-                                     << " presentationMount=Bip01-L-ForeTwist"
-                                     << " interactionHand=player-skeleton";
-                }
-                else
-                    mPipBoyPresentationRoot = nullptr;
-            }
+            Log(Debug::Info) << "FNV Pip-Boy physical: wristAttachment=ready model=" << pipBoy
+                             << " presentationMount=direct-Bip01-L-ForeTwist"
+                             << " interactionHand=player-skeleton wrapper=none";
         }
         // The retail Save330 xNVSE scene graph owns each first-person hand skin
         // as a direct Scene Root child. Their RigGeometry still resolves against
@@ -8933,27 +9028,25 @@ namespace MWRender
 
         mNodeMap.clear();
         mNodeMapCreated = false;
-        // The raw skeleton's internal Weapon helper remains below the right
-        // hand, but retail moves the active rendered weapon mount to an
-        // identity `Weapon` child of Bip01 Translate before the 1hpaim track
-        // starts.  Materialize that same runtime topology and bind the
-        // authored KF target to it.  It must retain the native NIF transform
-        // representation: KeyframeController updates its decomposed rotation
-        // and scale channels, which a generic osg::MatrixTransform cannot
-        // represent safely. There is intentionally no authored transform
-        // here: the existing retail Weapon controller owns it.
+        // The retained retail Varmint Rifle probe has one live rendered chain:
+        // Bip01 R Hand -> Weapon -> Weapon (0007EA24) -> VarmintRifle:0.
+        // Bind both the authored KF and the equipped mesh to that existing NIF
+        // transform.  A second same-named node beneath Bip01 Translate leaves
+        // the animated hands and rendered weapon in different hierarchies.
         const NodeMap& firstPersonNodes = getNodeMap();
-        const auto translateIt = firstPersonNodes.find("Bip01 Translate");
-        if (translateIt == firstPersonNodes.end() || translateIt->second == nullptr)
-            throw std::runtime_error("native FNV first-person profile is missing retail Bip01 Translate mount");
-        mFalloutWeaponDrawFrame = new NifOsg::MatrixTransform(Nif::NiTransform::getIdentity());
-        mFalloutWeaponDrawFrame->setName("Weapon");
-        mFalloutWeaponDrawFrame->setNodeMask(~0u);
-        translateIt->second->addChild(mFalloutWeaponDrawFrame.get());
-        translateIt->second->dirtyBound();
-        mNodeMap["Weapon"] = mFalloutWeaponDrawFrame;
-        Log(Debug::Info) << "FNV first-person retail weapon mount: node=Weapon parent=Bip01 Translate"
-                         << " local=identity controller=authored-kf source=xNVSE-save330-retail";
+        const auto weaponIt = firstPersonNodes.find("Weapon");
+        mFalloutWeaponDrawFrame = weaponIt != firstPersonNodes.end()
+            ? dynamic_cast<NifOsg::MatrixTransform*>(weaponIt->second.get())
+            : nullptr;
+        osg::Group* const weaponParent = mFalloutWeaponDrawFrame != nullptr
+            && mFalloutWeaponDrawFrame->getNumParents() > 0
+            ? mFalloutWeaponDrawFrame->getParent(0)
+            : nullptr;
+        if (mFalloutWeaponDrawFrame == nullptr || weaponParent == nullptr
+            || !Misc::StringUtils::ciEqual(weaponParent->getName(), "Bip01 R Hand"))
+            throw std::runtime_error("native FNV first-person profile is missing retail right-hand Weapon mount");
+        Log(Debug::Info) << "FNV first-person retail weapon mount: node=Weapon parent=Bip01 R Hand"
+                         << " controller=authored-kf source=retail-varmint-frame1";
         const std::shared_ptr<AnimSource> idleSource = addSingleAnimSource(
             std::string(baseIdle), std::string(skeleton), false, aimOverlay, "idle");
         const std::string pipBoyInteractionKf = female
@@ -8982,6 +9075,18 @@ namespace MWRender
         Log(mPipBoyRetailManipulateBound ? Debug::Info : Debug::Error)
             << "FNV Pip-Boy retail right-arm manipulation: source=" << pipBoyManipulateKf
             << " bound=" << mPipBoyRetailManipulateBound;
+        // Save330's held stack keeps the authored first-person H2H aim layer
+        // beneath the left-arm waver. Without it, unkeyed parent bones leave
+        // the device above and left of the camera; h2hidle is raise-only and
+        // is deliberately not retained here.
+        const std::string pipBoyBaseAimKf = "meshes/characters/_1stperson/h2haim.kf";
+        const std::shared_ptr<AnimSource> pipBoyBaseAimSource = addSingleAnimSource(
+            pipBoyBaseAimKf, std::string(skeleton), false, {}, "pipboybaseaim");
+        mPipBoyRetailBaseAimBound = pipBoyBaseAimSource != nullptr && hasAnimation("pipboybaseaim")
+            && getAnimationSourceName("pipboybaseaim") == pipBoyBaseAimKf;
+        Log(mPipBoyRetailBaseAimBound ? Debug::Info : Debug::Error)
+            << "FNV Pip-Boy authored held base aim: source=" << pipBoyBaseAimKf
+            << " bound=" << mPipBoyRetailBaseAimBound;
         const std::string selectedIdleSource = getAnimationSourceName("idle");
         const bool idleBound = idleSource != nullptr && hasAnimation("idle") && selectedIdleSource == baseIdle;
         Log(idleBound ? Debug::Info : Debug::Error)
@@ -9013,89 +9118,8 @@ namespace MWRender
                           << " profile=flat-first-person-mtidle-plus-h2haim";
     }
 
-    void ESM4NpcAnimation::initializePipBoyPhysicalControls()
-    {
-        if (mPipBoyControlsInitialized || mPipBoyControlsInitializationAttempted || mPipBoyArmPart == nullptr)
-            return;
-        mPipBoyControlsInitializationAttempted = true;
-
-        PipBoyControlLocator locator;
-        mPipBoyArmPart->accept(locator);
-        const auto wrap = [](osg::Node* node, const osg::Vec3f& localAxis, const osg::Vec3f& authoredPivot,
-                              std::string_view label) {
-            PipBoyPhysicalControl result;
-            if (node == nullptr || node->getNumParents() == 0)
-                return result;
-            osg::Group* const parent = node->getParent(0);
-            osg::MatrixTransform* const transform = dynamic_cast<osg::MatrixTransform*>(node);
-            if (parent == nullptr)
-                return result;
-            if (transform != nullptr)
-            {
-                const osg::Vec3d sourcePivot = transform->getMatrix().getTrans();
-                result.mPivot.set(static_cast<float>(sourcePivot.x()), static_cast<float>(sourcePivot.y()),
-                    static_cast<float>(sourcePivot.z()));
-                result.mAxis = transform->getMatrix().getRotate() * localAxis;
-            }
-            else
-            {
-                result.mPivot = authoredPivot;
-                result.mAxis = localAxis;
-            }
-            if (result.mAxis.length2() <= 0.000001f)
-                result.mAxis = localAxis;
-            result.mAxis.normalize();
-            result.mRoot = new osg::MatrixTransform;
-            result.mRoot->setName("FNV Pip-Boy control " + std::string(label));
-            result.mRoot->setMatrix(osg::Matrix::identity());
-            if (!parent->replaceChild(node, result.mRoot))
-                return PipBoyPhysicalControl{};
-            result.mRoot->addChild(node);
-            return result;
-        };
-
-        mPipBoyTabKnob = wrap(locator.mTabKnob, osg::Vec3f(0.f, 0.f, 1.f),
-            osg::Vec3f(5.91818f, -0.459204f, 3.31565f), "TabKnob");
-        mPipBoyScrollKnob = wrap(locator.mScrollKnob, osg::Vec3f(1.f, 0.f, 0.f),
-            osg::Vec3f(7.68622f, 1.23748f, 3.13685f), "ScrollKnob");
-        const std::array<osg::Vec3f, 3> buttonPivots = {
-            osg::Vec3f(10.35927f, -1.58879f, 4.27524f),
-            osg::Vec3f(11.11687f, -1.63075f, 4.29203f),
-            osg::Vec3f(11.87390f, -1.67269f, 4.30882f),
-        };
-        const std::array<osg::Vec3f, 3> glowPivots = {
-            osg::Vec3f(10.35621f, -1.59248f, 4.32988f),
-            osg::Vec3f(11.11475f, -1.63493f, 4.35281f),
-            osg::Vec3f(11.87233f, -1.67646f, 4.36350f),
-        };
-        for (std::size_t index = 0; index < mPipBoyButtons.size(); ++index)
-        {
-            mPipBoyButtons[index] = wrap(locator.mButtons[index], osg::Vec3f(0.f, 0.f, 1.f), buttonPivots[index],
-                "Button" + std::to_string(index + 1));
-            mPipBoyGlows[index] = wrap(locator.mGlows[index], osg::Vec3f(0.f, 0.f, 1.f), glowPivots[index],
-                "Glow" + std::to_string(index + 1));
-        }
-        mPipBoyControlsInitialized = mPipBoyTabKnob.mRoot != nullptr && mPipBoyScrollKnob.mRoot != nullptr;
-        std::ostringstream discovered;
-        for (std::size_t index = 0; index < locator.mRelevantNames.size(); ++index)
-        {
-            if (index != 0)
-                discovered << " | ";
-            discovered << locator.mRelevantNames[index];
-        }
-        Log(mPipBoyControlsInitialized ? Debug::Info : Debug::Error)
-            << "FNV Pip-Boy physical controls: initialized=" << mPipBoyControlsInitialized
-            << " tabKnob=" << (mPipBoyTabKnob.mRoot != nullptr)
-            << " scrollKnob=" << (mPipBoyScrollKnob.mRoot != nullptr)
-            << " buttons=" << (mPipBoyButtons[0].mRoot != nullptr) << ','
-            << (mPipBoyButtons[1].mRoot != nullptr) << ',' << (mPipBoyButtons[2].mRoot != nullptr)
-            << " glows=" << (mPipBoyGlows[0].mRoot != nullptr) << ','
-            << (mPipBoyGlows[1].mRoot != nullptr) << ',' << (mPipBoyGlows[2].mRoot != nullptr)
-            << " discovered=[" << discovered.str() << ']';
-    }
-
     bool ESM4NpcAnimation::setPipBoyScreenTexture(osg::Texture2D* screenTexture, osg::Texture2D* mapTexture,
-        bool showMap, float mapZoom, float mapPanX, float mapPanY)
+        bool showMap, float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip)
     {
         if (mPipBoyArmPart == nullptr || screenTexture == nullptr)
         {
@@ -9106,9 +9130,11 @@ namespace MWRender
 
         if (mPipBoyScreenStateSets.empty())
         {
-            PipBoyScreenTextureVisitor visitor(screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY);
+            PipBoyScreenTextureVisitor visitor(screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip);
             mPipBoyArmPart->accept(visitor);
             mPipBoyScreenStateSets = visitor.getBoundStateSets();
+            mPipBoyScreenNodes = visitor.getBoundNodes();
+            mPipBoyScreenDrawables = visitor.getBoundDrawables();
         }
         else
         {
@@ -9116,7 +9142,7 @@ namespace MWRender
             {
                 if (stateSet != nullptr)
                     PipBoyScreenTextureVisitor::setLiveTexture(
-                        *stateSet, screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY);
+                        *stateSet, screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip);
             }
         }
 
@@ -9130,9 +9156,21 @@ namespace MWRender
         return bound;
     }
 
+    bool ESM4NpcAnimation::bindPipBoyScreenTexture(osg::Node& pipBoyArm, osg::Texture2D* screenTexture,
+        osg::Texture2D* mapTexture, bool showMap, float mapZoom, float mapPanX, float mapPanY,
+        const osg::Vec4f& mapClip)
+    {
+        if (screenTexture == nullptr)
+            return false;
+        PipBoyScreenTextureVisitor visitor(
+            screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip);
+        pipBoyArm.accept(visitor);
+        return !visitor.getBoundStateSets().empty();
+    }
+
     void ESM4NpcAnimation::setPipBoyPresentationProgress(float progress, bool interactionPoseActive)
     {
-        if (mPipBoyPresentationRoot == nullptr)
+        if (mPipBoyArmPart == nullptr)
             return;
 
         const float previousProgress = mPipBoyPresentationProgress;
@@ -9140,21 +9178,41 @@ namespace MWRender
         mPipBoyWeaponSuppressed = mPipBoyPresentationProgress > 0.001f;
         if (mPipBoyPresentationProgress <= 0.001f)
         {
-            mPipBoyPresentationRoot->setNodeMask(0);
-            mPipBoyPresentationRoot->setMatrix(osg::Matrix::identity());
+            // The Pip-Boy is worn equipment, not a menu-only prop. Retail
+            // keeps PipBoyArm.nif on the left wrist after the raise animation
+            // closes; hiding this root made the device disappear throughout
+            // every weapon and locomotion state.
+            mPipBoyArmPart->setNodeMask(~osg::Node::NodeMask(0));
+            for (const osg::ref_ptr<osg::Node>& node : mPipBoyScreenNodes)
+                if (node != nullptr)
+                    node->setNodeMask(0);
+            for (const osg::ref_ptr<osg::Drawable>& drawable : mPipBoyScreenDrawables)
+                if (drawable != nullptr)
+                    drawable->setNodeMask(0);
             if (mFirstPersonRightHandPart != nullptr)
                 mFirstPersonRightHandPart->setNodeMask(~osg::Node::NodeMask(0));
-            if (isPlaying("pipboy"))
+            if (hasAnimation("pipboy"))
                 disable("pipboy");
-            if (isPlaying("pipboywaver"))
+            if (hasAnimation("pipboywaver"))
                 disable("pipboywaver");
-            if (isPlaying("pipboymanipulate"))
+            if (hasAnimation("pipboymanipulate"))
                 disable("pipboymanipulate");
+            if (hasAnimation("pipboybaseaim"))
+                disable("pipboybaseaim");
             mPipBoyRetailInteractionPoseHeld = false;
+            mPipBoyHeldCompositionAuditLogged = false;
             mPipBoyInteractionProgress = 0.f;
             resetActiveGroups();
+            // Equip may complete while the wrist presentation still suppresses
+            // the weapon. Once the Pip-Boy is fully closed, honor the retained
+            // draw request instead of leaving a valid weapon permanently masked.
+            if (mFalloutWeaponsShown && mFalloutWeaponPart != nullptr)
+                showWeapons(true);
+            setFirstPersonActorRootFieldOfView(*mObjectRoot, mDefaultFirstPersonFieldOfView);
             return;
         }
+
+        setFirstPersonActorRootFieldOfView(*mObjectRoot, mPipBoyFirstPersonFieldOfView);
 
         if (previousProgress <= 0.001f && mPipBoyRetailInteractionBound)
         {
@@ -9167,39 +9225,34 @@ namespace MWRender
 
         if (mPipBoyRetailInteractionBound)
         {
-            const bool wasHeld = mPipBoyRetailInteractionPoseHeld;
-            float raiseCompletion = 0.f;
-            const bool hasRaiseState = getInfo("pipboy", &raiseCompletion, nullptr, nullptr);
-            // The loaded KF advances through Animation::runAnimation, including
-            // while the physical menu pauses simulation. Retain its authored
-            // final frame by using a non-auto-disabling state, then hand the
-            // left arm to the authored held waver only after playback actually
-            // reaches the end. No C++ clock samples or writes KF time.
-            mPipBoyRetailInteractionPoseHeld
-                = hasRaiseState && !isPlaying("pipboy") && raiseCompletion >= 0.999f;
-            if (mPipBoyRetailInteractionPoseHeld && mPipBoyRetailWaverBound && !isPlaying("pipboywaver"))
+            auto raiseState = mStates.find("pipboy");
+            const bool raiseComplete = raiseState != mStates.end() && !raiseState->second.mPlaying;
+            if (raiseComplete)
             {
-                play("pipboywaver", Animation::AnimPriority(11), BlendMask_LeftArm, false, 1.f,
-                    "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), false);
+                if (mPipBoyRetailWaverBound && !isPlaying("pipboywaver"))
+                    play("pipboywaver", Animation::AnimPriority(11), BlendMask_LeftArm, false, 1.f,
+                        "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), false);
+                if (mPipBoyRetailManipulateBound && !isPlaying("pipboymanipulate"))
+                    play("pipboymanipulate", Animation::AnimPriority(12), BlendMask_RightArm, false, 1.f,
+                        "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), false);
             }
-            if (mPipBoyRetailInteractionPoseHeld && mPipBoyRetailManipulateBound
-                && !isPlaying("pipboymanipulate"))
-            {
-                play("pipboymanipulate", Animation::AnimPriority(12), BlendMask_RightArm, false, 1.f,
-                    "start", "stop", 0.f, std::numeric_limits<std::uint32_t>::max(), false);
-            }
+            mPipBoyRetailInteractionPoseHeld = raiseComplete
+                && isPlaying("pipboywaver") && isPlaying("pipboymanipulate");
             resetActiveGroups();
-            if (mPipBoyRetailInteractionPoseHeld && !wasHeld)
-                Log(Debug::Info) << "FNV Pip-Boy recovery hold: raise="
-                                 << getAnimationSourceName("pipboy") << " left="
-                                 << getAnimationSourceName("pipboywaver")
+            if (mPipBoyRetailInteractionPoseHeld && previousProgress < 0.999f)
+                Log(Debug::Info) << "FNV Pip-Boy recovery hold: raise=" << getAnimationSourceName("pipboy")
+                                 << " left=" << getAnimationSourceName("pipboywaver")
                                  << " right=" << getAnimationSourceName("pipboymanipulate")
-                                 << " frozenMode3Removed=1"
-                                 << " completeArmMeshes=1 screenAndControls=live";
+                                 << " provenance=retained-native-run-19 wrapper=identity";
         }
 
-        mPipBoyPresentationRoot->setNodeMask(~osg::Node::NodeMask(0));
-        mPipBoyPresentationRoot->setMatrix(osg::Matrix::identity());
+        mPipBoyArmPart->setNodeMask(~osg::Node::NodeMask(0));
+        for (const osg::ref_ptr<osg::Node>& node : mPipBoyScreenNodes)
+            if (node != nullptr)
+                node->setNodeMask(~osg::Node::NodeMask(0));
+        for (const osg::ref_ptr<osg::Drawable>& drawable : mPipBoyScreenDrawables)
+            if (drawable != nullptr)
+                drawable->setNodeMask(~osg::Node::NodeMask(0));
         if (mFirstPersonRightHandPart != nullptr)
             mFirstPersonRightHandPart->setNodeMask(~osg::Node::NodeMask(0));
     }
@@ -9212,91 +9265,21 @@ namespace MWRender
             return;
         if (previousProgress > 0.55f && mPipBoyInteractionProgress <= 0.55f)
             Log(Debug::Info) << "FNV Pip-Boy replay stack physical input: pulse=" << mPipBoyInteractionProgress
-                             << " variant=" << mPipBoyArmTargetVariant
                              << " firstPersonArmSource=retail-resting-hand controls=authored-nif";
     }
 
     void ESM4NpcAnimation::setPipBoyControlState(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,
         float mapPanX, float mapPanY, float interactionPulse)
     {
-        if (!mPipBoyControlsInitialized)
-            initializePipBoyPhysicalControls();
-        if (mPipBoyTabKnob.mRoot == nullptr || mPipBoyScrollKnob.mRoot == nullptr)
-            return;
-
-        pane = std::clamp(pane, 0, 3);
-        submenu = std::max(0, submenu);
-        listOffset = std::max(0, listOffset);
-        const int physicalTab = pane == 3 ? 0 : (pane == 1 ? 1 : 2); // STATS / ITEMS / DATA (incl. MAP)
-        const bool paneChanged = pane != mPipBoyLastPane;
-        const bool listControlChanged = submenu != mPipBoyLastSubmenu || listOffset != mPipBoyLastListOffset
-            || worldMap != mPipBoyLastWorldMap || std::abs(mapZoom - mPipBoyLastMapZoom) > 0.001f
-            || std::abs(mapPanX - mPipBoyLastMapPanX) > 0.001f
-            || std::abs(mapPanY - mPipBoyLastMapPanY) > 0.001f;
-        const bool initialState = mPipBoyLastPane < 0;
-        const bool newInputPulse = !initialState && interactionPulse > mPipBoyLastControlPulse + 0.25f;
-        if (initialState)
-            mPipBoyArmTargetVariant = 4;
-        else if (paneChanged)
-            mPipBoyArmTargetVariant = physicalTab;
-        else if (!initialState && listControlChanged)
-            mPipBoyArmTargetVariant = 4;
-        else if (newInputPulse)
-            mPipBoyArmTargetVariant = physicalTab;
-
-        if (!initialState && !paneChanged && listControlChanged)
-        {
-            float direction = 0.f;
-            if (listOffset != mPipBoyLastListOffset)
-                direction = static_cast<float>(listOffset - mPipBoyLastListOffset);
-            else if (submenu != mPipBoyLastSubmenu)
-                direction = static_cast<float>(submenu - mPipBoyLastSubmenu);
-            else if (worldMap != mPipBoyLastWorldMap)
-                direction = worldMap ? 1.f : -1.f;
-            else if (std::abs(mapZoom - mPipBoyLastMapZoom) > 0.001f)
-                direction = mapZoom - mPipBoyLastMapZoom;
-            else
-                direction = (mapPanX - mPipBoyLastMapPanX) + (mapPanY - mPipBoyLastMapPanY);
-            direction = direction < 0.f ? -1.f : 1.f;
-            mPipBoyScrollStartAngle = mPipBoyScrollDisplayAngle;
-            mPipBoyScrollTargetAngle = mPipBoyScrollDisplayAngle + direction * 0.65f;
-        }
-        mPipBoyLastPane = pane;
-        mPipBoyLastSubmenu = submenu;
-        mPipBoyLastListOffset = listOffset;
-        mPipBoyLastWorldMap = worldMap;
-        mPipBoyLastMapZoom = mapZoom;
-        mPipBoyLastMapPanX = mapPanX;
-        mPipBoyLastMapPanY = mapPanY;
-        mPipBoyLastControlPulse = interactionPulse;
-        const float actionContact = std::sin(std::clamp(1.f - interactionPulse, 0.f, 1.f) * osg::PI);
-        const auto rotateAroundPivot = [](const PipBoyPhysicalControl& control, float angle) {
-            const osg::Vec3f negativePivot(-control.mPivot.x(), -control.mPivot.y(), -control.mPivot.z());
-            return osg::Matrix::translate(negativePivot) * osg::Matrix::rotate(angle, control.mAxis)
-                * osg::Matrix::translate(control.mPivot);
-        };
-        constexpr std::array<float, 3> tabAngles = { -0.5f, 0.5f, 1.5f };
-        mPipBoyTabKnob.mRoot->setMatrix(rotateAroundPivot(mPipBoyTabKnob, tabAngles[physicalTab]));
-        const float spinProgress = std::clamp((1.f - interactionPulse) * 3.f, 0.f, 1.f);
-        const float smoothSpin = spinProgress * spinProgress * (3.f - 2.f * spinProgress);
-        mPipBoyScrollDisplayAngle
-            = mPipBoyScrollStartAngle + (mPipBoyScrollTargetAngle - mPipBoyScrollStartAngle) * smoothSpin;
-        mPipBoyScrollKnob.mRoot->setMatrix(
-            rotateAroundPivot(mPipBoyScrollKnob, mPipBoyScrollDisplayAngle));
-        for (std::size_t index = 0; index < mPipBoyButtons.size(); ++index)
-        {
-            PipBoyPhysicalControl& button = mPipBoyButtons[index];
-            if (button.mRoot != nullptr)
-            {
-                const float depth = static_cast<int>(index) == mPipBoyArmTargetVariant
-                    ? -0.065f * actionContact
-                    : 0.f;
-                button.mRoot->setMatrix(osg::Matrix::translate(button.mAxis * depth));
-            }
-            if (mPipBoyGlows[index].mRoot != nullptr)
-                mPipBoyGlows[index].mRoot->setNodeMask(
-                    static_cast<int>(index) == physicalTab ? ~osg::Node::NodeMask(0) : 0);
-        }
+        (void)pane;
+        (void)submenu;
+        (void)listOffset;
+        (void)worldMap;
+        (void)mapZoom;
+        (void)mapPanX;
+        (void)mapPanY;
+        (void)interactionPulse;
+        // Physical NIF/KF controller data owns knob, button, and glow state.
     }
 
     ESM4NpcAnimation::ESM4NpcAnimation(
@@ -9964,10 +9947,10 @@ namespace MWRender
         std::string_view targetName;
         if (showWeapon)
         {
-            // Retail's active first-person weapon is the identity child of
-            // Bip01 Translate installed above; the raw skeleton's same-named
-            // helper below the hand is not the visible render mount. Its
-            // existing animation controller supplies all placement and motion.
+            // Retail keeps the rendered first-person weapon beneath the
+            // skeleton's NIF-compatible `Weapon` child of Bip01 R Hand. The
+            // active weapon-family KF owns that mount's transform for pistols
+            // and long guns alike, including world-mesh fallbacks without MOD4.
             if (mFirstPersonView && mFalloutWeaponDrawFrame != nullptr)
             {
                 targetName = "Weapon";
@@ -10075,8 +10058,23 @@ namespace MWRender
         // can compare the actual Weapon chain to the retail xNVSE graph without
         // introducing a corrective frame or a substitute animation.
         if (!mFirstPersonView || !mFalloutWeaponsShown || mPipBoyWeaponSuppressed
-            || !worldViewerEnvEnabled("OPENMW_FNV_HAND_POSE_AUDIT") || mFalloutWeaponPostKfAuditLogged
+            || (!worldViewerEnvEnabled("OPENMW_FNV_HAND_POSE_AUDIT")
+                && !worldViewerEnvEnabled("OPENMW_FNV_WEAPON_POST_KF_AUDIT"))
+            || mFalloutWeaponPostKfAuditLogged
             || mFalloutWeaponPart == nullptr)
+            return;
+
+        // A newly attached weapon can be visited once before its family aim
+        // source has replaced the previous weapon's controller. Do not consume
+        // the one-shot audit on that stale frame. The retained retail oracle
+        // compares the settled family source and rendered mount, not the
+        // transient attachment state.
+        const std::string expectedPose = mFalloutActionWeapon != nullptr
+            ? getFonvFirstPersonWeaponAnimationKf(
+                getFonvWeaponAnimationKf(mFalloutActionWeapon->mData.animationType, "aim"))
+            : std::string();
+        if (expectedPose.empty() || getAnimationSourceName("weaponpose") != expectedPose
+            || !isPlaying("weaponpose"))
             return;
 
         osg::Group* weaponNode = mFirstPersonView && mFalloutWeaponDrawFrame != nullptr
@@ -10094,10 +10092,11 @@ namespace MWRender
             return;
         }
 
-        const auto worldUnderObject = [this](osg::Node* node) {
+        const auto worldUnderObject = [this](const osg::Node* node) {
             osg::Matrix result;
-            if (!getNodeWorldMatrixUnderAncestor(node, mObjectRoot.get(), result))
-                result = getNodeWorldMatrix(node);
+            osg::Node* const mutableNode = const_cast<osg::Node*>(node);
+            if (!getNodeWorldMatrixUnderAncestor(mutableNode, mObjectRoot.get(), result))
+                result = getNodeWorldMatrix(mutableNode);
             return result;
         };
         const auto matrixFields = [](const osg::Matrix& matrix) {
@@ -10122,6 +10121,23 @@ namespace MWRender
             = weaponParent != nullptr ? weaponWorld * osg::Matrix::inverse(weaponParentWorld) : weaponWorld;
         const osg::Matrix weaponPartWorld = worldUnderObject(mFalloutWeaponPart.get());
         const osg::Matrix weaponPartInWeapon = weaponPartWorld * osg::Matrix::inverse(weaponWorld);
+        const osg::Node* const authoredCamera = getNode("Camera1st");
+        const osg::Node* const leftClavicle = getNode("Bip01 L Clavicle");
+        const osg::Node* const leftUpperArm = getNode("Bip01 L UpperArm");
+        const osg::Node* const leftForearm = getNode("Bip01 L Forearm");
+        const osg::Node* const leftHand = getNode("Bip01 L Hand");
+        const osg::Node* const rightHand = getNode("Bip01 R Hand");
+        const osg::Matrix authoredCameraWorld
+            = authoredCamera != nullptr ? worldUnderObject(authoredCamera) : osg::Matrix::identity();
+        const osg::Matrix rightHandWorld
+            = rightHand != nullptr ? worldUnderObject(rightHand) : osg::Matrix::identity();
+        const auto nodeInCamera = [&](const osg::Node* node) {
+            return node != nullptr
+                ? worldUnderObject(node) * osg::Matrix::inverse(authoredCameraWorld)
+                : osg::Matrix::identity();
+        };
+        const osg::Matrix rightHandInCamera = rightHandWorld * osg::Matrix::inverse(authoredCameraWorld);
+        const osg::Matrix weaponInCamera = weaponWorld * osg::Matrix::inverse(authoredCameraWorld);
         const osg::MatrixTransform* const weaponTransform = dynamic_cast<const osg::MatrixTransform*>(weaponNode);
         const osg::MatrixTransform* const weaponPartTransform
             = dynamic_cast<const osg::MatrixTransform*>(mFalloutWeaponPart.get());
@@ -10138,6 +10154,13 @@ namespace MWRender
                          << matrixFields(weaponTransform != nullptr ? weaponTransform->getMatrix() : osg::Matrix::identity())
                          << " weaponNodePostKf=" << matrixFields(weaponInParent)
                          << " weaponNodeWorld=" << matrixFields(weaponWorld)
+                         << " authoredCamera=" << matrixFields(authoredCameraWorld)
+                         << " leftClavicleInCamera=" << matrixFields(nodeInCamera(leftClavicle))
+                         << " leftUpperArmInCamera=" << matrixFields(nodeInCamera(leftUpperArm))
+                         << " leftForearmInCamera=" << matrixFields(nodeInCamera(leftForearm))
+                         << " leftHandInCamera=" << matrixFields(nodeInCamera(leftHand))
+                         << " rightHandInCamera=" << matrixFields(rightHandInCamera)
+                         << " weaponInCamera=" << matrixFields(weaponInCamera)
                          << " weaponPart=\"" << printableNodeName(mFalloutWeaponPart->getName())
                          << "\" weaponPartParent=\""
                          << (weaponPartParent != nullptr ? printableNodeName(weaponPartParent->getName()) : std::string())
@@ -10319,6 +10342,12 @@ namespace MWRender
         if (!authoredParent.empty())
             mFalloutWeaponDrawBone = authoredParent;
 
+        // Test the loaded part while it is still visible. Equip transitions
+        // intentionally hide the first-person root until the authored draw
+        // action reaches its show key; auditing after that hide mistakes a
+        // valid model for missing geometry and rejects the action that would
+        // make it visible again.
+        const bool renderable = actorPartHasRenderableGeometry(mFalloutWeaponPart.get());
         mFalloutWeaponsShown
             = mPtr.getClass().getCreatureStats(mPtr).getDrawState() == MWMechanics::DrawState::Weapon;
         if (mFalloutWeaponPart != nullptr)
@@ -10331,7 +10360,6 @@ namespace MWRender
                 mFalloutWeaponPart->setNodeMask(0);
         }
 
-        const bool renderable = actorPartHasRenderableGeometry(mFalloutWeaponPart.get());
         Log(renderable ? Debug::Info : Debug::Error)
             << "FNV/ESM4 exact weapon-family attachment: actor=" << mPtr.toString()
             << " weapon=" << mFalloutActionWeapon->mEditorId
@@ -10712,6 +10740,130 @@ namespace MWRender
         const unsigned int forcedRigGeometry
             = forceFalloutRigGeometryUpdate(mObjectRoot.get(), forcedRigGeometryHolder, refreshedRigGeometry,
                 worldViewerEnvEnabled("OPENMW_FNV_HAND_POSE_AUDIT"));
+
+        if (mFirstPersonView && mPipBoyRetailInteractionPoseHeld && !mPipBoyHeldCompositionAuditLogged
+            && mFirstPersonArmorArmsPart != nullptr && mFirstPersonLeftHandPart != nullptr
+            && mFirstPersonRightHandPart != nullptr)
+        {
+            const osg::Node* const authoredCamera = getNode("Camera1st");
+            const osg::Node* const leftWrist = getNode("Bip01 L ForeTwist");
+            const osg::Node* const rightWrist = getNode("Bip01 R ForeTwist");
+            if (authoredCamera != nullptr && leftWrist != nullptr && rightWrist != nullptr)
+            {
+                const osg::Matrix worldToCamera
+                    = osg::Matrix::inverse(getNodeWorldMatrix(const_cast<osg::Node*>(authoredCamera)));
+                const osg::Vec3f leftWristCamera
+                    = osg::Vec3f(getNodeWorldMatrix(const_cast<osg::Node*>(leftWrist)).getTrans() * worldToCamera);
+                const osg::Vec3f rightWristCamera
+                    = osg::Vec3f(getNodeWorldMatrix(const_cast<osg::Node*>(rightWrist)).getTrans() * worldToCamera);
+                if (!mPipBoyScreenNodes.empty() && mPipBoyScreenNodes.front() != nullptr)
+                {
+                    osg::Matrix cameraUnderObject;
+                    osg::Matrix screenUnderObject;
+                    const bool cameraResolved = getNodeWorldMatrixUnderAncestor(
+                        const_cast<osg::Node*>(authoredCamera), mObjectRoot.get(), cameraUnderObject);
+                    const bool screenResolved = getNodeWorldMatrixUnderAncestor(
+                        mPipBoyScreenNodes.front().get(), mObjectRoot.get(), screenUnderObject);
+                    if (cameraResolved && screenResolved)
+                    {
+                        const osg::Vec3f screenCamera = osg::Vec3f(
+                            (screenUnderObject * osg::Matrix::inverse(cameraUnderObject)).getTrans());
+                        const osg::Vec3f retailScreenCamera(-6.254269f, 11.873332f, -3.225682f);
+                        const osg::Vec3f delta = retailScreenCamera - screenCamera;
+                        Log(Debug::Info) << "FNV Pip-Boy screen Camera1st audit: current=("
+                                         << screenCamera.x() << ',' << screenCamera.y() << ',' << screenCamera.z()
+                                         << ") retail=(-6.254269,11.873332,-3.225682) delta=("
+                                         << delta.x() << ',' << delta.y() << ',' << delta.z()
+                                         << ") source=common-first-person-root/xnvse-frame-980";
+                    }
+                    else
+                        Log(Debug::Error) << "FNV Pip-Boy screen Camera1st audit: status=unresolved-common-root"
+                                          << " camera=" << cameraResolved << " screen=" << screenResolved;
+                }
+                if (mPipBoyArmPart != nullptr)
+                {
+                    FalloutPipBoyScreenSurfaceCollector screenSurface(worldToCamera, mPipBoyArmPart.get());
+                    mPipBoyArmPart->accept(screenSurface);
+                    if (screenSurface.mBounds.valid())
+                    {
+                        const osg::Vec3f center = screenSurface.mBounds.center();
+                        const osg::Vec3f retailCenter(-1.34543f, 13.34260f, -3.26523f);
+                        const osg::Vec3f delta = retailCenter - center;
+                        Log(Debug::Info) << "FNV Pip-Boy visible screen Camera1st audit: vertices="
+                                         << screenSurface.mVertices << " drawables="
+                                         << screenSurface.mResolvedDrawables << " min=("
+                                         << screenSurface.mBounds.xMin() << ',' << screenSurface.mBounds.yMin() << ','
+                                         << screenSurface.mBounds.zMin() << ") max=("
+                                         << screenSurface.mBounds.xMax() << ',' << screenSurface.mBounds.yMax() << ','
+                                         << screenSurface.mBounds.zMax() << ") center=("
+                                         << center.x() << ',' << center.y() << ',' << center.z()
+                                         << ") retailCenter=(-1.34543,13.34260,-3.26523) delta=("
+                                         << delta.x() << ',' << delta.y() << ',' << delta.z()
+                                         << ") source=live-post-skin/xnvse-frame-980";
+                    }
+                    else
+                        Log(Debug::Error) << "FNV Pip-Boy visible screen Camera1st audit: status=unresolved";
+                }
+                // ForeTwist is the armor cuff reference, while the standalone
+                // hand meshes begin near the child hand joint roughly 18 units
+                // away in the authored skeleton. Include both boundary rings.
+                constexpr float sampleRadius = 30.f;
+                FalloutWristSurfaceCollector leftSleeveCollector(
+                    worldToCamera, mFirstPersonArmorArmsPart.get(), {}, leftWristCamera, sampleRadius);
+                FalloutWristSurfaceCollector rightSleeveCollector(
+                    worldToCamera, mFirstPersonArmorArmsPart.get(), {}, rightWristCamera, sampleRadius);
+                FalloutWristSurfaceCollector leftHandCollector(
+                    worldToCamera, mFirstPersonLeftHandPart.get(), {}, leftWristCamera, sampleRadius);
+                FalloutWristSurfaceCollector rightHandCollector(
+                    worldToCamera, mFirstPersonRightHandPart.get(), {}, rightWristCamera, sampleRadius);
+                mFirstPersonArmorArmsPart->accept(leftSleeveCollector);
+                mFirstPersonArmorArmsPart->accept(rightSleeveCollector);
+                mFirstPersonLeftHandPart->accept(leftHandCollector);
+                mFirstPersonRightHandPart->accept(rightHandCollector);
+                const FalloutWristSurfaceGap leftGap
+                    = minimumFalloutWristSurfaceGap(leftSleeveCollector.mSample, leftHandCollector.mSample);
+                const FalloutWristSurfaceGap rightGap
+                    = minimumFalloutWristSurfaceGap(rightSleeveCollector.mSample, rightHandCollector.mSample);
+                const auto point = [](const osg::Vec3f& value) {
+                    std::ostringstream stream;
+                    stream << '(' << value.x() << ',' << value.y() << ',' << value.z() << ')';
+                    return stream.str();
+                };
+                mPipBoyHeldCompositionAuditLogged = true;
+                constexpr float maximumContinuousGap = 1.f;
+                const bool continuous = leftGap.mDistance <= maximumContinuousGap
+                    && rightGap.mDistance <= maximumContinuousGap;
+                Log(continuous ? Debug::Info : Debug::Error)
+                    << "FNV Pip-Boy held wrist surface audit: status="
+                    << (continuous ? "pass" : "fail") << " source=live-post-skin"
+                                 << " radius=" << sampleRadius
+                                 << " maximumContinuousGap=" << maximumContinuousGap
+                                 << " leftVertices=(" << leftSleeveCollector.mSample.mCameraVertices.size()
+                                 << ',' << leftHandCollector.mSample.mCameraVertices.size() << ')'
+                                 << " leftNearest=(" << leftSleeveCollector.mSample.mNearestWristDistance << ','
+                                 << leftHandCollector.mSample.mNearestWristDistance << ')'
+                                 << " leftNearestPoints=" << point(leftSleeveCollector.mSample.mNearestWristVertex)
+                                 << ',' << point(leftHandCollector.mSample.mNearestWristVertex)
+                                 << " leftGap=" << leftGap.mDistance
+                                 << " leftPair=" << point(leftGap.mFirst) << ',' << point(leftGap.mSecond)
+                                 << " rightVertices=(" << rightSleeveCollector.mSample.mCameraVertices.size()
+                                 << ',' << rightHandCollector.mSample.mCameraVertices.size() << ')'
+                                 << " rightNearest=(" << rightSleeveCollector.mSample.mNearestWristDistance << ','
+                                 << rightHandCollector.mSample.mNearestWristDistance << ')'
+                                 << " rightNearestPoints=" << point(rightSleeveCollector.mSample.mNearestWristVertex)
+                                 << ',' << point(rightHandCollector.mSample.mNearestWristVertex)
+                                 << " rightGap=" << rightGap.mDistance
+                                 << " rightPair=" << point(rightGap.mFirst) << ',' << point(rightGap.mSecond)
+                                 << " rigs=(" << leftSleeveCollector.mSample.mRigGeometry << ','
+                                 << leftHandCollector.mSample.mRigGeometry << ','
+                                 << rightSleeveCollector.mSample.mRigGeometry << ','
+                                 << rightHandCollector.mSample.mRigGeometry << ')'
+                                 << " paths=(" << leftSleeveCollector.mSample.mResolvedWorldPaths << ','
+                                 << leftHandCollector.mSample.mResolvedWorldPaths << ','
+                                 << rightSleeveCollector.mSample.mResolvedWorldPaths << ','
+                                 << rightHandCollector.mSample.mResolvedWorldPaths << ')';
+            }
+        }
 
         if (const ESM4::Weapon* weapon = equippedWeapon)
         {

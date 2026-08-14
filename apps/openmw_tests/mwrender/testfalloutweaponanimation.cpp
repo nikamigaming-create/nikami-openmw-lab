@@ -565,6 +565,14 @@ namespace MWRender
         EXPECT_EQ(getFonvWeaponActionProgress(false, 1.f), FonvWeaponActionProgress::Interrupted);
     }
 
+    TEST(FalloutWeaponAnimationTest, acceptsFinishedActionThatIsNoLongerPlaying)
+    {
+        EXPECT_TRUE(isFonvWeaponActionStateValid(true, true, 0.f));
+        EXPECT_TRUE(isFonvWeaponActionStateValid(true, false, 1.f));
+        EXPECT_FALSE(isFonvWeaponActionStateValid(true, false, 0.999f));
+        EXPECT_FALSE(isFonvWeaponActionStateValid(false, false, 1.f));
+    }
+
     TEST(FalloutWeaponAnimationTest, blocksSemanticTransitionsDuringHitStateRecovery)
     {
         EXPECT_TRUE(canAdvanceFonvWeaponState(false, false, false));

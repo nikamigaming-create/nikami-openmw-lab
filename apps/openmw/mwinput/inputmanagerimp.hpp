@@ -114,6 +114,7 @@ namespace MWInput
         bool isIdle() const override;
 
         void executeAction(int action) override;
+        void setFalloutUnattendedUseDown(bool down) override;
 
         bool controlsDisabled() override { return mControlsDisabled; }
 //## VR_PATCH BEGIN

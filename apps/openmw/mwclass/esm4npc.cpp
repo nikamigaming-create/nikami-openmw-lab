@@ -1783,6 +1783,27 @@ namespace MWClass
         return true;
     }
 
+    bool ESM4Npc::setEquippedArmor(
+        const MWWorld::Ptr& ptr, const std::vector<const ESM4::Armor*>& armor)
+    {
+        if (ptr.getType() != ESM4::Npc::sRecordId)
+            return false;
+
+        std::vector<const ESM4::Armor*> normalized;
+        normalized.reserve(armor.size());
+        for (const ESM4::Armor* item : armor)
+        {
+            if (item != nullptr && std::ranges::find(normalized, item) == normalized.end())
+                normalized.push_back(item);
+        }
+
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        if (data.mEquippedArmor == normalized)
+            return false;
+        data.mEquippedArmor = std::move(normalized);
+        return true;
+    }
+
     bool ESM4Npc::setEquippedWeapon(const MWWorld::Ptr& ptr, const ESM4::Weapon* weapon)
     {
         if (ptr.getType() != ESM4::Npc::sRecordId)

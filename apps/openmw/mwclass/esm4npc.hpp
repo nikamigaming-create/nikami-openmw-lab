@@ -142,6 +142,8 @@ namespace MWClass
         static void setFurniturePlacement(const MWWorld::Ptr& ptr, const FalloutFurniturePlacement& placement);
         static bool addEquippedArmor(const MWWorld::Ptr& ptr, const ESM4::Armor* armor);
         static bool addEquippedArmorReplacingSlots(const MWWorld::Ptr& ptr, const ESM4::Armor* armor);
+        static bool setEquippedArmor(
+            const MWWorld::Ptr& ptr, const std::vector<const ESM4::Armor*>& armor);
         static bool setEquippedWeapon(const MWWorld::Ptr& ptr, const ESM4::Weapon* weapon);
         static std::string_view chooseEquipmentModel(const ESM4::Armor* rec, bool isFemale);
         static std::string_view chooseEquipmentModel(const ESM4::Clothing* rec, bool isFemale);

@@ -4801,6 +4801,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // after normal New Game. It does not synthesize desktop input.
     static const bool fnvPipBoyShowcaseEnabled = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE");
     static const bool fnvPipBoyLifecycleOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_LIFECYCLE_ONLY");
+    static const bool fnvPipBoyApparelOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_APPAREL_ONLY");
+    static const bool fnvPipBoyAidOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_AID_ONLY");
+    static const bool fnvPipBoyAmmoOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_AMMO_ONLY");
+    static const bool fnvPipBoyMiscOnly = proofEnvEnabled("OPENMW_FNV_PIPBOY_MISC_ONLY");
     static const bool fnvGameplayStartPlacementEnabled
         = std::getenv("OPENMW_FNV_GAMEPLAY_START_WORLDSPACE") != nullptr;
     static const bool fnvPipBoyShowcaseLoadoutEnabled
@@ -4849,7 +4853,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         int mPanRightCount;
         int mPanDownCount;
     };
-    static constexpr std::array<FnvPipBoyShowcaseState, 24> fnvPipBoyShowcaseStates = { {
+    static constexpr std::array<FnvPipBoyShowcaseState, 30> fnvPipBoyShowcaseStates = { {
         { "STATS-CND", 3, 0, 0, false, false, 0, 0, 0 },
         { "STATS-RAD", 3, 1, 0, false, false, 0, 0, 0 },
         { "STATS-EFF", 3, 2, 0, false, false, 0, 0, 0 },
@@ -4859,8 +4863,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         { "STATS-GENERAL", 3, 6, 0, false, false, 0, 0, 0 },
         { "ITEMS-WEAP-9MM", 1, 0, 0, true, false, 0, 0, 0 },
         { "ITEMS-WEAP-VARMINT", 1, 0, 1, true, false, 0, 0, 0 },
-        { "ITEMS-APP-SUIT", 1, 1, 0, true, false, 0, 0, 0 },
-        { "ITEMS-APP-HAT", 1, 1, 1, true, false, 0, 0, 0 },
+        { "ITEMS-APP-HAT", 1, 1, 0, true, false, 0, 0, 0 },
+        { "WORLD-APP-HAT-OFF", -2, 0, 0, false, false, 0, 0, 0 },
+        { "ITEMS-APP-SUIT", 1, 1, 1, true, false, 0, 0, 0 },
+        { "WORLD-APP-SUIT-OFF", -2, 0, 0, false, false, 0, 0, 0 },
         { "ITEMS-AID-STIMPAK", 1, 2, 0, true, false, 0, 0, 0 },
         { "ITEMS-MISC-CAPS", 1, 3, 0, true, false, 0, 0, 0 },
         { "ITEMS-AMMO-9MM", 1, 4, 0, true, false, 0, 0, 0 },
@@ -4874,11 +4880,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         { "MAP-LOCAL", 0, 0, 0, false, false, 0, 0, 0 },
         { "MAP-LOCAL-ZOOM-PAN", 0, 0, 0, false, false, 1, 1, 1 },
         { "WORLD-VARMINT-EQUIPPED", -1, 0, 0, false, false, 0, 0, 0 },
+        { "ITEMS-WEAP-VARMINT-REOPEN", 1, 0, 1, false, false, 0, 0, 0 },
+        { "WORLD-AID-STIMPAK-USED", -3, 0, 0, false, false, 0, 0, 0 },
+        { "WORLD-AMMO-SELECTION", -4, 0, 0, false, false, 0, 0, 0 },
+        { "WORLD-MISC-INSPECTED", -5, 0, 0, false, false, 0, 0, 0 },
     } };
     // Short interaction gate: exercise a category button, list scroll, map
     // category button, map zoom/pan, and final weapon restoration without the
     // cost of the complete 24-panel presentation sweep.
-    static constexpr std::array<std::size_t, 8> fnvPipBoyLifecycleStateIndices = { 0, 7, 8, 11, 19, 20, 8, 23 };
+    static constexpr std::array<std::size_t, 9> fnvPipBoyLifecycleStateIndices = { 0, 7, 8, 13, 21, 22, 8, 25, 26 };
+    static constexpr std::array<std::size_t, 4> fnvPipBoyApparelStateIndices = { 9, 10, 11, 12 };
+    static constexpr std::array<std::size_t, 2> fnvPipBoyAidStateIndices = { 13, 27 };
+    static constexpr std::array<std::size_t, 3> fnvPipBoyAmmoStateIndices = { 15, 16, 28 };
+    static constexpr std::array<std::size_t, 2> fnvPipBoyMiscStateIndices = { 14, 29 };
     static const int proofQuickSaveFrame = getProofFrame("OPENMW_PROOF_QUICKSAVE_FRAME");
     static const bool proofQuitAfterQuickSave = proofEnvEnabled("OPENMW_PROOF_QUIT_AFTER_QUICKSAVE");
     static const int proofQuickSaveQuitDelayFrames
@@ -4925,6 +4939,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool fnvPipBoyShowcaseLoadoutPassed = false;
     static bool fnvPipBoyShowcaseStimpakDamageStaged = false;
     static bool fnvPipBoyShowcaseReloadRequested = false;
+    static bool fnvPipBoyShowcaseFireRequested = false;
+    static bool fnvPipBoyShowcaseFireObserved = false;
+    static int fnvPipBoyShowcaseLoadedBeforeFire = 0;
+    static int fnvPipBoyShowcaseFireRequestFrame = -1;
+    static bool fnvPipBoyShowcaseReloadWaitLogged = false;
+    static bool fnvPipBoyShowcaseWeaponPoseWaitLogged = false;
+    static bool fnvPipBoyShowcaseWeaponPoseSampleValid = false;
+    static int fnvPipBoyShowcaseWeaponPoseStableFrames = 0;
+    static int fnvPipBoyShowcasePostFireRecoveryFrames = 0;
+    static osg::Matrix fnvPipBoyShowcaseWeaponPoseSample;
     static bool fnvGameplayStartPlacementApplied = false;
     static bool fnvGameplayStartPlacementPassed = false;
     static std::size_t fnvPipBoyShowcaseActivePane = static_cast<std::size_t>(-1);
@@ -8395,12 +8419,22 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             const std::size_t showcaseStateIndex = static_cast<std::size_t>(
                 showcaseElapsed / fnvPipBoyShowcaseFramesPerPane);
-            const std::size_t showcaseStateCount = fnvPipBoyLifecycleOnly
-                ? fnvPipBoyLifecycleStateIndices.size() : fnvPipBoyShowcaseStates.size();
+            const std::size_t showcaseStateCount = fnvPipBoyMiscOnly
+                ? fnvPipBoyMiscStateIndices.size()
+                : (fnvPipBoyAmmoOnly ? fnvPipBoyAmmoStateIndices.size()
+                : (fnvPipBoyAidOnly ? fnvPipBoyAidStateIndices.size()
+                : (fnvPipBoyApparelOnly ? fnvPipBoyApparelStateIndices.size()
+                : (fnvPipBoyLifecycleOnly ? fnvPipBoyLifecycleStateIndices.size()
+                                           : fnvPipBoyShowcaseStates.size()))));
             if (showcaseStateIndex < showcaseStateCount)
             {
-                const std::size_t authoredStateIndex = fnvPipBoyLifecycleOnly
-                    ? fnvPipBoyLifecycleStateIndices[showcaseStateIndex] : showcaseStateIndex;
+                const std::size_t authoredStateIndex = fnvPipBoyMiscOnly
+                    ? fnvPipBoyMiscStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyAmmoOnly ? fnvPipBoyAmmoStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyAidOnly ? fnvPipBoyAidStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyApparelOnly ? fnvPipBoyApparelStateIndices[showcaseStateIndex]
+                    : (fnvPipBoyLifecycleOnly ? fnvPipBoyLifecycleStateIndices[showcaseStateIndex]
+                                              : showcaseStateIndex))));
                 FnvPipBoyShowcaseState state = fnvPipBoyShowcaseStates[authoredStateIndex];
                 if (fnvPipBoyLifecycleOnly)
                 {
@@ -8420,26 +8454,43 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     if (state.mPane < 0)
                     {
                         if (mWindowManager->containsMode(MWGui::GM_Inventory))
-                            mWindowManager->removeGuiMode(MWGui::GM_Inventory);
+                            mInputManager->executeAction(MWInput::A_FalloutPipBoy);
                         MWWorld::Ptr player = mWorld->getPlayerPtr();
                         mMechanicsManager->forceStateUpdate(player);
+                        // The apparel checkpoint uses the ordinary POV transition so the
+                        // retained native frame shows the live player body, not just slot text.
+                        if (state.mPane == -2 && mWorld->isFirstPerson())
+                            mWorld->togglePOV(false);
                         fnvPipBoyShowcaseReloadRequested = false;
+                        fnvPipBoyShowcaseFireRequested = false;
+                        fnvPipBoyShowcaseFireObserved = false;
+                        fnvPipBoyShowcaseLoadedBeforeFire = 0;
+                        fnvPipBoyShowcaseFireRequestFrame = -1;
+                        fnvPipBoyShowcaseReloadWaitLogged = false;
+                        fnvPipBoyShowcaseWeaponPoseWaitLogged = false;
+                        fnvPipBoyShowcaseWeaponPoseSampleValid = false;
+                        fnvPipBoyShowcaseWeaponPoseStableFrames = 0;
+                        fnvPipBoyShowcasePostFireRecoveryFrames = 0;
                         fnvPipBoyShowcaseActivePane = showcaseStateIndex;
                         Log(Debug::Info) << "FNV Pip-Boy showcase: opened live state=" << state.mName
                                          << " pane=world readyFrame=" << proofWorldReadyFrames
-                                         << " source=selected-live-weapon";
+                                         << " source="
+                                         << (state.mPane == -2 ? "live-third-person-equipment"
+                                                              : "selected-live-weapon");
                     }
                     else
                     {
                         if (!mWorld->isFirstPerson())
                             mWorld->togglePOV(true);
                         if (!mWindowManager->containsMode(MWGui::GM_Inventory))
-                        {
-                            mWindowManager->setFalloutPipBoyPresentation(true);
-                            mWindowManager->pushGuiMode(MWGui::GM_Inventory);
-                        }
+                            mInputManager->executeAction(MWInput::A_FalloutPipBoy);
                         else if (!mWindowManager->isFalloutPipBoyPhysicalPresentation())
-                            mWindowManager->setFalloutPipBoyPresentation(true);
+                        {
+                            // Close the analog inventory first, then use the
+                            // player's bound physical Pip-Boy action to reopen.
+                            mInputManager->executeAction(MWInput::A_Inventory);
+                            mInputManager->executeAction(MWInput::A_FalloutPipBoy);
+                        }
 
                         auto* const physicalWindowManager = dynamic_cast<MWGui::WindowManager*>(mWindowManager.get());
                         if (physicalWindowManager == nullptr)
@@ -8449,7 +8500,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         }
                         else
                         {
-                            if (authoredStateIndex == 11 && !fnvPipBoyShowcaseStimpakDamageStaged)
+                            if (authoredStateIndex == 13 && !fnvPipBoyShowcaseStimpakDamageStaged)
                             {
                                 MWWorld::Ptr player = mWorld->getPlayerPtr();
                                 MWMechanics::CreatureStats& stats
@@ -8466,26 +8517,42 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                 : state.mPane == 1                    ? MWInput::A_QuickKey2
                                 : state.mPane == 2                    ? MWInput::A_QuickKey3
                                                                       : MWInput::A_QuickKey1;
-                            physicalWindowManager->handleFalloutPipBoyAction(selectPaneAction);
+                            mInputManager->executeAction(selectPaneAction);
                             if (state.mPane == 0)
                             {
                                 if (physicalWindowManager->isFalloutPipBoyWorldMap() != state.mWorldMap)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                                    mInputManager->executeAction(MWInput::A_Activate);
                                 for (int index = 0; index < state.mZoomInCount; ++index)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_ZoomIn);
+                                    mInputManager->executeAction(MWInput::A_ZoomIn);
                                 for (int index = 0; index < state.mPanRightCount; ++index)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                                    mInputManager->executeAction(MWInput::A_MoveRight);
                                 for (int index = 0; index < state.mPanDownCount; ++index)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveBackward);
+                                    mInputManager->executeAction(MWInput::A_MoveBackward);
+                            }
+                            if (authoredStateIndex == 26)
+                            {
+                                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                                const MWWorld::InventoryStore& inventory
+                                    = player.getClass().getInventoryStore(player);
+                                const MWWorld::ConstContainerStoreIterator right
+                                    = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                                const ESM::RefId weaponId = right == inventory.end()
+                                    ? ESM::RefId() : right->getCellRef().getRefId();
+                                const std::optional<ESM::RefId> ammo = inventory.getFalloutAmmoSelection(weaponId);
+                                Log(Debug::Info) << "FNV Pip-Boy reopen audit: right=" << weaponId << " ammo="
+                                                 << (ammo ? ammo->toDebugString() : std::string("none"))
+                                                 << " loaded=" << inventory.getFalloutLoadedAmmo(weaponId).value_or(0)
+                                                 << " reserve=" << (ammo ? inventory.count(*ammo) : 0)
+                                                 << " source=production-input-dispatch";
                             }
                             else
                             {
                                 for (int index = 0; index < state.mSubmenu; ++index)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveRight);
+                                    mInputManager->executeAction(MWInput::A_MoveRight);
                                 for (int index = 0; index < state.mListOffset; ++index)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_MoveBackward);
+                                    mInputManager->executeAction(MWInput::A_MoveBackward);
                                 if (state.mActivateSelection)
-                                    physicalWindowManager->handleFalloutPipBoyAction(MWInput::A_Activate);
+                                    mInputManager->executeAction(MWInput::A_Activate);
                             }
                             fnvPipBoyShowcaseActivePane = showcaseStateIndex;
                             Log(Debug::Info) << "FNV Pip-Boy showcase: opened live state=" << state.mName
@@ -8497,7 +8564,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 }
 
                 const int paneElapsed = showcaseElapsed % fnvPipBoyShowcaseFramesPerPane;
-                if (state.mPane < 0 && !fnvPipBoyShowcaseReloadRequested && paneElapsed >= 30)
+                if (state.mPane == -1 && !fnvPipBoyShowcaseReloadRequested && paneElapsed >= 30)
                 {
                     MWWorld::Ptr player = mWorld->getPlayerPtr();
                     MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
@@ -8508,17 +8575,167 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     const std::optional<ESM::RefId> ammo = inventory.getFalloutAmmoSelection(weaponId);
                     const int loadedBefore = inventory.getFalloutLoadedAmmo(weaponId).value_or(0);
                     const int reserveBefore = ammo ? inventory.count(*ammo) : 0;
-                    const bool reloadRequested = mMechanicsManager->reloadFalloutWeapon(player);
+                    mInputManager->executeAction(MWInput::A_ToggleSpell);
+                    const bool reloadRequested = mMechanicsManager->isAttackingOrSpell(player);
                     fnvPipBoyShowcaseReloadRequested = true;
                     Log(Debug::Info) << "FNV Pip-Boy post-close reload: requested=" << reloadRequested
                                      << " right=" << weaponId << " ammo="
                                      << (ammo ? ammo->toDebugString() : std::string("none"))
                                      << " loadedBefore=" << loadedBefore << " reserveBefore=" << reserveBefore;
                 }
-                if (fnvPipBoyShowcaseCapturedPanes == showcaseStateIndex
-                    && paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && mScreenCaptureHandler != nullptr)
+                if (state.mPane == -1 && fnvPipBoyShowcaseReloadRequested && !fnvPipBoyShowcaseFireObserved)
                 {
-                    if (state.mPane < 0)
+                    MWWorld::Ptr player = mWorld->getPlayerPtr();
+                    MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                    const MWWorld::ContainerStoreIterator right
+                        = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                    const ESM::RefId weaponId
+                        = right == inventory.end() ? ESM::RefId() : right->getCellRef().getRefId();
+                    const int loadedNow = inventory.getFalloutLoadedAmmo(weaponId).value_or(0);
+                    const bool actionSettled = !mMechanicsManager->isAttackingOrSpell(player);
+                    MWRender::Animation* const fireAnimation = mWorld->getFalloutWeaponAnimation(player, true);
+                    const bool firePoseReady = fireAnimation != nullptr
+                        && fireAnimation->getAnimationSourceName("weaponpose")
+                            == "meshes/characters/_1stperson/2hraim.kf"
+                        && fireAnimation->isPlaying("weaponpose") && fireAnimation->getWeaponsShown()
+                        && fireAnimation->getActiveGroup(MWRender::BoneGroup_RightArm) == "weaponpose"
+                        && !fireAnimation->isPlaying("equip") && !fireAnimation->isPlaying("unequip")
+                        && !fireAnimation->isPlaying("reload");
+                    // The ordinary showcase slot is 150 frames and the final
+                    // acceptance gate requires 90 post-fire recovery frames.
+                    // Request as soon as reload has settled after frame 45 so
+                    // the authored attack can naturally return to weaponpose
+                    // before the frame-135 capture; requesting at frame 105
+                    // made the required final state unreachable.
+                    if (!fnvPipBoyShowcaseFireRequested && paneElapsed >= 45 && actionSettled && firePoseReady
+                        && loadedNow > 0)
+                    {
+                        fnvPipBoyShowcaseFireRequested = true;
+                        fnvPipBoyShowcaseLoadedBeforeFire = loadedNow;
+                        fnvPipBoyShowcaseFireRequestFrame = proofWorldReadyFrames;
+                        mInputManager->setFalloutUnattendedUseDown(true);
+                        Log(Debug::Info) << "FNV Pip-Boy post-close fire: requested=1 right=" << weaponId
+                                         << " loadedBefore=" << loadedNow
+                                         << " route=production-character-controller";
+                    }
+                    else if (!fnvPipBoyShowcaseFireRequested && paneElapsed == 150)
+                        Log(Debug::Info) << "FNV Pip-Boy post-close fire gate: actionSettled=" << actionSettled
+                                         << " poseReady=" << firePoseReady << " loaded=" << loadedNow
+                                         << " poseSource=\""
+                                         << (fireAnimation != nullptr
+                                                 ? fireAnimation->getAnimationSourceName("weaponpose")
+                                                 : std::string())
+                                         << "\" status=waiting";
+                    if (fnvPipBoyShowcaseFireRequested)
+                    {
+                        const int loadedAfterTrigger = inventory.getFalloutLoadedAmmo(weaponId).value_or(0);
+                        if (loadedAfterTrigger < fnvPipBoyShowcaseLoadedBeforeFire)
+                        {
+                            mInputManager->setFalloutUnattendedUseDown(false);
+                            fnvPipBoyShowcaseFireObserved = true;
+                            Log(Debug::Info) << "FNV Pip-Boy post-close fire audit: right=" << weaponId
+                                             << " loadedBefore=" << fnvPipBoyShowcaseLoadedBeforeFire
+                                             << " loadedAfter=" << loadedAfterTrigger
+                                             << " consumed="
+                                             << (fnvPipBoyShowcaseLoadedBeforeFire - loadedAfterTrigger)
+                                             << " holdFrames="
+                                             << (proofWorldReadyFrames - fnvPipBoyShowcaseFireRequestFrame)
+                                             << " status=pass";
+                        }
+                    }
+                }
+                bool finalWeaponActionSettled = true;
+                bool finalWeaponPoseSettled = true;
+                if (state.mPane == -1)
+                {
+                    const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                    finalWeaponActionSettled = fnvPipBoyShowcaseReloadRequested && fnvPipBoyShowcaseFireObserved
+                        && !mMechanicsManager->isAttackingOrSpell(player);
+                    if (paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && !finalWeaponActionSettled
+                        && !fnvPipBoyShowcaseReloadWaitLogged)
+                    {
+                        fnvPipBoyShowcaseReloadWaitLogged = true;
+                        Log(Debug::Info) << "FNV Pip-Boy post-close capture: waiting=1 actionSettled=0"
+                                         << " reason=authored-reload-active";
+                    }
+
+                    MWRender::Animation* const firstPerson = mWorld->getFalloutWeaponAnimation(player, true);
+                    const std::string poseSource = firstPerson != nullptr
+                        ? firstPerson->getAnimationSourceName("weaponpose")
+                        : std::string();
+                    const std::string activeRightArm = firstPerson != nullptr
+                        ? std::string(firstPerson->getActiveGroup(MWRender::BoneGroup_RightArm))
+                        : std::string();
+                    const osg::Node* const weaponNode
+                        = firstPerson != nullptr ? firstPerson->getNode("Weapon") : nullptr;
+                    const auto* const weaponTransform = dynamic_cast<const osg::MatrixTransform*>(weaponNode);
+                    osg::Node* const weaponPart
+                        = firstPerson != nullptr ? firstPerson->getEquippedWeaponNode() : nullptr;
+                    const osg::Group* const weaponParent = weaponNode != nullptr && weaponNode->getNumParents() == 1
+                        ? weaponNode->getParent(0)
+                        : nullptr;
+                    const bool directPart = weaponPart != nullptr && weaponPart->getNumParents() == 1
+                        && weaponPart->getParent(0) == weaponNode;
+                    const bool authoredTwoHandPose = poseSource.find("2hraim.kf") != std::string::npos;
+                    const bool poseObserved = finalWeaponActionSettled && authoredTwoHandPose
+                        && firstPerson != nullptr && firstPerson->isPlaying("weaponpose")
+                        && activeRightArm == "weaponpose" && weaponParent != nullptr
+                        && weaponParent->getName() == "Bip01 R Hand" && directPart
+                        && firstPerson->getWeaponsShown() && mWorld->isFirstPerson()
+                        && weaponTransform != nullptr && !weaponTransform->getMatrix().isIdentity();
+                    if (poseObserved)
+                    {
+                        const osg::Matrix& matrix = weaponTransform->getMatrix();
+                        if (fnvPipBoyShowcaseWeaponPoseSampleValid
+                            && matrix == fnvPipBoyShowcaseWeaponPoseSample)
+                            ++fnvPipBoyShowcaseWeaponPoseStableFrames;
+                        else
+                        {
+                            fnvPipBoyShowcaseWeaponPoseSample = matrix;
+                            fnvPipBoyShowcaseWeaponPoseSampleValid = true;
+                            fnvPipBoyShowcaseWeaponPoseStableFrames = 1;
+                        }
+                    }
+                    else
+                    {
+                        fnvPipBoyShowcaseWeaponPoseSampleValid = false;
+                        fnvPipBoyShowcaseWeaponPoseStableFrames = 0;
+                    }
+                    fnvPipBoyShowcasePostFireRecoveryFrames
+                        = fnvPipBoyShowcaseFireRequestFrame >= 0
+                        ? proofWorldReadyFrames - fnvPipBoyShowcaseFireRequestFrame
+                        : 0;
+                    // 2hraim is an authored animated idle, so exact matrix equality is diagnostic
+                    // only and cannot define rest. Require the completed weapon action plus a
+                    // sustained post-trigger recovery interval while the authored pose stays active.
+                    finalWeaponPoseSettled = poseObserved && fnvPipBoyShowcasePostFireRecoveryFrames >= 90;
+                    if (paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && !finalWeaponPoseSettled
+                        && !fnvPipBoyShowcaseWeaponPoseWaitLogged)
+                    {
+                        fnvPipBoyShowcaseWeaponPoseWaitLogged = true;
+                        Log(Debug::Info) << "FNV Pip-Boy post-close pose gate: source=\"" << poseSource
+                                         << "\" activeRightArm=\"" << activeRightArm
+                                         << "\" parent=\""
+                                         << (weaponParent != nullptr ? weaponParent->getName() : std::string())
+                                         << "\" directPart=" << directPart
+                                         << " playing="
+                                         << (firstPerson != nullptr && firstPerson->isPlaying("weaponpose"))
+                                         << " visible="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown()
+                                             && mWorld->isFirstPerson())
+                                         << " nonIdentity="
+                                         << (weaponTransform != nullptr && !weaponTransform->getMatrix().isIdentity())
+                                         << " stableFrames=" << fnvPipBoyShowcaseWeaponPoseStableFrames
+                                         << " postFireRecoveryFrames=" << fnvPipBoyShowcasePostFireRecoveryFrames
+                                         << " status=pending";
+                    }
+                }
+                if (fnvPipBoyShowcaseCapturedPanes == showcaseStateIndex
+                    && paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && finalWeaponActionSettled
+                    && finalWeaponPoseSettled
+                    && mScreenCaptureHandler != nullptr)
+                {
+                    if (state.mPane == -1)
                     {
                         const MWWorld::Ptr player = mWorld->getPlayerPtr();
                         const MWWorld::InventoryStore& inventory
@@ -8532,7 +8749,110 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         Log(Debug::Info) << "FNV Pip-Boy post-close audit: right=" << weaponId << " ammo="
                                          << (ammo ? ammo->toDebugString() : std::string("none")) << " loadedAfter="
                                          << inventory.getFalloutLoadedAmmo(weaponId).value_or(0) << " reserveAfter="
-                                         << (ammo ? inventory.count(*ammo) : 0);
+                                         << (ammo ? inventory.count(*ammo) : 0)
+                                         << " actionSettled=1 poseSettled=1 poseSource=\""
+                                         << (mWorld->getFalloutWeaponAnimation(player, true) != nullptr
+                                                 ? mWorld->getFalloutWeaponAnimation(player, true)
+                                                       ->getAnimationSourceName("weaponpose")
+                                                 : std::string())
+                                         << "\" poseStableFrames=" << fnvPipBoyShowcaseWeaponPoseStableFrames
+                                         << " postFireRecoveryFrames=" << fnvPipBoyShowcasePostFireRecoveryFrames;
+                    }
+                    else if (state.mPane == -2)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        const auto equippedId = [&](int slot) {
+                            const MWWorld::ConstContainerStoreIterator item = inventory.getSlot(slot);
+                            return item == inventory.end() ? std::string("none")
+                                                           : item->getCellRef().getRefId().toDebugString();
+                        };
+                        Log(Debug::Info) << "FNV Pip-Boy apparel world audit: state=" << state.mName
+                                         << " helmet=" << equippedId(MWWorld::InventoryStore::Slot_Helmet)
+                                         << " body=" << equippedId(MWWorld::InventoryStore::Slot_Cuirass)
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " source=live-equipment-and-native-frame";
+                    }
+                    else if (state.mPane == -3)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        MWRender::Animation* const firstPerson
+                            = mWorld->getFalloutWeaponAnimation(player, true);
+                        Log(Debug::Info) << "FNV Pip-Boy Aid world audit: state=" << state.mName
+                                         << " right="
+                                         << (right == inventory.end() ? std::string("none")
+                                                                      : right->getCellRef().getRefId().toDebugString())
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " weaponShown="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown())
+                                         << " activeRightArm=\""
+                                         << (firstPerson != nullptr
+                                                 ? std::string(firstPerson->getActiveGroup(
+                                                       MWRender::BoneGroup_RightArm))
+                                                 : std::string())
+                                         << "\" source=live-consumable-close-and-native-frame";
+                    }
+                    else if (state.mPane == -4)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        const ESM::RefId weaponId = right == inventory.end()
+                            ? ESM::RefId() : right->getCellRef().getRefId();
+                        const std::optional<ESM::RefId> selectedAmmo
+                            = inventory.getFalloutAmmoSelection(weaponId);
+                        MWRender::Animation* const firstPerson
+                            = mWorld->getFalloutWeaponAnimation(player, true);
+                        Log(Debug::Info) << "FNV Pip-Boy Ammo world audit: state=" << state.mName
+                                         << " right="
+                                         << (weaponId.empty() ? std::string("none")
+                                                              : weaponId.toDebugString())
+                                         << " selectedAmmo="
+                                         << (selectedAmmo ? selectedAmmo->toDebugString() : std::string("none"))
+                                         << " reserve="
+                                         << (selectedAmmo ? inventory.count(*selectedAmmo) : 0)
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " weaponShown="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown())
+                                         << " source=live-ammo-selection-and-native-frame";
+                    }
+                    else if (state.mPane == -5)
+                    {
+                        const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                        const MWWorld::InventoryStore& inventory
+                            = player.getClass().getInventoryStore(player);
+                        ESM::RefId bobbyPinId;
+                        for (MWWorld::ConstContainerStoreIterator item = inventory.cbegin();
+                             item != inventory.cend(); ++item)
+                        {
+                            if (item->getType() == ESM4::MiscItem::sRecordId
+                                && item->get<ESM4::MiscItem>()->mBase->mEditorId == "Lockpick")
+                            {
+                                bobbyPinId = item->getCellRef().getRefId();
+                                break;
+                            }
+                        }
+                        const MWWorld::ConstContainerStoreIterator right
+                            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                        MWRender::Animation* const firstPerson
+                            = mWorld->getFalloutWeaponAnimation(player, true);
+                        Log(Debug::Info) << "FNV Pip-Boy Misc world audit: state=" << state.mName
+                                         << " bobbyPins="
+                                         << (bobbyPinId.empty() ? 0 : inventory.count(bobbyPinId))
+                                         << " right="
+                                         << (right == inventory.end() ? std::string("none")
+                                                                      : right->getCellRef().getRefId().toDebugString())
+                                         << " firstPerson=" << mWorld->isFirstPerson()
+                                         << " weaponShown="
+                                         << (firstPerson != nullptr && firstPerson->getWeaponsShown())
+                                         << " source=live-misc-inspection-and-native-frame";
                     }
                     Log(Debug::Info) << "FNV Pip-Boy showcase: queuing GUI-inclusive native frame state="
                                      << state.mName << " pane=" << state.mPane

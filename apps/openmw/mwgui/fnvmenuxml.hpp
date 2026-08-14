@@ -81,6 +81,8 @@ namespace MWGui
 
     [[nodiscard]] std::optional<float> evaluateFnvMenuNamedScalarTrait(const FnvMenuXmlNode& root,
         std::string_view nodeName, std::string_view traitName, const FnvMenuLayoutEvaluationContext& context);
+    [[nodiscard]] std::optional<float> evaluateFnvMenuNodeScalarTrait(const FnvMenuXmlNode& root,
+        const FnvMenuXmlNode& node, std::string_view traitName, const FnvMenuLayoutEvaluationContext& context);
     [[nodiscard]] std::string normalizeFnvMenuTexturePath(std::string_view path);
     [[nodiscard]] std::string_view getFnvMenuXmlParseErrorName(FnvMenuXmlParseError error);
 }
@@ -93,7 +95,8 @@ namespace VFS
 namespace MWGui
 {
     [[nodiscard]] std::optional<FnvMenuXmlDocument> loadFnvMenuXml(
-        const VFS::Manager& vfs, std::string_view path, FnvMenuXmlParseError* error = nullptr);
+        const VFS::Manager& vfs, std::string_view path, FnvMenuXmlParseError* error = nullptr,
+        bool expandIncludes = true);
 }
 
 #endif

@@ -32,6 +32,10 @@
 
 #include <osgViewer/Viewer>
 
+#include <osgDB/WriteFile>
+
+#include <atomic>
+
 #include <components/nifosg/nifloader.hpp>
 
 #include <components/debug/debuglog.hpp>
@@ -62,6 +66,7 @@
 #include <components/sceneutil/writescene.hpp>
 
 #include <components/misc/constants.hpp>
+#include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/myguiplatform/myguirendermanager.hpp>
 
@@ -154,19 +159,87 @@ namespace MWRender
             return end != value && std::isfinite(parsed) ? parsed : fallback;
         }
 
+        class FalloutPipBoyRttCapture final : public osg::Camera::DrawCallback
+        {
+        public:
+            FalloutPipBoyRttCapture(
+                std::filesystem::path path, osg::Texture2D* texture, int width, int height)
+                : mPath(std::move(path))
+                , mTexture(texture)
+                , mWidth(width)
+                , mHeight(height)
+            {
+            }
+
+            void operator()(osg::RenderInfo& renderInfo) const override
+            {
+                if (mCaptured)
+                    return;
+                if (++mRenderedFrames < 30 || mTexture == nullptr || renderInfo.getState() == nullptr)
+                    return;
+                const unsigned int contextId = renderInfo.getContextID();
+                const osg::Texture::TextureObject* textureObject = mTexture->getTextureObject(contextId);
+                if (textureObject == nullptr)
+                    return;
+                osg::ref_ptr<osg::Image> image = new osg::Image;
+                image->allocateImage(mWidth, mHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+                GLint previousTexture = 0;
+                GLint viewport[4] = {};
+                GLint scissor[4] = {};
+                glGetIntegerv(GL_VIEWPORT, viewport);
+                glGetIntegerv(GL_SCISSOR_BOX, scissor);
+                const bool scissorEnabled = glIsEnabled(GL_SCISSOR_TEST) == GL_TRUE;
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+                glBindTexture(GL_TEXTURE_2D, textureObject->id());
+                GLint actualWidth = 0;
+                GLint actualHeight = 0;
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &actualWidth);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &actualHeight);
+                if (actualWidth <= 0 || actualHeight <= 0)
+                {
+                    glBindTexture(GL_TEXTURE_2D, previousTexture);
+                    return;
+                }
+                image->allocateImage(actualWidth, actualHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, image->data());
+                glBindTexture(GL_TEXTURE_2D, previousTexture);
+                mCaptured = osgDB::writeImageFile(*image, mPath.string());
+                Log(mCaptured ? Debug::Info : Debug::Error)
+                    << "FNV Pip-Boy RTT pre-mesh capture: status=" << (mCaptured ? "ready" : "fail")
+                    << " logicalSize=" << mWidth << 'x' << mHeight
+                    << " actualSize=" << actualWidth << 'x' << actualHeight
+                    << " viewport=" << viewport[0] << ',' << viewport[1] << ',' << viewport[2] << ',' << viewport[3]
+                    << " scissor=" << (scissorEnabled ? "on:" : "off:") << scissor[0] << ',' << scissor[1] << ','
+                    << scissor[2] << ',' << scissor[3] << " path=" << mPath.string();
+            }
+
+        private:
+            std::filesystem::path mPath;
+            osg::ref_ptr<osg::Texture2D> mTexture;
+            int mWidth;
+            int mHeight;
+            mutable unsigned int mRenderedFrames = 0;
+            mutable bool mCaptured = false;
+        };
+
         class FalloutPipBoyGuiRTT final : public osg::Group
         {
         public:
-            explicit FalloutPipBoyGuiRTT(osg::ref_ptr<osg::Node> guiCamera)
+            explicit FalloutPipBoyGuiRTT(osg::ref_ptr<osg::Node> guiCamera, int pane)
             {
                 setName("FNV Pip-Boy live screen RTT");
                 mCamera = dynamic_cast<osg::Camera*>(guiCamera.get());
                 if (mCamera == nullptr)
                     return;
 
-                const osg::Viewport* const viewport = mCamera->getViewport();
-                const int width = viewport != nullptr ? std::max(1, static_cast<int>(viewport->width())) : 1;
-                const int height = viewport != nullptr ? std::max(1, static_cast<int>(viewport->height())) : 1;
+                // The physical Pip-Boy is a square 512 render surface. MyGUI
+                // still lays out the retail XML against its desktop canvas and
+                // emits normalized clip coordinates; the offscreen attachment
+                // must describe the surface OSG actually renders, not that
+                // logical canvas. Allocating the canvas dimensions left the
+                // complete 512 render in one corner of a mostly black texture.
+                constexpr int width = 512;
+                constexpr int height = 512;
                 mTexture = new osg::Texture2D;
                 mTexture->setName("FNV Pip-Boy live screen texture");
                 mTexture->setTextureSize(width, height);
@@ -186,15 +259,29 @@ namespace MWRender
                 // camera below a second RTT camera collected valid batches but
                 // left the sampled attachment black in the FNV Windows runtime.
                 mCamera->setRenderOrder(osg::Camera::PRE_RENDER, 0);
-                mCamera->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
-                // Leave the viewport unset here. GUICamera::update initializes
-                // it together with MyGUI's RenderTargetInfo pixel scale. Setting
-                // only the viewport early makes MyGUI treat pixel coordinates as
-                // clip coordinates and renders the whole layer offscreen.
+                mCamera->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT, osg::Camera::PIXEL_BUFFER_RTT);
+                // GUICamera initialized both this size and MyGUI's pixel scale
+                // before the FBO was created. Reassert the same viewport after
+                // attachment: OSG otherwise leaves the nested RTT draw stage at
+                // its 512x512 fallback while MyGUI emits vertices for width x
+                // height, shrinking the complete surface into the lower-left.
                 mCamera->setClearMask(GL_COLOR_BUFFER_BIT);
                 mCamera->setClearColor(osg::Vec4(0.f, 0.f, 0.f, 0.f));
                 mCamera->setComputeNearFarMode(osg::CullSettings::DO_NOT_COMPUTE_NEAR_FAR);
                 mCamera->attach(osg::Camera::COLOR_BUFFER, mTexture.get());
+                mCamera->setViewport(0, 0, width, height);
+                mCamera->setImplicitBufferAttachmentMask(osg::DisplaySettings::IMPLICIT_COLOR_BUFFER_ATTACHMENT);
+                if (const char* capturePath = std::getenv("OPENMW_FNV_PIPBOY_RTT_CAPTURE_PATH");
+                    capturePath != nullptr && *capturePath != '\0')
+                {
+                    static std::atomic_uint sCaptureSequence{ 0 };
+                    const unsigned int captureSequence = sCaptureSequence.fetch_add(1, std::memory_order_relaxed);
+                    std::filesystem::path path(capturePath);
+                    path.replace_filename(path.stem().string() + "-pane-" + std::to_string(pane)
+                        + "-camera-" + std::to_string(captureSequence) + path.extension().string());
+                    mCamera->setFinalDrawCallback(
+                        new FalloutPipBoyRttCapture(std::move(path), mTexture.get(), width, height));
+                }
                 addChild(mCamera);
             }
 
@@ -494,10 +581,28 @@ namespace MWRender
             // produces the detached floating fists seen on an unequipped Player.
             if (state.mSaveWornArmorModels.empty())
             {
-                Log(Debug::Warning)
-                    << "FNV first-person equipped profile: no equipped upper-body Arms partition; "
-                       "profile=disabled reason=prevent-detached-hands";
-                return std::nullopt;
+                const std::string nakedUpperBody = female
+                    ? "characters/_male/femaleupperbody.nif"
+                    : "characters/_male/upperbody.nif";
+                const VFS::Manager* const vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
+                const VFS::Path::Normalized correctedNakedUpperBody
+                    = Misc::ResourceHelpers::correctMeshPath(VFS::Path::toNormalized(nakedUpperBody));
+                if (vfs == nullptr || !vfs->exists(correctedNakedUpperBody))
+                {
+                    Log(Debug::Error)
+                        << "FNV first-person equipped profile: no equipped upper-body Arms partition and "
+                           "authored naked body is missing selected=" << nakedUpperBody
+                        << " corrected=" << correctedNakedUpperBody.value();
+                    return std::nullopt;
+                }
+                // Fallout's authored naked upper body owns the two skin Arms
+                // partitions used when no outfit covers FO3_UpperBody. It is the
+                // normal unequipped-body source, not a generated sleeve or proof
+                // mesh, and keeps both wrists attached across inventory changes.
+                state.mSaveWornArmorModels.push_back(nakedUpperBody);
+                Log(Debug::Info)
+                    << "FNV first-person equipped profile: no equipped outfit; selected=" << nakedUpperBody
+                    << " source=authored-race-naked-upperbody";
             }
             state.mPipBoyGlove
                 = isFalloutPipBoyGloveFirstPersonModel(state.mPipBoy, state.mSaveWornLeftHandModel);
@@ -825,6 +930,7 @@ namespace MWRender
             applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-attach");
             std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces
                 = collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record", false);
+            appendFalloutVrWeaponSurface(surfaces, player, "live-vr-player");
             const bool rightPipBoyCalibration = [] {
                 if (const char* value = std::getenv("OPENMW_FNV_RIGHT_PIPBOY_CALIBRATION"))
                     return *value != '\0' && std::string_view(value) != "0";
@@ -1746,6 +1852,36 @@ namespace MWRender
             mSharedUniformStateUpdater->setWindSpeed(windSpeed);
             mSharedUniformStateUpdater->setPlayerPos(playerPos);
 
+            if (VR::getVR())
+            {
+                ESM::RefId liveWeaponId;
+                if (player.getClass().hasInventoryStore(player))
+                {
+                    const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                    const MWWorld::ConstContainerStoreIterator right
+                        = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                    if (right != inventory.end() && right->getType() == ESM4::Weapon::sRecordId)
+                        liveWeaponId = right->getCellRef().getRefId();
+                }
+                if (!mFalloutVrHandWeaponSignatureObserved || liveWeaponId != mFalloutVrHandWeaponSignature)
+                {
+                    if (auto* vrAnimation = dynamic_cast<MWVR::VRAnimation*>(mPlayerAnimation.get()))
+                    {
+                        if (const ESM4::Npc* visualRecord = findFalloutPlayerVisualRecord())
+                        {
+                            vrAnimation->setFalloutVrHandSurfaces(
+                                collectFalloutVrHandSurfacesForVisualRecord(player, visualRecord));
+                            Log(Debug::Info) << "OpenMW VR weapon handoff: right="
+                                             << (liveWeaponId.empty() ? std::string("none")
+                                                                      : liveWeaponId.toDebugString())
+                                             << " source=live-inventory-surface-refresh";
+                        }
+                    }
+                    mFalloutVrHandWeaponSignature = liveWeaponId;
+                    mFalloutVrHandWeaponSignatureObserved = true;
+                }
+            }
+
             if (mFalloutPlayerVisualAnimation)
             {
                 const ESM4::Weapon* liveWeapon = nullptr;
@@ -1828,14 +1964,53 @@ namespace MWRender
                 }
 
                 const std::vector<ESM::FormId> wornSignature = makeFalloutWornVisualSignature(liveArmor);
+                const bool wornSignatureChanged = hasLiveInventory
+                    && (!mFalloutPlayerFirstPersonWornSignatureObserved
+                        || wornSignature != mFalloutPlayerFirstPersonWornSignature);
+                if (wornSignatureChanged)
+                {
+                    const bool proxyArmorChanged = MWClass::ESM4Npc::setEquippedArmor(visualPtr, liveArmor);
+                    try
+                    {
+                        osg::ref_ptr<ESM4NpcAnimation> replacement = new ESM4NpcAnimation(
+                            visualPtr, osg::ref_ptr<osg::Group>(mFalloutPlayerVisualBasis), mResourceSystem);
+                        const bool shown
+                            = liveDrawState == MWMechanics::DrawState::Weapon && liveWeapon != nullptr;
+                        replacement->showWeapons(shown);
+                        if (osg::Group* root = replacement->getObjectRoot())
+                        {
+                            const bool visible = mCamera->getMode() != Camera::Mode::FirstPerson;
+                            root->setNodeMask(visible ? Mask_Player : 0);
+                        }
+                        mFalloutPlayerVisualAnimation = std::move(replacement);
+                        mFalloutPlayerVisualGroup.clear();
+                        mFalloutPlayerVisualGroupElapsed = 0.f;
+                        mFalloutPlayerVisualCycleLogged = false;
+                        std::ostringstream forms;
+                        for (std::size_t index = 0; index < wornSignature.size(); ++index)
+                        {
+                            if (index != 0)
+                                forms << ',';
+                            forms << ESM::RefId(wornSignature[index]);
+                        }
+                        Log(Debug::Info) << "FNV third-person equipment bridge: rebuilt=1 armor="
+                                         << liveArmor.size() << " signature=" << wornSignature.size()
+                                         << " forms=[" << forms.str() << "] proxyArmorChanged="
+                                         << proxyArmorChanged << " weapon="
+                                         << (liveWeapon != nullptr ? liveWeapon->mEditorId : std::string("none"));
+                    }
+                    catch (const std::exception& error)
+                    {
+                        Log(Debug::Error) << "FNV third-person equipment bridge: rebuilt=0 armor="
+                                          << liveArmor.size() << " reason=" << error.what();
+                    }
+                }
                 // A weapon-family change is handled above by the dynamic
                 // weapon/animation bridge. Rebuilding the entire first-person
                 // actor here destroys an in-flight Pip-Boy raise/hold/lower
                 // sequence and replaces both connected arm chains. Only a
                 // worn-armor signature change requires a new composite rig.
-                if (hasLiveInventory
-                    && (!mFalloutPlayerFirstPersonWornSignatureObserved
-                        || wornSignature != mFalloutPlayerFirstPersonWornSignature))
+                if (wornSignatureChanged)
                 {
                     mFalloutPlayerFirstPersonWornSignature = wornSignature;
                     mFalloutPlayerFirstPersonWornSignatureObserved = true;
@@ -2124,15 +2299,20 @@ namespace MWRender
         const bool hasFirstPersonAnimation = mFalloutPlayerFirstPersonAnimation != nullptr;
         const bool hasWristPresentation
             = hasFirstPersonAnimation && mFalloutPlayerFirstPersonAnimation->hasPipBoyPresentation();
-        const bool physical = !VR::getVR() && physicalRequested && cameraFirstPerson
-            && hasFirstPersonAnimation && hasWristPresentation;
+        auto* const vrAnimation = dynamic_cast<MWVR::VRAnimation*>(mPlayerAnimation.get());
+        const bool hasVrWristPresentation
+            = VR::getVR() && vrAnimation != nullptr && vrAnimation->hasFalloutVrPipBoySurface();
+        const bool physical = physicalRequested && cameraFirstPerson
+            && ((VR::getVR() && hasVrWristPresentation)
+                || (!VR::getVR() && hasFirstPersonAnimation && hasWristPresentation));
         if (physicalRequested && !physical && !mFalloutPipBoyPhysicalBlockedLogged)
         {
             Log(Debug::Error) << "FNV Pip-Boy physical: presentation=blocked vr=" << VR::getVR()
                               << " cameraFirstPerson=" << cameraFirstPerson
                               << " cameraMode=" << static_cast<int>(mCamera->getMode())
                               << " firstPersonAnimation=" << hasFirstPersonAnimation
-                              << " wristPresentation=" << hasWristPresentation;
+                              << " wristPresentation=" << hasWristPresentation
+                              << " vrWristPresentation=" << hasVrWristPresentation;
             mFalloutPipBoyPhysicalBlockedLogged = true;
         }
         else if (!physicalRequested || physical)
@@ -2178,7 +2358,8 @@ namespace MWRender
             return;
         }
 
-        mFalloutPlayerFirstPersonAnimation->showWeapons(false);
+        if (mFalloutPlayerFirstPersonAnimation)
+            mFalloutPlayerFirstPersonAnimation->showWeapons(false);
         const int pane = windowManager->getFalloutPipBoyActivePane();
         const std::string panel = getFalloutPipBoyPanelName(pane);
         // Render the live MyGUI Pip-Boy layer into the authored device screen.
@@ -2199,9 +2380,19 @@ namespace MWRender
                 = guiRenderer != nullptr
                 ? guiRenderer->createGUICamera(osg::Camera::NESTED_RENDER, std::string(guiLayer))
                 : nullptr;
+            auto* const retailWindowManager = dynamic_cast<MWGui::WindowManager*>(windowManager);
             const std::vector<MWGui::WindowBase*> inventoryWindows
                 = windowManager->getGuiModeWindows(MWGui::GM_Inventory);
-            if (guiRenderer != nullptr && guiCamera != nullptr && pane >= 0
+            if (guiRenderer != nullptr && guiCamera != nullptr && retailWindowManager != nullptr
+                && retailWindowManager->isFalloutPipBoyRetailInventoryReady())
+            {
+                const MyGUI::IntCoord contentRect = retailWindowManager->getFalloutPipBoyRetailCanvas();
+                guiRenderer->setGUICameraContentRect(guiCamera, contentRect);
+                Log(Debug::Info) << "FNV Pip-Boy RTT retail XML content rect: pane=" << pane << " rect="
+                                 << contentRect.left << ',' << contentRect.top << ',' << contentRect.width << ','
+                                 << contentRect.height;
+            }
+            else if (guiRenderer != nullptr && guiCamera != nullptr && pane >= 0
                 && pane < static_cast<int>(inventoryWindows.size()) && inventoryWindows[pane] != nullptr
                 && inventoryWindows[pane]->mMainWidget != nullptr)
             {
@@ -2211,7 +2402,7 @@ namespace MWRender
                                  << ',' << contentRect.top << ',' << contentRect.width << ',' << contentRect.height;
             }
             mFalloutPipBoyGuiRtt
-                = guiCamera != nullptr ? new FalloutPipBoyGuiRTT(std::move(guiCamera)) : nullptr;
+                = guiCamera != nullptr ? new FalloutPipBoyGuiRTT(std::move(guiCamera), pane) : nullptr;
             if (mFalloutPipBoyGuiRtt != nullptr)
                 mSceneRoot->addChild(mFalloutPipBoyGuiRtt);
             mFalloutPipBoyGuiLayer = mFalloutPipBoyGuiRtt != nullptr ? guiLayer : std::string_view{};
@@ -2228,16 +2419,30 @@ namespace MWRender
         const float mapZoom = showMap ? falloutWindowManager->getFalloutPipBoyMapZoom() : 1.f;
         const float mapPanX = showMap ? falloutWindowManager->getFalloutPipBoyMapPanX() : 0.f;
         const float mapPanY = showMap ? falloutWindowManager->getFalloutPipBoyMapPanY() : 0.f;
+        osg::Vec4f mapClip(0.f, 0.f, 1.f, 1.f);
+        if (showMap)
+        {
+            const MyGUI::IntCoord canvas = falloutWindowManager->getFalloutPipBoyRetailCanvas();
+            const MyGUI::IntCoord clip = falloutWindowManager->getFalloutPipBoyRetailMapClip();
+            if (canvas.width > 0 && canvas.height > 0 && clip.width > 0 && clip.height > 0)
+                mapClip.set(static_cast<float>(clip.left - canvas.left) / canvas.width,
+                    static_cast<float>(clip.top - canvas.top) / canvas.height,
+                    static_cast<float>(clip.width) / canvas.width,
+                    static_cast<float>(clip.height) / canvas.height);
+        }
         // Resolve the physical control before advancing the action envelope.  A
         // MAP/WORLD toggle changes the target from the current tab button to
         // the ScrollKnob; advancing first made the retained contact frame use
         // the stale MAP-button beat even though the production UI had already
         // toggled the world map.
-        mFalloutPlayerFirstPersonAnimation->setPipBoyControlState(pane,
-            falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoySubmenu() : 0,
-            falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoyListOffset() : 0, worldMap,
-            mapZoom, mapPanX, mapPanY, interactionPulse);
-        mFalloutPlayerFirstPersonAnimation->setPipBoyInteractionProgress(interactionPulse);
+        if (mFalloutPlayerFirstPersonAnimation)
+        {
+            mFalloutPlayerFirstPersonAnimation->setPipBoyControlState(pane,
+                falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoySubmenu() : 0,
+                falloutWindowManager != nullptr ? falloutWindowManager->getFalloutPipBoyListOffset() : 0, worldMap,
+                mapZoom, mapPanX, mapPanY, interactionPulse);
+            mFalloutPlayerFirstPersonAnimation->setPipBoyInteractionProgress(interactionPulse);
+        }
         osg::Texture2D* mapTexture = nullptr;
         if (showMap)
         {
@@ -2255,8 +2460,11 @@ namespace MWRender
             mFalloutPipBoyScreenBindingAttempted = true;
             if (texture != nullptr)
             {
-                mFalloutPipBoyScreenBound = mFalloutPlayerFirstPersonAnimation->setPipBoyScreenTexture(texture,
-                    mapTexture, showMap, mapZoom, mapPanX, mapPanY);
+                mFalloutPipBoyScreenBound = VR::getVR() && vrAnimation != nullptr
+                    ? vrAnimation->setFalloutVrPipBoyScreenTexture(
+                        texture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip)
+                    : mFalloutPlayerFirstPersonAnimation->setPipBoyScreenTexture(
+                        texture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip);
             }
             else
             {
@@ -2672,6 +2880,8 @@ namespace MWRender
         mFalloutSaveWornVisualItems.clear();
         mFalloutPlayerFirstPersonWornSignature.clear();
         mFalloutPlayerFirstPersonWornSignatureObserved = false;
+        mFalloutVrHandWeaponSignature = ESM::RefId();
+        mFalloutVrHandWeaponSignatureObserved = false;
 
         notifyWorldSpaceChanged();
         if (mObjectPaging)

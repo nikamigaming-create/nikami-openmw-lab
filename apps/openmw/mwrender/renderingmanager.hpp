@@ -433,6 +433,8 @@ namespace MWRender
         std::vector<ESM::FormId> mFalloutSaveWornVisualItems;
         std::vector<ESM::FormId> mFalloutPlayerFirstPersonWornSignature;
         bool mFalloutPlayerFirstPersonWornSignatureObserved = false;
+        ESM::RefId mFalloutVrHandWeaponSignature;
+        bool mFalloutVrHandWeaponSignatureObserved = false;
         std::string mFalloutPlayerVisualGroup;
         float mFalloutPlayerVisualGroupElapsed = 0.f;
         bool mFalloutPlayerVisualCycleLogged = false;

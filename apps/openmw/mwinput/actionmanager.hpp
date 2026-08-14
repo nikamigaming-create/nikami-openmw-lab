@@ -33,6 +33,7 @@ namespace MWInput
         void update(float dt);
 
         void executeAction(int action);
+        void setFalloutUnattendedUseDown(bool down) { mFalloutUnattendedUseDown = down; }
 
         bool checkAllowedToUseItems() const;
 
@@ -103,6 +104,7 @@ namespace MWInput
         std::string mFalloutVatsBodyPartTargetNode;
         unsigned int mFalloutVatsHitChance = 0;
         bool mFalloutPlayerUseDown = false;
+        bool mFalloutUnattendedUseDown = false;
         bool mFalloutAimDown = false;
         bool mFalloutAimPreparationRejected = false;
         bool mFalloutAimFovOwnsOverride = false;

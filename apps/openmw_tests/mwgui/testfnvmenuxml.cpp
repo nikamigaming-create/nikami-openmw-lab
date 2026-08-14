@@ -63,6 +63,30 @@ TEST(FnvMenuXmlTest, ExpandsBethesdaPrefabFragmentsWithoutMenuSpecificKnowledge)
     EXPECT_EQ(hotrect.findChild("target")->mText, "&false;");
 }
 
+TEST(FnvMenuXmlTest, AcceptsUtf8BomOnBethesdaPrefabFragments)
+{
+    MWGui::FnvMenuXmlParseError error = MWGui::FnvMenuXmlParseError::UnexpectedToken;
+    const std::optional<std::vector<MWGui::FnvMenuXmlNode>> fragment
+        = MWGui::parseFnvMenuXmlFragment("\xEF\xBB\xBF<!-- authored prefab --><width>60</width>", &error);
+    ASSERT_TRUE(fragment.has_value());
+    ASSERT_EQ(fragment->size(), 1u);
+    EXPECT_EQ(fragment->front().mType, "width");
+    EXPECT_EQ(fragment->front().mText, "60");
+    EXPECT_EQ(error, MWGui::FnvMenuXmlParseError::None);
+}
+
+TEST(FnvMenuXmlTest, AcceptsShippedGeckMissingOpenTagBracket)
+{
+    MWGui::FnvMenuXmlParseError error = MWGui::FnvMenuXmlParseError::UnexpectedToken;
+    const std::optional<std::vector<MWGui::FnvMenuXmlNode>> fragment
+        = MWGui::parseFnvMenuXmlFragment("<systemcolor</systemcolor><locus>&true;</locus>", &error);
+    ASSERT_TRUE(fragment.has_value());
+    ASSERT_EQ(fragment->size(), 2u);
+    EXPECT_EQ(fragment->front().mType, "systemcolor");
+    EXPECT_TRUE(fragment->front().mText.empty());
+    EXPECT_EQ(error, MWGui::FnvMenuXmlParseError::None);
+}
+
 TEST(FnvMenuXmlTest, EvaluatesAuthoredScalarTraitOperationSequences)
 {
     const std::optional<MWGui::FnvMenuXmlDocument> parsed = MWGui::parseFnvMenuXml(R"xml(
@@ -120,6 +144,46 @@ TEST(FnvMenuXmlTest, ResolvesNamedTileDependenciesForAuthoredScreenGeometry)
                   parsed->mRoot, "computers_depth_rect", "width", context),
         1080.f);
     EXPECT_EQ(MWGui::evaluateFnvMenuNamedScalarTrait(parsed->mRoot, "child", "y", context), 780.f);
+}
+
+TEST(FnvMenuXmlTest, EvaluatesAnExactAuthoredNodeWithoutDependingOnUniqueNames)
+{
+    const std::optional<MWGui::FnvMenuXmlDocument> parsed = MWGui::parseFnvMenuXml(
+        "<menu><rect name=\"duplicate\"><x>10</x></rect><rect name=\"duplicate\"><x>20</x></rect></menu>");
+    ASSERT_TRUE(parsed);
+    const MWGui::FnvMenuLayoutEvaluationContext context{ 960.f, 720.f, {} };
+    ASSERT_EQ(parsed->mRoot.mChildren.size(), 2u);
+    EXPECT_EQ(MWGui::evaluateFnvMenuNodeScalarTrait(
+                  parsed->mRoot, parsed->mRoot.mChildren[1], "x", context),
+        20.f);
+}
+
+TEST(FnvMenuXmlTest, ResolvesRetailGlobalsThroughTheDynamicTraitContract)
+{
+    const std::optional<MWGui::FnvMenuXmlDocument> parsed = MWGui::parseFnvMenuXml(
+        "<menu><image name=\"background\"><width><copy src=\"globals()\" trait=\"_pipboy_width\"/></width></image></menu>");
+    ASSERT_TRUE(parsed);
+    const MWGui::FnvMenuLayoutEvaluationContext context{ 960.f, 720.f, {},
+        [](std::string_view node, std::string_view trait) -> std::optional<float> {
+            return node == "globals()" && trait == "_pipboy_width" ? std::optional<float>(960.f) : std::nullopt;
+        } };
+    EXPECT_EQ(MWGui::evaluateFnvMenuNamedScalarTrait(parsed->mRoot, "background", "width", context), 960.f);
+}
+
+TEST(FnvMenuXmlTest, LocalTraitsOverrideExpandedPrefabTraits)
+{
+    const std::optional<MWGui::FnvMenuXmlDocument> parsed = MWGui::parseFnvMenuXml(R"xml(
+        <menu><hotrect name="IM_InventoryList"><include src="list_box.xml"/><width>400</width></hotrect></menu>)xml");
+    ASSERT_TRUE(parsed.has_value());
+    MWGui::FnvMenuXmlDocument document = *parsed;
+    ASSERT_TRUE(MWGui::expandFnvMenuXmlIncludes(document.mRoot,
+        [](std::string_view name) -> std::optional<std::string> {
+            return name == "list_box.xml" ? std::optional<std::string>("<width>300</width><height>250</height>")
+                                          : std::nullopt;
+        }));
+    const MWGui::FnvMenuLayoutEvaluationContext context{ 960.f, 720.f };
+    EXPECT_EQ(MWGui::evaluateFnvMenuNamedScalarTrait(document.mRoot, "IM_InventoryList", "width", context), 400.f);
+    EXPECT_EQ(MWGui::evaluateFnvMenuNamedScalarTrait(document.mRoot, "IM_InventoryList", "height", context), 250.f);
 }
 
 TEST(FnvMenuXmlTest, NormalizesAuthoredTextureNamesIntoTheFalloutVfsNamespace)

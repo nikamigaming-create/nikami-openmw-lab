@@ -2621,8 +2621,10 @@ namespace MWMechanics
         const bool semanticActionPlaying = mUpperBodyState == UpperBodyState::Equipping
             || mUpperBodyState == UpperBodyState::Unequipping || mUpperBodyState == UpperBodyState::AttackEnd;
         float complete = 0.f;
-        bool actionStateExists = semanticActionPlaying && !mCurrentWeapon.empty() && actionAnimation != nullptr
-            && actionAnimation->getInfo(mCurrentWeapon, &complete) && actionAnimation->isPlaying(mCurrentWeapon);
+        const bool mainStateExists = semanticActionPlaying && !mCurrentWeapon.empty() && actionAnimation != nullptr
+            && actionAnimation->getInfo(mCurrentWeapon, &complete);
+        bool actionStateExists = mainStateExists && MWRender::isFonvWeaponActionStateValid(
+            mainStateExists, actionAnimation->isPlaying(mCurrentWeapon), complete);
         // A first-person player action is usable only while the visible rig
         // owns the same semantic group as the gameplay/third-person rig. A
         // dynamic AnimSource replacement can retire the visible state first;
@@ -2635,8 +2637,9 @@ namespace MWMechanics
                 firstPerson != nullptr && firstPerson != actionAnimation)
             {
                 float firstPersonComplete = 0.f;
-                actionStateExists = firstPerson->getInfo(mCurrentWeapon, &firstPersonComplete)
-                    && firstPerson->isPlaying(mCurrentWeapon);
+                const bool firstPersonStateExists = firstPerson->getInfo(mCurrentWeapon, &firstPersonComplete);
+                actionStateExists = MWRender::isFonvWeaponActionStateValid(firstPersonStateExists,
+                    firstPersonStateExists && firstPerson->isPlaying(mCurrentWeapon), firstPersonComplete);
                 if (actionStateExists)
                     complete = std::min(complete, firstPersonComplete);
             }
@@ -2705,10 +2708,23 @@ namespace MWMechanics
             {
                 Log(Debug::Error) << "FNV mechanics exact weapon action was interrupted: actor=" << mPtr.toString()
                                   << " group=" << mCurrentWeapon;
+                const bool serviceQueuedReload
+                    = mUpperBodyState == UpperBodyState::Equipping && mFalloutReloadQueued;
                 if (mUpperBodyState == UpperBodyState::Unequipping)
                     failVisualClosed();
                 else
                     settleUsableWithoutAction("action-interrupted");
+                // Losing the visible equip state must not strand a reload that
+                // was already accepted during that transition. The recovery
+                // above establishes WeaponEquipped first, so the ordinary
+                // reload path still owns all ammo validation and mutation.
+                if (serviceQueuedReload)
+                {
+                    mFalloutReloadQueued = false;
+                    if (!reloadFalloutWeapon())
+                        Log(Debug::Error) << "FNV reload queued across interrupted equip could not be serviced: actor="
+                                          << mPtr.toString();
+                }
                 updateAiming();
                 return true;
             }

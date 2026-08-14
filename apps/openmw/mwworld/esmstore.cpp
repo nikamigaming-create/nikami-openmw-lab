@@ -1649,6 +1649,39 @@ namespace MWWorld
                 mStoreImp->mRecNameToStore[type]->read(reader);
                 return true;
             case ESM::REC_NPC_:
+            {
+                auto& npcs = getWritable<ESM::NPC>();
+                const RecordId loaded = npcs.read(reader, true);
+                if (loaded.mId == ESM::RefId::stringRefId("Player"))
+                {
+                    const ESM::NPC* const savedPlayer = npcs.search(loaded.mId);
+                    const ESM::NPC* const carrierPlayer = npcs.searchStatic(loaded.mId);
+                    if (savedPlayer != nullptr && carrierPlayer != nullptr)
+                    {
+                        ESM::NPC repaired = *savedPlayer;
+                        bool changed = false;
+                        if (get<ESM::Race>().search(repaired.mRace) == nullptr)
+                        {
+                            repaired.mRace = carrierPlayer->mRace;
+                            changed = true;
+                        }
+                        if (get<ESM::Class>().search(repaired.mClass) == nullptr)
+                        {
+                            repaired.mClass = carrierPlayer->mClass;
+                            changed = true;
+                        }
+                        if (changed)
+                        {
+                            npcs.insert(repaired);
+                            Log(Debug::Info)
+                                << "FNV save compatibility: repaired dynamic Player identity references race="
+                                << repaired.mRace << " class=" << repaired.mClass
+                                << " source=validated-static-player-carrier";
+                        }
+                    }
+                }
+                return true;
+            }
             case ESM::REC_CREA:
             case ESM::REC_CONT:
             case ESM::REC_MISC:
