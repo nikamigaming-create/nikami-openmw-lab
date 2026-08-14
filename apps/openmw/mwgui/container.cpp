@@ -141,6 +141,30 @@ namespace MWGui
         mItemTransfer->apply(item, count, *mItemView);
     }
 
+    bool ContainerWindow::transferFirstEligibleItem(MWWorld::Ptr& transferredItem, int& transferredCount)
+    {
+        transferredItem = MWWorld::Ptr();
+        transferredCount = 0;
+        if (mModel == nullptr)
+            return false;
+
+        mModel->update();
+        for (std::size_t index = 0; index < mModel->getItemCount(); ++index)
+        {
+            const ItemStack item = mModel->getItem(index);
+            if (item.mCount <= 0 || item.mBase.isEmpty() || (item.mFlags & ItemStack::Flag_Bound))
+                continue;
+            if (!mModel->onTakeItem(item.mBase, 1))
+                continue;
+
+            mItemTransfer->apply(item, 1, *mItemView);
+            transferredItem = item.mBase;
+            transferredCount = 1;
+            return true;
+        }
+        return false;
+    }
+
     void ContainerWindow::dropItem()
     {
         if (mModel == nullptr)

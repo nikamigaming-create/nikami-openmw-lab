@@ -55,6 +55,9 @@ namespace MWGui
         MWGui::ItemView* getItemView() { return mItemView; }
         ItemModel* getModel() { return mModel; }
 
+        /// Transfers one ordinary stack through the same model and ItemTransfer path as the container UI.
+        bool transferFirstEligibleItem(MWWorld::Ptr& transferredItem, int& transferredCount);
+
     private:
         Misc::NotNullPtr<DragAndDrop> mDragAndDrop;
         Misc::NotNullPtr<ItemTransfer> mItemTransfer;

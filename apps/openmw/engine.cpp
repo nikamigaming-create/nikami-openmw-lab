@@ -145,8 +145,10 @@
 #include "mwinput/actions.hpp"
 
 #include "mwgui/inventorywindow.hpp"
+#include "mwgui/container.hpp"
 #include "mwgui/itemmodel.hpp"
 #include "mwgui/sortfilteritemmodel.hpp"
+#include "mwgui/tradewindow.hpp"
 #include "mwgui/windowmanagerimp.hpp"
 #include "mwgui/confirmationdialog.hpp"
 
@@ -5219,6 +5221,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool fnvR2ChetDoorPass = false;
     static bool fnvR2ChetDialoguePass = false;
     static bool fnvR2ChetBarterPass = false;
+    static bool fnvR2ChetContainerTransferPass = false;
+    static bool fnvR2ChetBarterCancelPass = false;
+    static ESM::RefId fnvR2ChetTransferredItem;
+    static int fnvR2ChetTransferredPlayerBefore = 0;
+    static int fnvR2ChetTransferredContainerBefore = 0;
+    static int fnvR2ChetPlayerItemsBeforeCancel = 0;
+    static int fnvR2ChetMerchantItemsBeforeCancel = 0;
+    static int fnvR2ChetPlayerCapsBeforeCancel = 0;
+    static int fnvR2ChetMerchantCapsBeforeCancel = 0;
     static MWWorld::Ptr fnvR2ChetActor;
     static int fnvInteractionPhase = 0;
     static unsigned int fnvInteractionPhaseFrame = 0;
@@ -12625,9 +12636,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // This is a player-facing R2 feature slice, not a synthetic barter harness. It takes the
     // authored Goodsprings General Store door, activates the placed Chet reference through the
     // regular world action path, and chooses the trade prompt through the live dialogue manager.
-    // No actor inventory/caps are manufactured or mutated here; R2.0 only observes Chet's actual
-    // merchant state once the authored ShowBarterMenu result has opened the production UI.
-    const bool fnvR2ChetRequested = proofEnvEnabled("OPENMW_FNV_R2_CHET_OBSERVATION");
+    // R2.0 observes Chet's actual merchant state. The opt-in R2.1 route additionally transfers
+    // one existing unlocked-container item through ContainerWindow's production ItemTransfer path,
+    // then uses TradeWindow's production cancellation path to prove no barter delta.
+    const bool fnvR2ChetPersistentRequested = proofEnvEnabled("OPENMW_FNV_R2_GOODSPRINGS_PERSISTENT");
+    const bool fnvR2ChetRequested = proofEnvEnabled("OPENMW_FNV_R2_CHET_OBSERVATION")
+        || fnvR2ChetPersistentRequested;
     if (fnvR2ChetRequested && fnvR2ChetPhase >= 0 && proofRunning && proofWorldReady && mWorld != nullptr
         && mWindowManager != nullptr && mDialogueManager != nullptr)
     {
@@ -12657,6 +12671,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             if (player.isEmpty() || player.getCell() == nullptr || player.getCell()->getCell() == nullptr)
                 return ESM::RefId();
             return player.getCell()->getCell()->getId();
+        };
+        const auto totalItemCount = [](const auto& inventory) {
+            int total = 0;
+            for (auto item = inventory.begin(); item != inventory.end(); ++item)
+                total += std::abs(item->mRef->mRef.getCount(false));
+            return total;
         };
         const auto activate = [&](const MWWorld::Ptr& target, std::string_view label) {
             if (target.isEmpty())
@@ -12690,6 +12710,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 << "\" door=" << (fnvR2ChetDoorPass ? 1 : 0)
                 << " dialogue=" << (fnvR2ChetDialoguePass ? 1 : 0)
                 << " barter=" << (fnvR2ChetBarterPass ? 1 : 0)
+                << " containerTransfer=" << (fnvR2ChetContainerTransferPass ? 1 : 0)
+                << " barterCancel=" << (fnvR2ChetBarterCancelPass ? 1 : 0)
                 << " cell=" << playerCellId().toDebugString() << " frame=" << frameNumber;
             fnvR2ChetPhase = -1;
             mStateManager->requestQuit();
@@ -12718,20 +12740,98 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             const ESM::RefId expectedInterior(ESM::FormId::fromUint32(0x11057f1));
             if (playerCellId() == expectedInterior && elapsed >= 180)
             {
-                fnvR2ChetActor = findActiveRef(0x1104c79);
-                if (fnvR2ChetActor.isEmpty())
-                    finish(false, "placed Chet reference is not active in Goodsprings General Store");
+                if (fnvR2ChetPersistentRequested)
+                {
+                    const MWWorld::Ptr cashRegister = findActiveRef(0x110580d);
+                    const bool unlocked = !cashRegister.isEmpty() && !cashRegister.getCellRef().isLocked();
+                    if (!unlocked || !activate(cashRegister, "goodsprings-general-store-unlocked-cash-register"))
+                        finish(false, "unlocked General Store cash register activation failed");
+                    else
+                    {
+                        capture("goodsprings-general-store-cash-register");
+                        advance(4);
+                    }
+                }
                 else
                 {
-                    capture("goodsprings-general-store-chet");
-                    if (!activate(fnvR2ChetActor, "chet-dialogue"))
-                        finish(false, "Chet activation returned a null action");
+                    fnvR2ChetActor = findActiveRef(0x1104c79);
+                    if (fnvR2ChetActor.isEmpty())
+                        finish(false, "placed Chet reference is not active in Goodsprings General Store");
                     else
-                        advance(2);
+                    {
+                        capture("goodsprings-general-store-chet");
+                        if (!activate(fnvR2ChetActor, "chet-dialogue"))
+                            finish(false, "Chet activation returned a null action");
+                        else
+                            advance(2);
+                    }
                 }
             }
             else if (elapsed > 900)
                 finish(false, "Goodsprings General Store interior did not become active");
+        }
+        else if (fnvR2ChetPersistentRequested && fnvR2ChetPhase == 4 && elapsed >= 30)
+        {
+            MWGui::ContainerWindow* const containerWindow = mWindowManager->getContainerWindow();
+            const MWWorld::Ptr cashRegister = findActiveRef(0x110580d);
+            if (!mWindowManager->containsMode(MWGui::GM_Container) || containerWindow == nullptr
+                || cashRegister.isEmpty())
+                finish(false, "General Store cash register container UI did not open");
+            else
+            {
+                MWWorld::Ptr transferredItem;
+                int transferredCount = 0;
+                MWWorld::InventoryStore& playerInventory
+                    = mWorld->getPlayerPtr().getClass().getInventoryStore(mWorld->getPlayerPtr());
+                MWWorld::ContainerStore& containerInventory
+                    = cashRegister.getClass().getContainerStore(cashRegister);
+                const bool transferred = containerWindow->transferFirstEligibleItem(transferredItem, transferredCount);
+                if (!transferred || transferredItem.isEmpty() || transferredCount != 1)
+                    finish(false, "cash register did not expose an eligible ordinary item");
+                else
+                {
+                    fnvR2ChetTransferredItem = transferredItem.getCellRef().getRefId();
+                    fnvR2ChetTransferredPlayerBefore = playerInventory.count(fnvR2ChetTransferredItem) - transferredCount;
+                    fnvR2ChetTransferredContainerBefore
+                        = containerInventory.count(fnvR2ChetTransferredItem) + transferredCount;
+                    Log(Debug::Info) << "FNV R2 Chet: container-transfer item=" << fnvR2ChetTransferredItem
+                                     << " count=" << transferredCount
+                                     << " playerBefore=" << fnvR2ChetTransferredPlayerBefore
+                                     << " containerBefore=" << fnvR2ChetTransferredContainerBefore;
+                    capture("goodsprings-general-store-container-transfer");
+                    advance(5);
+                }
+            }
+        }
+        else if (fnvR2ChetPersistentRequested && fnvR2ChetPhase == 5 && elapsed >= 30)
+        {
+            const MWWorld::Ptr cashRegister = findActiveRef(0x110580d);
+            MWWorld::InventoryStore& playerInventory
+                = mWorld->getPlayerPtr().getClass().getInventoryStore(mWorld->getPlayerPtr());
+            const int playerAfter = playerInventory.count(fnvR2ChetTransferredItem);
+            const int containerAfter = cashRegister.isEmpty() ? -1
+                : cashRegister.getClass().getContainerStore(cashRegister).count(fnvR2ChetTransferredItem);
+            fnvR2ChetContainerTransferPass = !fnvR2ChetTransferredItem.empty()
+                && playerAfter == fnvR2ChetTransferredPlayerBefore + 1
+                && containerAfter == fnvR2ChetTransferredContainerBefore - 1;
+            Log(fnvR2ChetContainerTransferPass ? Debug::Info : Debug::Error)
+                << "FNV R2 Chet: container-transfer-result item=" << fnvR2ChetTransferredItem
+                << " playerAfter=" << playerAfter << " containerAfter=" << containerAfter
+                << " result=" << (fnvR2ChetContainerTransferPass ? "pass" : "fail");
+            if (!fnvR2ChetContainerTransferPass)
+                finish(false, "ordinary cash-register transfer did not produce the expected inventory delta");
+            else
+            {
+                mWindowManager->removeGuiMode(MWGui::GM_Container);
+                fnvR2ChetActor = findActiveRef(0x1104c79);
+                if (fnvR2ChetActor.isEmpty() || !activate(fnvR2ChetActor, "chet-dialogue-after-container-transfer"))
+                    finish(false, "Chet activation after container transfer failed");
+                else
+                {
+                    capture("goodsprings-general-store-chet-after-container-transfer");
+                    advance(2);
+                }
+            }
         }
         else if (fnvR2ChetPhase == 2 && elapsed >= 8)
         {
@@ -12804,9 +12904,58 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 << " merchantStacks=" << merchantStacks << " merchantItems=" << merchantItems
                 << " result=" << (fnvR2ChetBarterPass ? "pass" : "fail");
             capture("goodsprings-chet-authored-barter");
-            finish(fnvR2ChetBarterPass, fnvR2ChetBarterPass
-                    ? "authored General Store door, Chet dialogue, and live barter inventory observed"
-                    : "authored barter did not expose Chet's live inventory");
+            if (!fnvR2ChetPersistentRequested)
+                finish(fnvR2ChetBarterPass, fnvR2ChetBarterPass
+                        ? "authored General Store door, Chet dialogue, and live barter inventory observed"
+                        : "authored barter did not expose Chet's live inventory");
+            else if (!fnvR2ChetBarterPass)
+                finish(false, "authored barter did not expose Chet's live inventory after container transfer");
+            else
+            {
+                MWWorld::InventoryStore& playerInventory
+                    = mWorld->getPlayerPtr().getClass().getInventoryStore(mWorld->getPlayerPtr());
+                MWWorld::ContainerStore& merchantInventory
+                    = fnvR2ChetActor.getClass().getContainerStore(fnvR2ChetActor);
+                const ESM::RefId caps = findEsm4EditorId<ESM4::MiscItem>(mWorld->getStore(), "Caps001");
+                fnvR2ChetPlayerItemsBeforeCancel = totalItemCount(playerInventory);
+                fnvR2ChetMerchantItemsBeforeCancel = totalItemCount(merchantInventory);
+                fnvR2ChetPlayerCapsBeforeCancel = playerInventory.count(caps);
+                fnvR2ChetMerchantCapsBeforeCancel = merchantInventory.count(caps);
+                MWGui::TradeWindow* const tradeWindow = mWindowManager->getTradeWindow();
+                if (tradeWindow == nullptr)
+                    finish(false, "production trade window was unavailable for cancellation");
+                else
+                {
+                    tradeWindow->cancelTrade();
+                    advance(6);
+                }
+            }
+        }
+        else if (fnvR2ChetPersistentRequested && fnvR2ChetPhase == 6 && elapsed >= 30)
+        {
+            MWWorld::InventoryStore& playerInventory
+                = mWorld->getPlayerPtr().getClass().getInventoryStore(mWorld->getPlayerPtr());
+            MWWorld::ContainerStore& merchantInventory
+                = fnvR2ChetActor.getClass().getContainerStore(fnvR2ChetActor);
+            const ESM::RefId caps = findEsm4EditorId<ESM4::MiscItem>(mWorld->getStore(), "Caps001");
+            const int playerItemsAfter = totalItemCount(playerInventory);
+            const int merchantItemsAfter = totalItemCount(merchantInventory);
+            const int playerCapsAfter = playerInventory.count(caps);
+            const int merchantCapsAfter = merchantInventory.count(caps);
+            fnvR2ChetBarterCancelPass = !mWindowManager->containsMode(MWGui::GM_Barter)
+                && playerItemsAfter == fnvR2ChetPlayerItemsBeforeCancel
+                && merchantItemsAfter == fnvR2ChetMerchantItemsBeforeCancel
+                && playerCapsAfter == fnvR2ChetPlayerCapsBeforeCancel
+                && merchantCapsAfter == fnvR2ChetMerchantCapsBeforeCancel;
+            Log(fnvR2ChetBarterCancelPass ? Debug::Info : Debug::Error)
+                << "FNV R2 Chet: barter-cancel playerItems=" << playerItemsAfter
+                << " merchantItems=" << merchantItemsAfter << " playerCaps=" << playerCapsAfter
+                << " merchantCaps=" << merchantCapsAfter
+                << " result=" << (fnvR2ChetBarterCancelPass ? "pass" : "fail");
+            capture("goodsprings-chet-barter-cancelled");
+            const bool pass = fnvR2ChetContainerTransferPass && fnvR2ChetBarterPass && fnvR2ChetBarterCancelPass;
+            finish(pass, pass ? "ordinary container transfer and no-delta authored barter cancellation complete"
+                              : "R2.1 transfer or barter-cancellation assertion failed");
         }
     }
 

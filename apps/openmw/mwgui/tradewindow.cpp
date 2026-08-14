@@ -529,6 +529,11 @@ namespace MWGui
         MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Barter);
     }
 
+    void TradeWindow::cancelTrade()
+    {
+        onCancelButtonClicked(mCancelButton);
+    }
+
     void TradeWindow::onMaxSaleButtonClicked(MyGUI::Widget* /*sender*/)
     {
         mCurrentBalance = getMerchantGold();

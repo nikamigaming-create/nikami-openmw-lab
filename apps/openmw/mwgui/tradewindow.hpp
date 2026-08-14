@@ -41,6 +41,9 @@ namespace MWGui
 
         void updateItemView();
 
+        /// Uses the production cancellation path, including returning borrowed trade stacks.
+        void cancelTrade();
+
         void itemAdded(const MWWorld::ConstPtr& item, int count) override;
         void itemRemoved(const MWWorld::ConstPtr& item, int count) override;
 
