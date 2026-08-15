@@ -4433,7 +4433,9 @@ namespace MWVR
                         && getHandEnvFloat(surface.left, "ANCHOR_PIPBOY", 0.f) != 0.f;
                     const bool mirrorLeftPipBoySocket = !surface.left && !anchorToPipBoy
                         && pipBoySocketTargetValid[0]
-                        && getHandEnvFloat(false, "MIRROR_LEFT_PIPBOY_SOCKET", 1.f) != 0.f;
+                        // A tracked right hand must use its own OpenXR wrist origin by default.  Mirroring a
+                        // Pip-Boy socket is an explicit calibration mode, not a normal hand placement.
+                        && getHandEnvFloat(false, "MIRROR_LEFT_PIPBOY_SOCKET", 0.f) != 0.f;
                     if (anchorToPipBoy)
                     {
                         targetCuffAnchor = pipBoySocketTargets[socketIndex];
