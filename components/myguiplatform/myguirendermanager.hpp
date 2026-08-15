@@ -148,6 +148,10 @@ namespace MyGUIPlatform
         /// in-world display consume a normal MyGUI window without resizing or
         /// mutating that window's persisted desktop layout.
         void setGUICameraContentRect(osg::Camera* camera, const MyGUI::IntCoord& rect);
+        /// Set the physical output resolution of a filtered GUI camera while
+        /// retaining its logical MyGUI content rectangle.  In-world displays
+        /// use this to downscale an authored desktop canvas into a texture.
+        void setGUICameraRenderTargetSize(osg::Camera* camera, int width, int height);
 //## VR_PATCH END
     };
 

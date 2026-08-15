@@ -4032,6 +4032,19 @@ namespace MWVR
             removeIndividualPart(ESM::PartReferenceType::PRT_RFoot);
             removeIndividualPart(ESM::PartReferenceType::PRT_LPauldron);
             removeIndividualPart(ESM::PartReferenceType::PRT_RPauldron);
+
+            // Fallout supplies its own staticized, controller-driven hand
+            // surfaces. Keeping OpenMW's generic VR hands as well produces
+            // two independent pairs of hands in the same view.
+            if (!mFalloutVrHandSurfaces.empty())
+            {
+                removeIndividualPart(ESM::PartReferenceType::PRT_LHand);
+                removeIndividualPart(ESM::PartReferenceType::PRT_LWrist);
+                removeIndividualPart(ESM::PartReferenceType::PRT_LForearm);
+                removeIndividualPart(ESM::PartReferenceType::PRT_RHand);
+                removeIndividualPart(ESM::PartReferenceType::PRT_RWrist);
+                removeIndividualPart(ESM::PartReferenceType::PRT_RForearm);
+            }
         }
         else if (mViewMode == VM_VRNormal)
         {
@@ -4417,7 +4430,7 @@ namespace MWVR
                     osg::Vec3f targetCuffAnchor(0.f, 0.f, 0.f);
                     const std::size_t socketIndex = surface.left ? 0 : 1;
                     const bool anchorToPipBoy = pipBoySocketTargetValid[socketIndex]
-                        && getHandEnvFloat(surface.left, "ANCHOR_PIPBOY", 1.f) != 0.f;
+                        && getHandEnvFloat(surface.left, "ANCHOR_PIPBOY", 0.f) != 0.f;
                     const bool mirrorLeftPipBoySocket = !surface.left && !anchorToPipBoy
                         && pipBoySocketTargetValid[0]
                         && getHandEnvFloat(false, "MIRROR_LEFT_PIPBOY_SOCKET", 1.f) != 0.f;

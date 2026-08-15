@@ -428,6 +428,12 @@ namespace MyGUIPlatform
             mContentRect = rect;
             mUpdate = true;
         }
+        void setRenderTargetSize(int width, int height)
+        {
+            mRenderTargetWidth = std::max(0, width);
+            mRenderTargetHeight = std::max(0, height);
+            mUpdate = true;
+        }
 
         void update();
 
@@ -437,6 +443,8 @@ namespace MyGUIPlatform
         bool mUpdate;
         std::string mFilter;
         MyGUI::IntCoord mContentRect;
+        int mRenderTargetWidth = 0;
+        int mRenderTargetHeight = 0;
         unsigned int mPipBoyScreenBatchTraceCount = 0;
     };
 
@@ -732,8 +740,10 @@ namespace MyGUIPlatform
     void GUICamera::setViewSize(MyGUI::IntSize viewSize)
     {
         const bool crop = mContentRect.width > 0 && mContentRect.height > 0;
-        setViewport(0, 0, crop ? mContentRect.width : viewSize.width,
-            crop ? mContentRect.height : viewSize.height);
+        const int outputWidth = mRenderTargetWidth > 0 ? mRenderTargetWidth : (crop ? mContentRect.width : viewSize.width);
+        const int outputHeight
+            = mRenderTargetHeight > 0 ? mRenderTargetHeight : (crop ? mContentRect.height : viewSize.height);
+        setViewport(0, 0, outputWidth, outputHeight);
         mInfo.maximumDepth = 1;
         const float logicalWidth = crop ? static_cast<float>(mContentRect.width) : static_cast<float>(viewSize.width);
         const float logicalHeight
@@ -750,8 +760,11 @@ namespace MyGUIPlatform
     {
         auto viewSize = mParent->getViewSize();
         auto viewport = getViewport();
-        const int targetWidth = mContentRect.width > 0 ? mContentRect.width : viewSize.width;
-        const int targetHeight = mContentRect.height > 0 ? mContentRect.height : viewSize.height;
+        const bool crop = mContentRect.width > 0 && mContentRect.height > 0;
+        const int targetWidth
+            = mRenderTargetWidth > 0 ? mRenderTargetWidth : (crop ? mContentRect.width : viewSize.width);
+        const int targetHeight
+            = mRenderTargetHeight > 0 ? mRenderTargetHeight : (crop ? mContentRect.height : viewSize.height);
         if (!viewport || viewport->width() != targetWidth || viewport->height() != targetHeight)
             setViewSize(viewSize);
     }
@@ -778,6 +791,15 @@ namespace MyGUIPlatform
         if (auto* guiCamera = dynamic_cast<GUICamera*>(camera))
         {
             guiCamera->setContentRect(rect);
+            guiCamera->setViewSize(mViewSize);
+        }
+    }
+
+    void RenderManager::setGUICameraRenderTargetSize(osg::Camera* camera, int width, int height)
+    {
+        if (auto* guiCamera = dynamic_cast<GUICamera*>(camera))
+        {
+            guiCamera->setRenderTargetSize(width, height);
             guiCamera->setViewSize(mViewSize);
         }
     }

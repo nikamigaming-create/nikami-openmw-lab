@@ -804,14 +804,20 @@ namespace MWRender
                 return false;
 
             const auto addWeaponSurface = [&](const ESM4::Weapon* weapon, std::string source) {
-                if (weapon == nullptr || weapon->mModel.empty())
+                if (weapon == nullptr)
+                    return false;
+                const std::string_view model
+                    = !weapon->mFirstPersonModel.empty() ? weapon->mFirstPersonModel : weapon->mModel;
+                if (model.empty())
                     return false;
                 surfaces.push_back(MWVR::VRAnimation::FalloutVrHandSurface{
-                    weapon->mModel, {}, std::move(source), false,
+                    std::string(model), {}, std::move(source), false,
                     MWVR::VRAnimation::FalloutVrHandSurface::Kind::Weapon });
                 Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly appended right-hand weapon source="
                                  << surfaces.back().source << " editor=" << weapon->mEditorId
-                                 << " model=" << weapon->mModel;
+                                 << " model=" << model
+                                 << " sourceModel="
+                                 << (!weapon->mFirstPersonModel.empty() ? "first-person" : "world-fallback");
                 return true;
             };
 
@@ -956,7 +962,6 @@ namespace MWRender
                     surfaces.push_back(std::move(*rightPipBoySurface));
                 }
             }
-            appendFalloutVrWeaponSurface(surfaces, player, "save-loaded-vr-player-ptr");
             return surfaces;
         }
 
@@ -2388,6 +2393,12 @@ namespace MWRender
             {
                 const MyGUI::IntCoord contentRect = retailWindowManager->getFalloutPipBoyRetailCanvas();
                 guiRenderer->setGUICameraContentRect(guiCamera, contentRect);
+                // Preserve the desktop-sized retail coordinate system for
+                // MyGUI, but rasterize it into the actual 512x512 Pip-Boy
+                // screen. Without this explicit output size GUICamera resets
+                // its viewport to the desktop canvas every frame and clips
+                // the live UI to the lower-left of the wrist texture.
+                guiRenderer->setGUICameraRenderTargetSize(guiCamera, 512, 512);
                 Log(Debug::Info) << "FNV Pip-Boy RTT retail XML content rect: pane=" << pane << " rect="
                                  << contentRect.left << ',' << contentRect.top << ',' << contentRect.width << ','
                                  << contentRect.height;
