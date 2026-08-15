@@ -4951,6 +4951,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool fnvPipBoyShowcaseWeaponPoseSampleValid = false;
     static int fnvPipBoyShowcaseWeaponPoseStableFrames = 0;
     static int fnvPipBoyShowcasePostFireRecoveryFrames = 0;
+    // The post-close rifle checkpoint must not be skipped merely because its
+    // reload/fire/return animation needs longer than an ordinary UI panel.
+    // Keep the state-local clock at its final frame until the production pose
+    // is ready, then resume the normal state schedule.
+    static int fnvPipBoyShowcaseDeferredFrames = 0;
     static osg::Matrix fnvPipBoyShowcaseWeaponPoseSample;
     static bool fnvGameplayStartPlacementApplied = false;
     static bool fnvGameplayStartPlacementPassed = false;
@@ -8480,7 +8485,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 << (fnvPipBoyShowcaseLoadoutPassed ? "pass" : "fail") << " fallbackItems=0";
         }
 
-        const int showcaseElapsed = proofWorldReadyFrames - fnvPipBoyShowcaseFirstReadyFrame;
+        const int rawShowcaseElapsed = proofWorldReadyFrames - fnvPipBoyShowcaseFirstReadyFrame;
+        const int showcaseElapsed = rawShowcaseElapsed - fnvPipBoyShowcaseDeferredFrames;
         if (showcaseElapsed >= 0)
         {
             const std::size_t showcaseStateIndex = static_cast<std::size_t>(
@@ -8795,6 +8801,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                          << " postFireRecoveryFrames=" << fnvPipBoyShowcasePostFireRecoveryFrames
                                          << " status=pending";
                     }
+                }
+                // A regular panel advances on a fixed cadence. The final
+                // weapon state is different: preserve it until its real
+                // reload/fire/weapon-pose sequence has returned to rest.
+                // This is a state-local pause, not a global slowdown.
+                if (state.mPane == -1 && paneElapsed == fnvPipBoyShowcaseFramesPerPane - 1
+                    && (!finalWeaponActionSettled || !finalWeaponPoseSettled))
+                {
+                    ++fnvPipBoyShowcaseDeferredFrames;
                 }
                 if (fnvPipBoyShowcaseCapturedPanes == showcaseStateIndex
                     && paneElapsed >= fnvPipBoyShowcaseCaptureDelayFrames && finalWeaponActionSettled
