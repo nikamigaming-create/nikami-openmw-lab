@@ -9,6 +9,7 @@
 
 #include <osg/MatrixTransform>
 #include <osg/Drawable>
+#include <osg/PositionAttitudeTransform>
 #include <osg/Texture2D>
 #include <osg/Vec4f>
 
@@ -103,6 +104,7 @@ namespace MWVR
         }
         bool setFalloutVrPipBoyScreenTexture(osg::Texture2D* screenTexture, osg::Texture2D* mapTexture,
             bool showMap, float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip);
+        void setFalloutVrPipBoyInteractionFocused(bool focused);
 
     protected:
 
@@ -118,6 +120,7 @@ namespace MWVR
         void clearFalloutVrHandSurfaces();
         void attachFalloutVrHandSurfaces();
         void updateFalloutVrHandSurfaceVisibility();
+        void updateFalloutVrPipBoyInteractionScale();
 
         void enableTracking(XrPath path);
         void disableTracking(XrPath path);
@@ -156,6 +159,16 @@ namespace MWVR
         std::vector<FalloutVrHandSurface> mFalloutVrHandSurfaces;
         std::vector<osg::ref_ptr<osg::Node>> mFalloutVrHandSurfaceNodes;
         std::vector<osg::ref_ptr<osg::Node>> mFalloutVrPipBoySurfaceNodes;
+        struct PipBoyInteractionScaleTarget
+        {
+            osg::ref_ptr<osg::PositionAttitudeTransform> transform;
+            osg::Vec3f basePosition;
+            osg::Vec3f baseScale;
+            osg::Vec3f socketModel;
+        };
+        std::vector<PipBoyInteractionScaleTarget> mFalloutVrPipBoyInteractionScaleTargets;
+        bool mFalloutVrPipBoyInteractionFocused = false;
+        float mFalloutVrPipBoyInteractionScale = 1.f;
         std::vector<osg::ref_ptr<osg::Drawable>> mFalloutVrPipBoyScreenDrawables;
         osg::ref_ptr<osg::Texture2D> mFalloutVrPipBoyScreenTexture;
         osg::ref_ptr<osg::Texture2D> mFalloutVrPipBoyMapTexture;

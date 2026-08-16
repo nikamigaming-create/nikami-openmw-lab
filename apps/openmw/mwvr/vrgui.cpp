@@ -1092,6 +1092,11 @@ namespace MWVR
         return mFocusLayer != nullptr;
     }
 
+    bool VRGUIManager::hasPipBoyFocus() const
+    {
+        return mFocusLayer != nullptr && isPipBoyDeviceLayer(mFocusLayer->mLayerName);
+    }
+
     void VRGUIManager::update(osg::NodeVisitor* nv)
     {
         FNVXRLiveFrameSurface::instance().update(nv);

@@ -4814,6 +4814,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         = std::getenv("OPENMW_FNV_GAMEPLAY_START_WORLDSPACE") != nullptr;
     static const bool fnvPipBoyShowcaseLoadoutEnabled
         = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE_LOADOUT");
+    // A fresh playable FNV session needs an authored starter inventory just as
+    // the retail opening eventually grants one. Keep this separate from the
+    // capture scheduler so a real headset launch can populate the ordinary
+    // InventoryStore without enabling any proof actions or timed input.
+    static const bool fnvStarterLoadoutEnabled = proofEnvEnabled("OPENMW_FNV_STARTER_LOADOUT");
     static const bool fnvPipBoyShowcaseQuitAfterCapture
         = proofEnvEnabled("OPENMW_FNV_PIPBOY_SHOWCASE_QUIT_AFTER_CAPTURE");
     // C04 is the real Save330 natural-map-selection gate.  It is deliberately
@@ -8473,7 +8478,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
     }
 
-    if (fnvPipBoyShowcaseLoadoutEnabled && !fnvPipBoyShowcaseLoadoutApplied && proofWorldReady
+    if ((fnvPipBoyShowcaseLoadoutEnabled || fnvStarterLoadoutEnabled)
+        && !fnvPipBoyShowcaseLoadoutApplied && proofWorldReady
         && mWorld != nullptr && mWindowManager != nullptr
         && (!fnvGameplayStartPlacementEnabled
             || (fnvGameplayStartPlacementApplied && fnvGameplayStartPlacementPassed)))
@@ -8481,7 +8487,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         fnvPipBoyShowcaseLoadoutPassed = applyFNVPipBoyShowcaseLoadout(*mWorld);
         fnvPipBoyShowcaseLoadoutApplied = true;
         Log(fnvPipBoyShowcaseLoadoutPassed ? Debug::Info : Debug::Error)
-            << "FNV Pip-Boy showcase: live authored-data preparation="
+            << "FNV Pip-Boy " << (fnvStarterLoadoutEnabled ? "starter" : "showcase")
+            << ": live authored-data preparation="
             << (fnvPipBoyShowcaseLoadoutPassed ? "pass" : "fail") << " fallbackItems=0";
     }
 

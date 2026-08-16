@@ -643,8 +643,7 @@ namespace MWGui
 //## VR_PATCH END
 
         const VFS::Manager* vfs = resourceSystem->getVFS();
-        const bool useFnvMissingGuiFallback = !VR::getVR()
-            && vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
+        const bool useFnvMissingGuiFallback = vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
             && !vfs->exists(VFS::Path::Normalized("textures/menu_thin_border_top.dds"));
         mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(useFnvMissingGuiFallback);
         if (useFnvMissingGuiFallback)

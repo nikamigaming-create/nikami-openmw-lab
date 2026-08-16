@@ -439,6 +439,12 @@ namespace MWVR
         }
         else
             mPointerActive = false;
+
+        if (MWVR::VRAnimation* const playerAnimation = MWVR::Util::getPlayerAnimation())
+        {
+            playerAnimation->setFalloutVrPipBoyInteractionFocused(
+                mPointerActive && MWVR::VRGUIManager::instance().hasPipBoyFocus());
+        }
     }
 
     void VRInputManager::updateDirectPointerClick()

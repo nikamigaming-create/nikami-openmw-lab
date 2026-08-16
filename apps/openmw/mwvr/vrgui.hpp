@@ -167,6 +167,9 @@ namespace MWVR
         /// True if user is currently pointing at something
         bool hasFocus() const;
 
+        /// True while the pointer ray is over the authored wrist Pip-Boy screen.
+        bool hasPipBoyFocus() const;
+
         /// Update traversal
         void update(osg::NodeVisitor* nv);
 

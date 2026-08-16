@@ -4143,6 +4143,8 @@ namespace MWVR
 
         mFalloutVrHandSurfaceNodes.clear();
         mFalloutVrPipBoySurfaceNodes.clear();
+        mFalloutVrPipBoyInteractionScaleTargets.clear();
+        mFalloutVrPipBoyInteractionScale = 1.f;
         mFalloutVrPipBoyScreenDrawables.clear();
         mFalloutVrRightWeaponSurfaceNodes.clear();
         mFalloutVrHandSurfacesAttached = false;
@@ -4842,6 +4844,36 @@ namespace MWVR
                             }
                         }
                     }
+                    const float pipBoyUniformScale
+                        = std::clamp(getPipBoyEnvFloat(surface.left, "SCALE", 1.f), 0.5f, 2.f);
+                    if (std::abs(pipBoyUniformScale - 1.f) > 0.0001f)
+                    {
+                        osg::ref_ptr<osg::Node> scaleTemplate
+                            = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
+                        const osg::BoundingBox pipBoyBounds = computeNodeBounds(*scaleTemplate);
+                        if (pipBoyBounds.valid())
+                        {
+                            osg::Vec3f socketModel(
+                                getPipBoyEnvFloat(surface.left, "SOCKET_MODEL_X", pipBoyBounds.xMax()),
+                                getPipBoyEnvFloat(surface.left, "SOCKET_MODEL_Y", pipBoyBounds.center().y()),
+                                getPipBoyEnvFloat(surface.left, "SOCKET_MODEL_Z", pipBoyBounds.center().z()));
+                            if (visualSocketMirror)
+                                socketModel = mirrorAroundPoint(
+                                    socketModel, visualSocketMirrorPivot, visualSocketMirrorScale);
+
+                            const osg::Vec3f oldScale = transform->getScale();
+                            const osg::Vec3f newScale = oldScale * pipBoyUniformScale;
+                            // Scale around the wrist socket, not the model origin.
+                            // That makes the display readable without detaching the
+                            // cuff from the tracked forearm.
+                            surfacePipBoyOffset += transform->getAttitude()
+                                * (scaleVec3(oldScale, socketModel) - scaleVec3(newScale, socketModel));
+                            transform->setScale(newScale);
+                            Log(Debug::Info) << "OpenMW VR Pip-Boy scale=" << pipBoyUniformScale
+                                             << " side=" << (surface.left ? "left" : "right")
+                                             << " wristSocketRetained=1";
+                        }
+                    }
                     osg::Vec3f pipBoyVisualOffset(0.f, 0.f, 0.f);
                     if (rightPipBoyCalibration)
                     {
@@ -4851,6 +4883,23 @@ namespace MWVR
                         surfacePipBoyOffset += pipBoyVisualOffset;
                     }
                     transform->setPosition(transform->getPosition() + surfacePipBoyOffset);
+                    {
+                        osg::ref_ptr<osg::Node> focusScaleTemplate
+                            = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
+                        const osg::BoundingBox pipBoyBounds = computeNodeBounds(*focusScaleTemplate);
+                        if (pipBoyBounds.valid())
+                        {
+                            osg::Vec3f socketModel(
+                                getPipBoyEnvFloat(surface.left, "SOCKET_MODEL_X", pipBoyBounds.xMax()),
+                                getPipBoyEnvFloat(surface.left, "SOCKET_MODEL_Y", pipBoyBounds.center().y()),
+                                getPipBoyEnvFloat(surface.left, "SOCKET_MODEL_Z", pipBoyBounds.center().z()));
+                            if (visualSocketMirror)
+                                socketModel = mirrorAroundPoint(
+                                    socketModel, visualSocketMirrorPivot, visualSocketMirrorScale);
+                            mFalloutVrPipBoyInteractionScaleTargets.push_back(
+                                { transform, transform->getPosition(), transform->getScale(), socketModel });
+                        }
+                    }
                     {
                         osg::ref_ptr<osg::Node> boundsTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
                         const osg::BoundingBox pipBoyBounds = computeNodeBounds(*boundsTemplate);
@@ -5049,9 +5098,44 @@ namespace MWVR
         attachFalloutVrHandSurfaces();
     }
 
+    void VRAnimation::setFalloutVrPipBoyInteractionFocused(bool focused)
+    {
+        if (mFalloutVrPipBoyInteractionFocused == focused)
+            return;
+
+        mFalloutVrPipBoyInteractionFocused = focused;
+        Log(Debug::Info) << "OpenMW VR Pip-Boy interaction zoom=" << (focused ? "engaged" : "released");
+    }
+
+    void VRAnimation::updateFalloutVrPipBoyInteractionScale()
+    {
+        if (mFalloutVrPipBoyInteractionScaleTargets.empty())
+            return;
+
+        const float focusScale = std::clamp(getEnvFloat("OPENMW_FNV_PIPBOY_FOCUS_SCALE", 1.35f), 1.f, 2.f);
+        const float targetScale = mFalloutVrPipBoyInteractionFocused ? focusScale : 1.f;
+        const float smoothing = std::clamp(getEnvFloat("OPENMW_FNV_PIPBOY_FOCUS_LERP", 0.2f), 0.01f, 1.f);
+        mFalloutVrPipBoyInteractionScale += (targetScale - mFalloutVrPipBoyInteractionScale) * smoothing;
+        if (std::abs(targetScale - mFalloutVrPipBoyInteractionScale) < 0.001f)
+            mFalloutVrPipBoyInteractionScale = targetScale;
+
+        for (const PipBoyInteractionScaleTarget& target : mFalloutVrPipBoyInteractionScaleTargets)
+        {
+            if (target.transform == nullptr)
+                continue;
+
+            const osg::Vec3f interactionScale = target.baseScale * mFalloutVrPipBoyInteractionScale;
+            target.transform->setScale(interactionScale);
+            target.transform->setPosition(target.basePosition + target.transform->getAttitude()
+                * (scaleVec3(target.baseScale, target.socketModel)
+                    - scaleVec3(interactionScale, target.socketModel)));
+        }
+    }
+
     void VRAnimation::updateCrosshairs()
     {
         updateFalloutVrHandSurfaceVisibility();
+        updateFalloutVrPipBoyInteractionScale();
         updateVrDebugSnapshotControls();
 
         if (!mCrosshairsEnabled)
