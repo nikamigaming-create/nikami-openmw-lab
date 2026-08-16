@@ -66,7 +66,7 @@ namespace MWVR
         const static std::set<std ::string> resizableWindowLayers = { "InventoryCompanionWindow", "DialogueWindow",
             "InventoryWindow", "StatsWindow", "MapWindow", "SpellWindow" };
 
-        static std::set<std::string> defaultPickableLayers = { "HUD_3D", "InventoryCompanionWindow", "InventoryWindow",
+        static std::set<std::string> defaultPickableLayers = { "HUD_3D", "PipBoyScreen", "InventoryCompanionWindow", "InventoryWindow",
             "SpellWindow", "MapWindow", "StatsWindow", "DialogueWindow", "ServiceWindow", "JournalBooks", "Debug",
             "MainMenuBackground", "MainMenu", "Settings", "Console", "RadialMenu", "LoadingScreenBackground", "LoadingScreen", "Modal",
                   "ListBox", "Popup", "Video", "InputBlocker", "VideoPlayer", "VirtualKeyboard", "Windows" };
@@ -80,6 +80,11 @@ namespace MWVR
         bool isFalloutHudLayer(const std::string& layerName)
         {
             return layerName == "HUD_3D";
+        }
+
+        bool isPipBoyDeviceLayer(const std::string& layerName)
+        {
+            return layerName == "PipBoyScreen";
         }
 
         int falloutInventoryPanelIndex(const std::string& layerName)
@@ -760,6 +765,11 @@ namespace MWVR
 
     void VRGUILayer::removeFromSceneGraph()
     {
+        // RenderingManager owns the only RTT for this layer and binds it to the
+        // real NIF screen.  VRGUILayer remains a focus/coordinate adapter only;
+        // adding its usual world quad would create a second floating Pip-Boy.
+        if (isPipBoyDeviceLayer(mLayerName))
+            return;
         mCameraRoot->removeChild(mGUIRTT);
         if (mVrLayer)
             VR::Viewer::instance().removeLayer(mVrLayer);
@@ -769,6 +779,8 @@ namespace MWVR
 
     void VRGUILayer::addToSceneGraph()
     {
+        if (isPipBoyDeviceLayer(mLayerName))
+            return;
         mCameraRoot->addChild(mGUIRTT);
         if (mVrLayer)
             VR::Viewer::instance().insertLayer(mVrLayer);
@@ -877,8 +889,10 @@ namespace MWVR
         LayerConfig messageBoxConfig = createDefaultConfig(false, true);
         LayerConfig listBoxConfig = createDefaultConfig(true);
         LayerConfig consoleConfig = createDefaultConfig(true);
+        LayerConfig pipBoyScreenConfig = createDefaultConfig(false, true);
         mDefaultLayerConfigs = {
             { "DefaultConfig", defaultConfig },
+            { "PipBoyScreen", pipBoyScreenConfig },
             { "Modal", messageBoxConfig },
             { "Windows", defaultWindowsConfig }, { "ListBox", listBoxConfig }, { "MainMenu", mainMenuConfig },
             { "Settings", settingsConfig },
@@ -1022,6 +1036,57 @@ namespace MWVR
         }
     }
 
+    bool VRGUIManager::updatePipBoyFocus(const osg::Vec2f& rawTexCoord)
+    {
+        if (FNVXRLiveFrameSurface::instance().visible())
+            return false;
+
+        VRGUILayer* const layer = getLayer("PipBoyScreen");
+        if (layer == nullptr || layer->widgetCount() == 0 || !layer->mConfig)
+            return false;
+
+        // PipBoyArm.nif stores the live display in this audited atlas island.
+        // Convert the ray's barycentric texture coordinate through the same
+        // normalization used by the screen shader, then into MyGUI pixels.
+        const osg::Vec2f atlasMin(-0.0104533f, 0.237521f);
+        const osg::Vec2f atlasSize(0.7633793f, 0.76051f);
+        osg::Vec2f screenUv((rawTexCoord.x() - atlasMin.x()) / atlasSize.x(),
+            (rawTexCoord.y() - atlasMin.y()) / atlasSize.y());
+        constexpr float edgeTolerance = 0.01f;
+        if (screenUv.x() < -edgeTolerance || screenUv.x() > 1.f + edgeTolerance
+            || screenUv.y() < -edgeTolerance || screenUv.y() > 1.f + edgeTolerance)
+        {
+            return false;
+        }
+        screenUv.x() = std::clamp(screenUv.x(), 0.f, 1.f);
+        screenUv.y() = std::clamp(screenUv.y(), 0.f, 1.f);
+
+        layer->updateRect();
+        if (layer->mRect.width() <= 0 || layer->mRect.height() <= 0)
+            return false;
+
+        setFocusLayer(layer);
+        mGuiCursor.x() = layer->mRect.left
+            + static_cast<int>(std::lround(screenUv.x() * static_cast<float>(layer->mRect.width() - 1)));
+        // MyGUI is top-left/y-down; the model atlas is bottom-left/y-up.
+        mGuiCursor.y() = layer->mRect.top
+            + static_cast<int>(std::lround((1.f - screenUv.y()) * static_cast<float>(layer->mRect.height() - 1)));
+        static osg::Vec2f sLastLoggedPipBoyUv(-10.f, -10.f);
+        static int sPipBoyFocusLogCount = 0;
+        if (sPipBoyFocusLogCount < 12 && (screenUv - sLastLoggedPipBoyUv).length2() > 0.0025f)
+        {
+            ++sPipBoyFocusLogCount;
+            sLastLoggedPipBoyUv = screenUv;
+            Log(Debug::Verbose) << "OpenMW VR Pip-Boy focus rawUv=(" << rawTexCoord.x() << ',' << rawTexCoord.y()
+                                << ") screenUv=(" << screenUv.x() << ',' << screenUv.y() << ") cursor=("
+                                << mGuiCursor.x() << ',' << mGuiCursor.y() << ") rect=(" << layer->mRect.left << ','
+                                << layer->mRect.top << ',' << layer->mRect.width() << ',' << layer->mRect.height() << ')';
+        }
+        MWBase::Environment::get().getWindowManager()->setCursorActive(true);
+        MyGUI::InputManager::getInstance().injectMouseMove(mGuiCursor.x(), mGuiCursor.y(), 0);
+        return true;
+    }
+
     bool VRGUIManager::hasFocus() const
     {
         return mFocusLayer != nullptr;
@@ -1065,6 +1130,12 @@ namespace MWVR
     bool VRGUIManager::injectMouseClick()
     {
         // TODO: This relies on a MyGUI internal functions and may break un any future version.
+        if (mFocusLayer && mFocusLayer->mLayerName == "PipBoyScreen")
+        {
+            MWBase::Environment::get().getWindowManager()->handleFalloutPipBoyPointerClick(
+                mGuiCursor.x(), mGuiCursor.y());
+            return true;
+        }
         if (mFocusLayer && isFalloutInventoryPanelLayer(mFocusLayer->mLayerName)
             && MWBase::Environment::get().getWindowManager()->getMode() == MWGui::GM_Inventory)
         {
@@ -1287,7 +1358,7 @@ namespace MWVR
         // Keep MyGUI's own lifetime-aware focus tracking current before a same-frame controller click.
         // Inventory widgets can be rebuilt while the panel remains open, so never retain their raw pointers.
         if (mFocusLayer
-            && (mFocusLayer->mLayerName == "VirtualKeyboard"
+            && (mFocusLayer->mLayerName == "VirtualKeyboard" || isPipBoyDeviceLayer(mFocusLayer->mLayerName)
                 || isFalloutInventoryPanelLayer(mFocusLayer->mLayerName)))
             MyGUI::InputManager::getInstance().injectMouseMove((int)x, (int)y, 0);
     }

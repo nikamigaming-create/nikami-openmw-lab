@@ -1869,6 +1869,14 @@ namespace MWRender
 
             void apply(osg::Drawable& drawable) override
             {
+                if (isPipBoyScreenGlowOwner(drawable))
+                {
+                    // ScreenLit is a coincident authored power/glow layer. It
+                    // completely covers the live RTT in the always-on VR path;
+                    // the live terminal program supplies its own unlit phosphor.
+                    drawable.setNodeMask(0);
+                    return;
+                }
                 const osg::StateSet* screenState = isPipBoyScreenOwner(drawable)
                     ? drawable.getStateSet() : mInheritedPipBoyScreenState;
                 const bool ownsOrInheritsScreen = screenState != nullptr;
@@ -1908,13 +1916,17 @@ namespace MWRender
             template <class StateOwner>
             static bool isPipBoyScreenOwner(const StateOwner& owner)
             {
-                // PipBoyArm.nif has two nearly coincident Screen.dds surfaces.
-                // Retail/xNVSE evidence identifies pipboyscreen as the live
-                // display; ScreenLit is the authored lighting layer and must
-                // retain its original material.
                 std::string name = owner.getName();
                 Misc::StringUtils::lowerCaseInPlace(name);
                 return name.starts_with("pipboyscreen") && isPipBoyScreen(owner.getStateSet());
+            }
+
+            template <class StateOwner>
+            static bool isPipBoyScreenGlowOwner(const StateOwner& owner)
+            {
+                std::string name = owner.getName();
+                Misc::StringUtils::lowerCaseInPlace(name);
+                return name.starts_with("screenlit") && isPipBoyScreen(owner.getStateSet());
             }
 
             static void auditPipBoyScreenUv(osg::Geometry* geometry, std::string_view phase, bool screenOwner)
@@ -2038,10 +2050,13 @@ namespace MWRender
                         void main()
                         {
                             vec4 source = texture2D(pipBoyTerminalMap, pipBoyTerminalUv);
-                            // Convert RGB luminance, not alpha, so the opaque
-                            // black window background remains black glass.
-                            float sourceLuma = dot(source.rgb, vec3(0.299, 0.587, 0.114));
-                            float glyph = smoothstep(0.08, 0.75, sourceLuma);
+                            // MyGUI has already produced the final Pip-Boy pane,
+                            // including its dark CRT field, green labels, white
+                            // selection marks and artwork. Preserve those pixels
+                            // exactly; re-thresholding here destroys fine text
+                            // when the wrist display is minified in VR.
+                            vec3 displayColor = source.rgb;
+                            float mapGlyph = 0.0;
                             // MAP is an actual FNV world-map texture or OpenMW's
                             // live LocalMap render target. It is cropped, panned,
                             // and zoomed directly on the authored Pip-Boy glass.
@@ -2080,13 +2095,12 @@ namespace MWRender
                                         // Preserve the source texture's terrain contrast.  The
                                         // former 0.004..0.16 range saturated virtually every
                                         // texel in both maps and produced a solid green slab.
-                                        float mapGlyph = smoothstep(0.08, 0.75, mapSignal);
-                                        glyph = max(glyph, mapGlyph * 0.95);
+                                        mapGlyph = max(mapGlyph, smoothstep(0.08, 0.75, mapSignal));
                                     }
                                 }
                             }
-                            vec3 phosphor = vec3(0.03, 1.0, 0.20) * glyph;
-                            gl_FragColor = vec4(phosphor, 1.0);
+                            displayColor = max(displayColor, vec3(0.03, 1.0, 0.20) * mapGlyph * 0.95);
+                            gl_FragColor = vec4(displayColor, 1.0);
                         }
                     )glsl"));
                     return result;
@@ -2113,7 +2127,13 @@ namespace MWRender
                 bool showMap, float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip,
                 float screenAspect)
             {
-                constexpr auto flags = osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE;
+                // VR hands are attached beneath a shader-recreated first-person
+                // surface root. That parent carries OVERRIDE state, so a plain
+                // child OVERRIDE cannot replace its program or diffuse map and
+                // the authored green Screen.dds leaks through. PROTECTED is the
+                // OSG escape hatch for this intentionally isolated live screen.
+                constexpr auto flags = osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE
+                    | osg::StateAttribute::PROTECTED;
                 stateSet.setTextureAttributeAndModes(0, texture, flags);
                 if (mapTexture != nullptr)
                     stateSet.setTextureAttributeAndModes(1, mapTexture, flags);
@@ -9158,13 +9178,16 @@ namespace MWRender
 
     bool ESM4NpcAnimation::bindPipBoyScreenTexture(osg::Node& pipBoyArm, osg::Texture2D* screenTexture,
         osg::Texture2D* mapTexture, bool showMap, float mapZoom, float mapPanX, float mapPanY,
-        const osg::Vec4f& mapClip)
+        const osg::Vec4f& mapClip, std::vector<osg::ref_ptr<osg::Drawable>>* boundDrawables)
     {
         if (screenTexture == nullptr)
             return false;
         PipBoyScreenTextureVisitor visitor(
             screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip);
         pipBoyArm.accept(visitor);
+        if (boundDrawables != nullptr)
+            boundDrawables->insert(boundDrawables->end(), visitor.getBoundDrawables().begin(),
+                visitor.getBoundDrawables().end());
         return !visitor.getBoundStateSets().empty();
     }
 

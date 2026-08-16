@@ -8,6 +8,7 @@
 #include <components/vr/space.hpp>
 
 #include <osg/MatrixTransform>
+#include <osg/Drawable>
 #include <osg/Texture2D>
 #include <osg/Vec4f>
 
@@ -91,6 +92,15 @@ namespace MWVR
 
         void setFalloutVrHandSurfaces(std::vector<FalloutVrHandSurface> surfaces);
         bool hasFalloutVrPipBoySurface() const { return !mFalloutVrPipBoySurfaceNodes.empty(); }
+        osg::Node* getFalloutVrPipBoySurfaceRoot() const
+        {
+            return mFalloutVrPipBoySurfaceNodes.empty() ? nullptr : mFalloutVrPipBoySurfaceNodes.front().get();
+        }
+        osg::Matrix getTrackingSpaceWorldMatrix() const;
+        const std::vector<osg::ref_ptr<osg::Drawable>>& getFalloutVrPipBoyScreenDrawables() const
+        {
+            return mFalloutVrPipBoyScreenDrawables;
+        }
         bool setFalloutVrPipBoyScreenTexture(osg::Texture2D* screenTexture, osg::Texture2D* mapTexture,
             bool showMap, float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip);
 
@@ -146,6 +156,16 @@ namespace MWVR
         std::vector<FalloutVrHandSurface> mFalloutVrHandSurfaces;
         std::vector<osg::ref_ptr<osg::Node>> mFalloutVrHandSurfaceNodes;
         std::vector<osg::ref_ptr<osg::Node>> mFalloutVrPipBoySurfaceNodes;
+        std::vector<osg::ref_ptr<osg::Drawable>> mFalloutVrPipBoyScreenDrawables;
+        osg::ref_ptr<osg::Texture2D> mFalloutVrPipBoyScreenTexture;
+        osg::ref_ptr<osg::Texture2D> mFalloutVrPipBoyMapTexture;
+        bool mFalloutVrPipBoyShowMap = false;
+        float mFalloutVrPipBoyMapZoom = 1.f;
+        float mFalloutVrPipBoyMapPanX = 0.f;
+        float mFalloutVrPipBoyMapPanY = 0.f;
+        osg::Vec4f mFalloutVrPipBoyMapClip = osg::Vec4f(0.f, 0.f, 1.f, 1.f);
+        std::vector<osg::ref_ptr<osg::Node>> mFalloutVrRightWeaponSurfaceNodes;
+        bool mRightPointerEnabled = false;
         float mCharHeight = 120.f;
         Stereo::Pose mHeadPoseInLocalSpace;
         Stereo::Pose mCharLocalSpacePose;

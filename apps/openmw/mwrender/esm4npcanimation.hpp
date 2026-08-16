@@ -75,7 +75,8 @@ namespace MWRender
         static bool bindPipBoyScreenTexture(osg::Node& pipBoyArm, osg::Texture2D* screenTexture,
             osg::Texture2D* mapTexture = nullptr, bool showMap = false, float mapZoom = 1.f,
             float mapPanX = 0.f, float mapPanY = 0.f,
-            const osg::Vec4f& mapClip = osg::Vec4f(0.f, 0.f, 1.f, 1.f));
+            const osg::Vec4f& mapClip = osg::Vec4f(0.f, 0.f, 1.f, 1.f),
+            std::vector<osg::ref_ptr<osg::Drawable>>* boundDrawables = nullptr);
         void setPipBoyPresentationProgress(float progress, bool interactionPoseActive);
         void setPipBoyInteractionProgress(float progress);
         void setPipBoyControlState(int pane, int submenu, int listOffset, bool worldMap, float mapZoom,

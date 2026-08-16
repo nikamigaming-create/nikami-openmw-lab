@@ -20,8 +20,10 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -137,6 +139,8 @@ namespace MWRender
         osg::Vec3f mHitNormalWorld;
         osg::Vec3f mHitPointWorld;
         osg::Vec3f mHitPointLocal;
+        osg::Vec2f mHitTexCoord;
+        bool mHitTexCoordValid = false;
         MWWorld::Ptr mHitObject;
         osg::Node* mHitNode;
         std::vector<std::string> mHitNodePath;
@@ -216,6 +220,16 @@ namespace MWRender
 //## VR_PATCH BEGIN
         RayResult castRay(const osg::Vec3f& origin, const osg::Vec3f& dest, bool ignorePlayer,
             bool ignoreActors = false, uint32_t ignoreMask = MWRender::Mask_3DGUI, std::span<const MWWorld::Ptr> ignoreList = {});
+
+        /// Cast through intervening first-person geometry and return the nearest
+        /// intersection whose node path contains the requested name prefix.
+        RayResult castRayToNodePathPrefix(const osg::Vec3f& origin, const osg::Vec3f& dest,
+            std::string_view requiredNodePrefix, bool ignorePlayer, bool ignoreActors = false,
+            uint32_t ignoreMask = MWRender::Mask_3DGUI);
+
+        /// Resolve the current world-space center of a named drawable. This is
+        /// used to calibrate rays against small tracked first-person surfaces.
+        std::optional<osg::Vec3f> findDrawableWorldCenterByPrefix(std::string_view requiredDrawablePrefix);
 
         /// Return the object under the mouse cursor / crosshair position, given by nX and nY normalized screen
         /// coordinates, where (0,0) is the top left corner.

@@ -451,6 +451,7 @@ namespace MWBase
         virtual void setFalloutPipBoyPresentation(bool physical) = 0;
         virtual bool isFalloutPipBoyPhysicalPresentation() const = 0;
         virtual int getFalloutPipBoyActivePane() const = 0;
+        virtual bool handleFalloutPipBoyPointerClick(int x, int y) = 0;
         /// Text fed to the actual PipBoyArm screen material.  This is kept
         /// separate from the OpenMW desktop inventory presentation so the
         /// physical device can own its terminal layout and live player data.

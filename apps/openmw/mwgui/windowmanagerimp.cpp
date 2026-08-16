@@ -1152,6 +1152,7 @@ namespace MWGui
         mFalloutPipBoyRetailRoot->setCoord(canvasX, canvasY, canvasWidth, canvasHeight);
         MyGUI::LayerManager::getInstance().attachToLayerNode("PipBoyScreen", mFalloutPipBoyRetailRoot);
         mFalloutPipBoyRetailRoot->setVisible(false);
+        mFalloutPipBoyRetailRoot->setNeedMouseFocus(false);
         MyGUI::ImageBox* background = nullptr;
         MyGUI::Widget* textContainer = nullptr;
         MyGUI::Widget* unusedMessage = nullptr;
@@ -1160,6 +1161,10 @@ namespace MWGui
         mFalloutPipBoyRetailLayout->getWidget(textContainer, "buttons");
         unusedMessage->setVisible(false);
         background->setVisible(false);
+        // The base layout's full-canvas content widget is only a parent for
+        // the retail tiles.  If it accepts mouse focus it masks every live
+        // inventory row beneath it from the VR ray pointer.
+        textContainer->setNeedMouseFocus(false);
 
         const auto scaled = [scale](float value) { return static_cast<int>(std::lround(value * scale)); };
         const auto configureText = [&](MyGUI::TextBox* text, const MyGUI::IntCoord& coord, int fontHeight) {
@@ -1390,7 +1395,10 @@ namespace MWGui
         {
             MyGUI::Widget* row = list->createWidget<MyGUI::Widget>(MyGUI::WidgetStyle::Child, std::string{},
                 MyGUI::IntCoord(rowX, index * rowHeight, rowWidth, rowHeight), MyGUI::Align::Default);
-            row->setNeedMouseFocus(false);
+            row->setNeedMouseFocus(true);
+            row->setUserData(-1);
+            row->eventMouseButtonClick
+                += MyGUI::newDelegate(this, &WindowManager::onFalloutPipBoyRetailItemClicked);
             MyGUI::ImageBox* marker = row->createWidget<MyGUI::ImageBox>(MyGUI::WidgetStyle::Child, "ImageBox",
                 MyGUI::IntCoord(markerX, markerY, markerWidth, markerHeight), MyGUI::Align::Default);
             if (const FnvMenuXmlNode* filename = rowMarkerTemplate->findChild("filename");
@@ -1430,6 +1438,9 @@ namespace MWGui
         configureText(mFalloutPipBoyRetailTabs, mFalloutPipBoyRetailTabs->getCoord(), 31);
         mFalloutPipBoyRetailTabs->setDepth(0);
         mFalloutPipBoyRetailTabs->setTextAlign(MyGUI::Align::HCenter | MyGUI::Align::Top);
+        mFalloutPipBoyRetailTabs->setNeedMouseFocus(true);
+        mFalloutPipBoyRetailTabs->eventMouseButtonClick
+            += MyGUI::newDelegate(this, &WindowManager::onFalloutPipBoyRetailCategoryClicked);
         mFalloutPipBoyRetailActions = buttons->createWidget<MyGUI::TextBox>(MyGUI::WidgetStyle::Child,
             "NormalText", MyGUI::IntCoord(scaled(-430.f), scaled(350.f), scaled(430.f), scaled(160.f)),
             MyGUI::Align::Default);
@@ -1530,6 +1541,7 @@ namespace MWGui
         mFalloutPipBoyRetailStatsRoot->setCoord(canvasX, canvasY, canvasWidth, canvasHeight);
         MyGUI::LayerManager::getInstance().attachToLayerNode("PipBoyScreen", mFalloutPipBoyRetailStatsRoot);
         mFalloutPipBoyRetailStatsRoot->setVisible(false);
+        mFalloutPipBoyRetailStatsRoot->setNeedMouseFocus(false);
         MyGUI::ImageBox* background = nullptr;
         MyGUI::Widget* content = nullptr;
         MyGUI::Widget* unusedMessage = nullptr;
@@ -1538,6 +1550,7 @@ namespace MWGui
         mFalloutPipBoyRetailStatsLayout->getWidget(unusedMessage, "message");
         background->setVisible(false);
         unusedMessage->setVisible(false);
+        content->setNeedMouseFocus(false);
 
         const auto addText = [&](MyGUI::Widget* parent, const MyGUI::IntCoord& coord, std::string_view caption,
                                  int font = 31, MyGUI::Align align = MyGUI::Align::Left | MyGUI::Align::Top) {
@@ -1719,6 +1732,7 @@ namespace MWGui
         mFalloutPipBoyRetailMapRoot->setCoord(canvasX, canvasY, canvasWidth, canvasHeight);
         MyGUI::LayerManager::getInstance().attachToLayerNode("PipBoyScreen", mFalloutPipBoyRetailMapRoot);
         mFalloutPipBoyRetailMapRoot->setVisible(false);
+        mFalloutPipBoyRetailMapRoot->setNeedMouseFocus(false);
         MyGUI::ImageBox* background = nullptr;
         MyGUI::Widget* content = nullptr;
         MyGUI::Widget* unusedMessage = nullptr;
@@ -1727,6 +1741,7 @@ namespace MWGui
         mFalloutPipBoyRetailMapLayout->getWidget(unusedMessage, "message");
         background->setVisible(false);
         unusedMessage->setVisible(false);
+        content->setNeedMouseFocus(false);
         const auto addLine = [&](int x, int y, int lineWidth, int lineHeight = 2) {
             MyGUI::Widget* line = content->createWidget<MyGUI::Widget>(MyGUI::WidgetStyle::Child, "WhiteBox",
                 MyGUI::IntCoord(scaled(static_cast<float>(x)), scaled(static_cast<float>(y)),
@@ -1760,6 +1775,9 @@ namespace MWGui
         mFalloutPipBoyRetailMapTabs = addText(MyGUI::IntCoord(scaled(static_cast<int>(*tabX)), scaled(static_cast<int>(*tabY)),
                     scaled(static_cast<int>(*tabWidth)), scaled(50)),
             "LOCAL MAP     [WORLD MAP]     QUESTS     MISC     RADIO", MyGUI::Align::HCenter | MyGUI::Align::Top);
+        mFalloutPipBoyRetailMapTabs->setNeedMouseFocus(true);
+        mFalloutPipBoyRetailMapTabs->eventMouseButtonClick
+            += MyGUI::newDelegate(this, &WindowManager::onFalloutPipBoyRetailMapTabClicked);
 
         const std::optional<float> questsX = required("MM_QuestsList", "x");
         const std::optional<float> questsY = required("MM_QuestsList", "y");
@@ -1907,7 +1925,13 @@ namespace MWGui
         if (!mMap)
             return; // UI not created yet
 
-        const bool gameplayOverlayVisible = mHudEnabled && !loading && !mLegacyHudSuppressed;
+        const bool falloutContent = isFalloutContentLoaded();
+        // FNV VR presents its gameplay interface on the physical Pip-Boy.  The
+        // generic HUD_3D layer is otherwise attached to the same wrist and can
+        // cover that model with an unrelated green/pink panel.
+        const bool physicalFalloutVrInterface = falloutContent && VR::getVR();
+        const bool gameplayOverlayVisible
+            = mHudEnabled && !loading && !mLegacyHudSuppressed && !physicalFalloutVrInterface;
         mHud->setVisible(gameplayOverlayVisible);
         mToolTips->setVisible(mHudEnabled && !loading);
 
@@ -1925,11 +1949,8 @@ namespace MWGui
         if (gameMode)
             setKeyFocusWidget(nullptr);
 
-        const bool falloutContent = isFalloutContentLoaded();
-
-        // Fallout's modal inventory/map live on the Pip-Boy surface, but the
-        // ordinary gameplay HUD must remain visible while no GUI owns the
-        // screen. Hiding these here reduced native FNV gameplay to a crosshair.
+        // Fallout's modal inventory/map live on the Pip-Boy surface.  Flat FNV
+        // retains the ordinary HUD, while FNV VR uses only the physical device.
         if (falloutContent)
         {
             const bool falloutGameplayHudVisible = gameplayOverlayVisible && gameMode;
@@ -1945,6 +1966,17 @@ namespace MWGui
                 Log(Debug::Info) << "FNV visual assertion: gameplay HUD visible="
                                  << falloutGameplayHudVisible << " hp=1 ap=1 compass=1 weapon=1";
                 loggedFalloutGameplayHudVisible = falloutGameplayHudVisible;
+            }
+
+            if (physicalFalloutVrInterface)
+            {
+                static bool loggedPhysicalFalloutVrInterface = false;
+                if (!loggedPhysicalFalloutVrInterface)
+                {
+                    Log(Debug::Info)
+                        << "FNV VR: generic wrist HUD suppressed; physical Pip-Boy is the sole wrist interface";
+                    loggedPhysicalFalloutVrInterface = true;
+                }
             }
         }
         else
@@ -2342,7 +2374,8 @@ namespace MWGui
             return;
 
         GuiMode mode = mGuiModes.back();
-        const bool falloutPipBoyPhysical = isFalloutContentLoaded() && mFalloutPipBoyPhysical && mode == GM_Inventory;
+        const bool falloutPipBoyPhysical = isFalloutContentLoaded() && mode == GM_Inventory
+            && (mFalloutPipBoyPhysical || VR::getVR());
         if (!Settings::gui().mControllerMenus && !falloutPipBoyPhysical)
             return;
 
@@ -2387,7 +2420,8 @@ namespace MWGui
 
     void WindowManager::setActiveControllerWindow(GuiMode mode, int activeIndex)
     {
-        const bool falloutPipBoyPhysical = isFalloutContentLoaded() && mFalloutPipBoyPhysical && mode == GM_Inventory;
+        const bool falloutPipBoyPhysical = isFalloutContentLoaded() && mode == GM_Inventory
+            && (mFalloutPipBoyPhysical || VR::getVR());
         if (!Settings::gui().mControllerMenus && !falloutPipBoyPhysical)
             return;
 
@@ -2456,9 +2490,115 @@ namespace MWGui
         return found == mActiveControllerWindows.end() ? 3 : std::clamp(found->second, 0, 3);
     }
 
+    bool WindowManager::handleFalloutPipBoyPointerClick(int x, int y)
+    {
+        if (!isFalloutContentLoaded() || !VR::getVR())
+            return false;
+
+        const MyGUI::IntPoint point(x, y);
+        const auto hit = [&point](const MyGUI::Widget* widget) {
+            return widget != nullptr && widget->getVisible() && widget->getInheritedVisible()
+                && widget->getAbsoluteCoord().inside(point);
+        };
+
+        const int pane = getFalloutPipBoyActivePane();
+        if (pane == 1)
+        {
+            for (std::size_t index = 0; index < mFalloutPipBoyRetailItemRows.size(); ++index)
+            {
+                MyGUI::Widget* const row = mFalloutPipBoyRetailItemRows[index];
+                if (!hit(row))
+                    continue;
+                Log(Debug::Info) << "FNV Pip-Boy pointer: control=inventory-row visibleRow=" << index
+                                 << " cursor=(" << x << ',' << y << ')';
+                row->_riseMouseButtonClick();
+                return true;
+            }
+            if (hit(mFalloutPipBoyRetailTabs))
+            {
+                mFalloutPipBoyRetailTabs->_riseMouseButtonClick();
+                return true;
+            }
+        }
+        else if ((pane == 0 || pane == 2) && hit(mFalloutPipBoyRetailMapTabs))
+        {
+            mFalloutPipBoyRetailMapTabs->_riseMouseButtonClick();
+            return true;
+        }
+
+        // A click on inert Pip-Boy glass is consumed here so it cannot fall
+        // through to the currently selected controller-menu action.
+        return false;
+    }
+
+    void WindowManager::onFalloutPipBoyRetailItemClicked(MyGUI::Widget* sender)
+    {
+        if (sender == nullptr || (!VR::getVR() && (!mFalloutPipBoyPhysical || !containsMode(GM_Inventory)))
+            || getFalloutPipBoyActivePane() != 1)
+            return;
+        const int* const inventoryIndex = sender->getUserData<int>();
+        if (inventoryIndex == nullptr || *inventoryIndex < 0)
+            return;
+
+        mFalloutPipBoyListOffset = *inventoryIndex;
+        // A ray click on a visible row is the device's EQUIP/USE action, not
+        // a synthetic desktop inventory click.
+        handleFalloutPipBoyAction(MWInput::A_Activate);
+    }
+
+    void WindowManager::onFalloutPipBoyRetailCategoryClicked(MyGUI::Widget* sender)
+    {
+        if (sender == nullptr || (!VR::getVR() && (!mFalloutPipBoyPhysical || !containsMode(GM_Inventory)))
+            || getFalloutPipBoyActivePane() != 1)
+            return;
+        const MyGUI::IntCoord rect = sender->getAbsoluteCoord();
+        const MyGUI::IntPoint mouse = MyGUI::InputManager::getInstance().getMousePosition();
+        constexpr int categoryCount = 5;
+        const int category = std::clamp(
+            (mouse.left - rect.left) * categoryCount / std::max(1, rect.width), 0, categoryCount - 1);
+        mFalloutPipBoySubmenu = category;
+        mFalloutPipBoyListOffset = 0;
+        if (mInventoryWindow != nullptr)
+            mInventoryWindow->setFalloutPipBoyCategory(category);
+        mFalloutPipBoyInteractionPulse = 1.f;
+        updateFalloutPipBoyTerminalSurface();
+        Log(Debug::Info) << "FNV Pip-Boy pointer: control=inventory-category value=" << category;
+    }
+
+    void WindowManager::onFalloutPipBoyRetailMapTabClicked(MyGUI::Widget* sender)
+    {
+        if (sender == nullptr || (!VR::getVR() && (!mFalloutPipBoyPhysical || !containsMode(GM_Inventory))))
+            return;
+        const MyGUI::IntCoord rect = sender->getAbsoluteCoord();
+        const MyGUI::IntPoint mouse = MyGUI::InputManager::getInstance().getMousePosition();
+        constexpr int tabCount = 5;
+        const int tab
+            = std::clamp((mouse.left - rect.left) * tabCount / std::max(1, rect.width), 0, tabCount - 1);
+        if (tab <= 1)
+        {
+            setActiveControllerWindow(GM_Inventory, 0);
+            mFalloutPipBoyWorldMap = tab == 1;
+            mFalloutPipBoySubmenu = mFalloutPipBoyWorldMap ? 1 : 0;
+            mFalloutPipBoyMapZoom = 1.f;
+            mFalloutPipBoyMapPanX = 0.f;
+            mFalloutPipBoyMapPanY = 0.f;
+        }
+        else
+        {
+            setActiveControllerWindow(GM_Inventory, 2);
+            mFalloutPipBoySubmenu = tab - 2;
+            mFalloutPipBoyListOffset = 0;
+        }
+        mFalloutPipBoyInteractionPulse = 1.f;
+        updateFalloutPipBoyTerminalSurface();
+        Log(Debug::Info) << "FNV Pip-Boy pointer: control=map-data-tab value=" << tab
+                         << " pane=" << getFalloutPipBoyActivePane();
+    }
+
     bool WindowManager::handleFalloutPipBoyAction(int action)
     {
-        if (!isFalloutContentLoaded() || !mFalloutPipBoyPhysical || !containsMode(GM_Inventory))
+        if (!isFalloutContentLoaded()
+            || (!VR::getVR() && (!mFalloutPipBoyPhysical || !containsMode(GM_Inventory))))
             return false;
 
         int pane = getFalloutPipBoyActivePane();
@@ -2663,7 +2803,16 @@ namespace MWGui
 
     void WindowManager::updateFalloutPipBoyTerminalSurface()
     {
-        const bool visible = !VR::getVR() && mFalloutPipBoyPhysical && containsMode(GM_Inventory);
+        // The authored PipBoyScreen layer is the source for both flat and VR
+        // device textures.  Excluding VR here left the physical model bound to
+        // its blank green idle material while a separate generic panel carried
+        // the live inventory.
+        const bool interactive = (VR::getVR() && isFalloutContentLoaded())
+            || (mFalloutPipBoyPhysical && containsMode(GM_Inventory));
+        // A worn VR Pip-Boy is powered equipment, not a menu-spawned prop.
+        // Keep the last live pane on its screen between interactions; raising
+        // it only changes input ownership and weapon visibility.
+        const bool visible = interactive || (VR::getVR() && isFalloutContentLoaded());
         auto& windows = mGuiModeStates[GM_Inventory].mWindows;
         if (windows.empty())
             return;
@@ -2704,12 +2853,12 @@ namespace MWGui
             widget->setVisible(renderOnDevice);
         }
 
-        if (mFalloutPipBoyRetailRoot != nullptr)
-            mFalloutPipBoyRetailRoot->setVisible(useRetailInventory);
-        if (mFalloutPipBoyRetailStatsRoot != nullptr)
-            mFalloutPipBoyRetailStatsRoot->setVisible(useRetailStats);
-        if (mFalloutPipBoyRetailMapRoot != nullptr)
-            mFalloutPipBoyRetailMapRoot->setVisible(useRetailMap);
+        if (mFalloutPipBoyRetailLayout != nullptr)
+            mFalloutPipBoyRetailLayout->setVisible(useRetailInventory);
+        if (mFalloutPipBoyRetailStatsLayout != nullptr)
+            mFalloutPipBoyRetailStatsLayout->setVisible(useRetailStats);
+        if (mFalloutPipBoyRetailMapLayout != nullptr)
+            mFalloutPipBoyRetailMapLayout->setVisible(useRetailMap);
         if (!visible)
             return;
 
@@ -2816,6 +2965,7 @@ namespace MWGui
                 const int inventoryIndex = firstIndex + static_cast<int>(index);
                 const bool hasItem = inventoryIndex < static_cast<int>(categoryRows.size());
                 mFalloutPipBoyRetailItemRows[index]->setVisible(hasItem);
+                mFalloutPipBoyRetailItemRows[index]->setUserData(hasItem ? inventoryIndex : -1);
                 if (!hasItem)
                     continue;
                 const MWWorld::Ptr& item = categoryRows[static_cast<std::size_t>(inventoryIndex)];

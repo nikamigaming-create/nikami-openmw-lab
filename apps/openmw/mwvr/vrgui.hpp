@@ -160,6 +160,10 @@ namespace MWVR
         /// Check current pointer target and update focus layer
         void updateFocus(osg::Node* focusNode, osg::Vec3f hitPoint);
 
+        /// Focus the MyGUI surface rendered onto the authored Pip-Boy screen mesh.
+        /// rawTexCoord is the mesh's original atlas coordinate from the ray hit.
+        bool updatePipBoyFocus(const osg::Vec2f& rawTexCoord);
+
         /// True if user is currently pointing at something
         bool hasFocus() const;
 

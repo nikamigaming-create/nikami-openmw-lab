@@ -3921,6 +3921,7 @@ namespace
         const MWWorld::ESMStore& store = world.getStore();
         const bool pistolAdded = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNV9mmPistol", 1);
         const bool rifleAdded = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNVVarmintRifle", 1);
+        const bool knifeAdded = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapKnife", 1);
         const bool ammo9mmAdded = addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo9mm", 60);
         const bool ammo556Added = addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo556mm", 60);
         const bool stimpakAdded = addFNVEditorItem<ESM4::Potion>(inventory, store, "Stimpak", 5);
@@ -3939,13 +3940,14 @@ namespace
             = ammo9mmAdded && equipFNVEditorItem<ESM4::Ammunition>(player, inventory, store, "Ammo9mm");
         player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
 
-        const bool authoredItemsPresent = pistolAdded && rifleAdded && ammo9mmAdded && ammo556Added && stimpakAdded
-            && lockpickAdded && capsAdded && outfitAdded && headgearAdded;
+        const bool authoredItemsPresent = pistolAdded && rifleAdded && knifeAdded && ammo9mmAdded && ammo556Added
+            && stimpakAdded && lockpickAdded && capsAdded && outfitAdded && headgearAdded;
         const bool presentationEquipped
             = outfitEquipped && headgearEquipped && weaponEquipped && ammunitionEquipped;
         Log(authoredItemsPresent && presentationEquipped ? Debug::Info : Debug::Error)
             << "FNV Pip-Boy showcase: authored loadout source=FalloutNV.esm fallbackItems=0 "
             << "items={WeapNV9mmPistol:" << pistolAdded << ",WeapNVVarmintRifle:" << rifleAdded
+            << ",WeapKnife:" << knifeAdded
             << ",Ammo9mm:" << ammo9mmAdded << ",Ammo556mm:" << ammo556Added << ",Stimpak:" << stimpakAdded
             << ",Lockpick:" << lockpickAdded << ",Caps001:" << capsAdded << ",VaultSuit21:" << outfitAdded
             << ",CowboyHat02:" << headgearAdded << "} equipped={outfit:" << outfitEquipped
@@ -8469,6 +8471,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 }
             }
         }
+    }
+
+    if (fnvPipBoyShowcaseLoadoutEnabled && !fnvPipBoyShowcaseLoadoutApplied && proofWorldReady
+        && mWorld != nullptr && mWindowManager != nullptr
+        && (!fnvGameplayStartPlacementEnabled
+            || (fnvGameplayStartPlacementApplied && fnvGameplayStartPlacementPassed)))
+    {
+        fnvPipBoyShowcaseLoadoutPassed = applyFNVPipBoyShowcaseLoadout(*mWorld);
+        fnvPipBoyShowcaseLoadoutApplied = true;
+        Log(fnvPipBoyShowcaseLoadoutPassed ? Debug::Info : Debug::Error)
+            << "FNV Pip-Boy showcase: live authored-data preparation="
+            << (fnvPipBoyShowcaseLoadoutPassed ? "pass" : "fail") << " fallbackItems=0";
     }
 
     if (fnvPipBoyShowcaseEnabled && proofWorldReady && mWorld != nullptr && mWindowManager != nullptr

@@ -3,6 +3,9 @@
 #include "vrgui.hpp"
 #include "vrutil.hpp"
 
+#include <algorithm>
+#include <cctype>
+
 #include <osg/BlendFunc>
 #include <osg/Drawable>
 #include <osg/Fog>
@@ -46,6 +49,34 @@
 
 namespace MWVR
 {
+    namespace
+    {
+        bool isPipBoyScreenHit(const MWRender::RayResult& ray)
+        {
+            return std::any_of(ray.mHitNodePath.begin(), ray.mHitNodePath.end(), [](const std::string& name) {
+                std::string lowered = name;
+                std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+                return lowered.starts_with("pipboyscreen");
+            });
+        }
+
+        bool isFalloutVrWorld()
+        {
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+            for (std::string file : world->getContentFiles())
+            {
+                std::transform(file.begin(), file.end(), file.begin(),
+                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+                if (file.ends_with("falloutnv.esm"))
+                    return true;
+            }
+            return false;
+        }
+    }
+
     /**
      * Makes it possible to use ItemModel::moveItem to move an item from an inventory to the world.
      */
@@ -213,11 +244,56 @@ namespace MWVR
     void UserPointer::update()
     {
         auto pose = Util::getNodePose(mSpaceTransform);
-        const bool guiMode = MWBase::Environment::get().getWindowManager()->isGuiMode();
-        unsigned int ignoreMask = MWRender::Mask_3DGUI_NonIntersectable | MWRender::Mask_FirstPerson;
+        MWBase::WindowManager* const windowManager = MWBase::Environment::get().getWindowManager();
+        const bool guiMode = windowManager->isGuiMode();
+        unsigned int ignoreMask = MWRender::Mask_3DGUI_NonIntersectable;
+        ignoreMask |= MWRender::Mask_FirstPerson;
         if (guiMode || MWVR::FNVXRLiveFrameSurface::instance().modalInputActive())
             ignoreMask |= MWRender::Mask_Scene;
-        mDistanceToPointerTarget = Util::getPoseTarget(mPointerRay, pose, true, ignoreMask);
+
+        bool hitWornPipBoy = false;
+        if (!guiMode && isFalloutVrWorld())
+        {
+            MWRender::RayResult wornRay;
+            // The worn Pip-Boy stays live during gameplay, so isGuiMode() is
+            // intentionally false here.  Do not inherit the short world-use
+            // ray from getPoseTarget(): the controller aim origin sits at the
+            // opposite hand and can be farther away than that limit.  Match
+            // the established OpenMW VR menu-pointer reach while restricting
+            // this first-person pass to the worn surface.
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            const osg::Vec3f origin = pose.position.asMWUnits();
+            osg::Vec3f direction = pose.orientation * osg::Vec3f(0.f, 1.f, 0.f);
+            direction.normalize();
+            const std::optional<osg::Vec3f> screenCenter
+                = world->getRenderingManager()->findDrawableWorldCenterByPrefix("pipboyscreen");
+            static unsigned int rayTelemetryFrame = 0;
+            if (screenCenter && (++rayTelemetryFrame % 30u) == 1u)
+            {
+                osg::Vec3f targetDirection = *screenCenter - origin;
+                const float targetDistance = targetDirection.normalize();
+                Log(Debug::Info) << "FNV Pip-Boy ray telemetry: origin=(" << origin.x() << ',' << origin.y() << ','
+                                 << origin.z() << ") direction=(" << direction.x() << ',' << direction.y() << ','
+                                 << direction.z() << ") screenCenter=(" << screenCenter->x() << ','
+                                 << screenCenter->y() << ',' << screenCenter->z() << ") targetDirection=("
+                                 << targetDirection.x() << ',' << targetDirection.y() << ',' << targetDirection.z()
+                                 << ") targetDistance=" << targetDistance << " alignment="
+                                 << (direction * targetDirection);
+            }
+            const float maxDistance = world->getMaxActivationDistance() * 50.f;
+            wornRay = world->getRenderingManager()->castRayToNodePathPrefix(origin,
+                origin + direction * maxDistance, "pipboyscreen", false, false,
+                0u);
+            const float wornDistance = wornRay.mHit ? wornRay.mRatio * maxDistance : 0.f;
+            if (wornRay.mHit && isPipBoyScreenHit(wornRay))
+            {
+                mPointerRay = std::move(wornRay);
+                mDistanceToPointerTarget = wornDistance;
+                hitWornPipBoy = true;
+            }
+        }
+        if (!hitWornPipBoy)
+            mDistanceToPointerTarget = Util::getPoseTarget(mPointerRay, pose, true, ignoreMask);
         // Make a ref-counted copy of the target node to ensure the object's lifetime this frame.
         mPointerTarget = mPointerRay.mHitNode;
 
@@ -237,6 +313,12 @@ namespace MWVR
             if (MWVR::FNVXRLiveFrameSurface::instance().updateFocus(mPointerRay.mHitNode, mPointerRay.mHitPointLocal)
                 || MWVR::FNVXRLiveFrameSurface::instance().modalInputActive())
                 MWVR::VRGUIManager::instance().updateFocus(nullptr, osg::Vec3(0, 0, 0));
+            else if (isPipBoyScreenHit(mPointerRay) && mPointerRay.mHitTexCoordValid
+                && MWVR::VRGUIManager::instance().updatePipBoyFocus(mPointerRay.mHitTexCoord))
+            {
+                // The same OpenMW ray/click path now targets the UI texture on
+                // the authored wrist mesh; no surrogate GUI quad is involved.
+            }
             else
                 MWVR::VRGUIManager::instance().updateFocus(mPointerRay.mHitNode, mPointerRay.mHitPointLocal);
         }

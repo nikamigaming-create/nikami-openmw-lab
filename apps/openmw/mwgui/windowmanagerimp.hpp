@@ -429,6 +429,7 @@ namespace MWGui
         void setFalloutPipBoyPresentation(bool physical) override;
         bool isFalloutPipBoyPhysicalPresentation() const override { return mFalloutPipBoyPhysical; }
         int getFalloutPipBoyActivePane() const override;
+        bool handleFalloutPipBoyPointerClick(int x, int y) override;
         bool handleFalloutPipBoyAction(int action);
         int getFalloutPipBoySubmenu() const { return mFalloutPipBoySubmenu; }
         int getFalloutPipBoyListOffset() const { return mFalloutPipBoyListOffset; }
@@ -661,6 +662,9 @@ namespace MWGui
         void initializeFalloutPipBoyRetailStats(int width, int height);
         void initializeFalloutPipBoyRetailMap(int width, int height);
         void updateFalloutPipBoyTerminalSurface();
+        void onFalloutPipBoyRetailItemClicked(MyGUI::Widget* sender);
+        void onFalloutPipBoyRetailCategoryClicked(MyGUI::Widget* sender);
+        void onFalloutPipBoyRetailMapTabClicked(MyGUI::Widget* sender);
 
         void updateMap();
 

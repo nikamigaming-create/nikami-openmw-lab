@@ -18,6 +18,7 @@
 #include <osg/Camera>
 #include <osg/ComputeBoundsVisitor>
 #include <osg/Fog>
+#include <osg/Geode>
 #include <osg/Group>
 #include <osg/Image>
 #include <osg/Light>
@@ -58,6 +59,7 @@
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/lightmanager.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/rtt.hpp>
 #include <components/sceneutil/shadow.hpp>
 #include <components/sceneutil/statesetupdater.hpp>
@@ -2300,7 +2302,8 @@ namespace MWRender
         MWBase::WindowManager* const windowManager = MWBase::Environment::tryGetWindowManager();
         const bool physicalRequested = windowManager != nullptr && windowManager->containsMode(MWGui::GM_Inventory)
             && windowManager->isFalloutPipBoyPhysicalPresentation();
-        const bool cameraFirstPerson = mCamera->getMode() == Camera::Mode::FirstPerson;
+        const bool cameraFirstPerson = mCamera->getMode() == Camera::Mode::FirstPerson
+            || (VR::getVR() && mCamera->getMode() == Camera::Mode::VR);
         const bool hasFirstPersonAnimation = mFalloutPlayerFirstPersonAnimation != nullptr;
         const bool hasWristPresentation
             = hasFirstPersonAnimation && mFalloutPlayerFirstPersonAnimation->hasPipBoyPresentation();
@@ -2310,6 +2313,12 @@ namespace MWRender
         const bool physical = physicalRequested && cameraFirstPerson
             && ((VR::getVR() && hasVrWristPresentation)
                 || (!VR::getVR() && hasFirstPersonAnimation && hasWristPresentation));
+        // In VR the Pip-Boy is worn equipment, so its phosphor display remains
+        // powered even when the interaction pose is closed. "physical" only
+        // controls menu ownership/weapon suppression; "display" owns the RTT.
+        const bool passiveVrDisplay
+            = windowManager != nullptr && VR::getVR() && cameraFirstPerson && hasVrWristPresentation;
+        const bool display = physical || passiveVrDisplay;
         if (physicalRequested && !physical && !mFalloutPipBoyPhysicalBlockedLogged)
         {
             Log(Debug::Error) << "FNV Pip-Boy physical: presentation=blocked vr=" << VR::getVR()
@@ -2332,15 +2341,19 @@ namespace MWRender
                 mFalloutPipBoyPresentationProgress, physical);
 
         MyGUIPlatform::RenderManager* const guiRenderer = MyGUIPlatform::RenderManager::getInstancePtr();
+        if (guiRenderer != nullptr)
+        {
+            guiRenderer->setSuppressedGuiLayers(display
+                    ? std::set<std::string>{ "PipBoyScreen" }
+                    : std::set<std::string>{});
+            // Only the raised menu owns the whole frame. The passive wrist RTT
+            // filters its own layer without blanking gameplay GUI rendering.
+            guiRenderer->setSuppressUnfilteredGui(physical);
+        }
         if (!physical)
         {
             if (mFalloutPlayerFirstPersonAnimation)
                 mFalloutPlayerFirstPersonAnimation->setPipBoyInteractionProgress(0.f);
-            if (guiRenderer != nullptr)
-            {
-                guiRenderer->setSuppressedGuiLayers({});
-                guiRenderer->setSuppressUnfilteredGui(false);
-            }
             // Once the wrist is mostly clear of the camera the newly selected
             // weapon must become visible; this is the live confirmation for a
             // Pip-Boy equip rather than a terminal-only selection.
@@ -2351,7 +2364,10 @@ namespace MWRender
                     = player.getClass().getCreatureStats(player).getDrawState() == MWMechanics::DrawState::Weapon;
                 mFalloutPlayerFirstPersonAnimation->showWeapons(weaponDrawn);
             }
-            if (mFalloutPipBoyGuiRtt != nullptr && mFalloutPipBoyPresentationProgress <= 0.01f)
+        }
+        if (!display)
+        {
+            if (mFalloutPipBoyGuiRtt != nullptr)
             {
                 mSceneRoot->removeChild(mFalloutPipBoyGuiRtt);
                 mFalloutPipBoyGuiRtt = nullptr;
@@ -2363,7 +2379,7 @@ namespace MWRender
             return;
         }
 
-        if (mFalloutPlayerFirstPersonAnimation)
+        if (physical && mFalloutPlayerFirstPersonAnimation)
             mFalloutPlayerFirstPersonAnimation->showWeapons(false);
         const int pane = windowManager->getFalloutPipBoyActivePane();
         const std::string panel = getFalloutPipBoyPanelName(pane);
@@ -2371,11 +2387,6 @@ namespace MWRender
         // The mesh, UVs, and screen material remain owned by the loaded NIF;
         // this bridge only supplies the current runtime-backed GUI texture.
         static constexpr std::string_view guiLayer = "PipBoyScreen";
-        if (guiRenderer != nullptr)
-        {
-            guiRenderer->setSuppressedGuiLayers({ std::string(guiLayer) });
-            guiRenderer->setSuppressUnfilteredGui(true);
-        }
         if (mFalloutPipBoyGuiRtt == nullptr || mFalloutPipBoyGuiLayer != guiLayer
             || mFalloutPipBoyGuiPane != pane)
         {
@@ -2605,7 +2616,8 @@ namespace MWRender
     }
 
     RayResult getIntersectionResult(osgUtil::LineSegmentIntersector* intersector,
-        const osg::ref_ptr<osgUtil::IntersectionVisitor>& visitor, std::span<const MWWorld::Ptr> ignoreList = {})
+        const osg::ref_ptr<osgUtil::IntersectionVisitor>& visitor, std::span<const MWWorld::Ptr> ignoreList = {},
+        std::string_view requiredNodePrefix = {})
     {
 //## VR_PATCH BEGIN
 // VR needs the actual node hit, because the 3dgui does not exist as an object in the world.
@@ -2614,21 +2626,54 @@ namespace MWRender
         result.mHit = false;
         result.mRatio = 0;
         result.mHitNode = nullptr;
+        result.mHitTexCoordValid = false;
 
         if (!intersector->containsIntersections())
             return result;
 
         auto test = [&](const osgUtil::LineSegmentIntersector::Intersection& intersection) {
 //## VR_PATCH END
+            if (!requiredNodePrefix.empty())
+            {
+                const auto nameMatchesRequiredPrefix = [&](std::string name) {
+                    Misc::StringUtils::lowerCaseInPlace(name);
+                    return name.starts_with(requiredNodePrefix);
+                };
+                const bool drawableMatches = intersection.drawable != nullptr
+                    && nameMatchesRequiredPrefix(intersection.drawable->getName());
+                const bool requiredNodePresent = drawableMatches
+                    || std::any_of(intersection.nodePath.begin(), intersection.nodePath.end(), [&](const osg::Node* node) {
+                          if (node == nullptr || node->getName().empty())
+                              return false;
+                          return nameMatchesRequiredPrefix(node->getName());
+                      });
+                if (!requiredNodePresent)
+                    return;
+            }
+
             PtrHolder* ptrHolder = nullptr;
             std::vector<RefnumMarker*> refnumMarkers;
             bool hitNonObjectWorld = false;
+            bool hitPipBoyScreen = false;
+            if (intersection.drawable != nullptr && !intersection.drawable->getName().empty())
+            {
+                std::string drawableName = intersection.drawable->getName();
+                Misc::StringUtils::lowerCaseInPlace(drawableName);
+                hitPipBoyScreen = drawableName.starts_with("pipboyscreen");
+            }
             for (osg::NodePath::const_iterator it = intersection.nodePath.begin(); it != intersection.nodePath.end();
                  ++it)
             {
                 const auto& nodeMask = (*it)->getNodeMask();
                 if (!hitNonObjectWorld)
                     hitNonObjectWorld = nodeMask & nonObjectWorldMask;
+
+                if (!hitPipBoyScreen && !(*it)->getName().empty())
+                {
+                    std::string nodeName = (*it)->getName();
+                    Misc::StringUtils::lowerCaseInPlace(nodeName);
+                    hitPipBoyScreen = nodeName.starts_with("pipboyscreen");
+                }
 
                 osg::UserDataContainer* userDataContainer = (*it)->getUserDataContainer();
                 if (!userDataContainer)
@@ -2675,7 +2720,7 @@ namespace MWRender
                 vertexCounter += refnumMarkers[i]->mNumVertices;
             }
 
-            if (!result.mHitObject.isEmpty() || result.mHitRefnum.isSet() || hitNonObjectWorld)
+            if (!result.mHitObject.isEmpty() || result.mHitRefnum.isSet() || hitNonObjectWorld || hitPipBoyScreen)
             {
                 result.mHit = true;
                 result.mHitNode = intersection.nodePath.empty() ? nullptr : intersection.nodePath.back();
@@ -2686,14 +2731,22 @@ namespace MWRender
                     if (node != nullptr && !node->getName().empty())
                         result.mHitNodePath.push_back(node->getName());
                 }
+                if (intersection.drawable != nullptr && !intersection.drawable->getName().empty())
+                    result.mHitNodePath.push_back(intersection.drawable->getName());
                 result.mHitPointWorld = intersection.getWorldIntersectPoint();
                 result.mHitNormalWorld = intersection.getWorldIntersectNormal();
                 result.mHitPointLocal = intersection.getLocalIntersectPoint();
+                osg::Vec3f texCoord;
+                if (intersection.getTextureLookUp(texCoord) != nullptr)
+                {
+                    result.mHitTexCoord.set(texCoord.x(), texCoord.y());
+                    result.mHitTexCoordValid = true;
+                }
                 result.mRatio = intersection.ratio;
             }
         };
 
-        if (ignoreList.empty() || intersector->getIntersectionLimit() != osgUtil::LineSegmentIntersector::NO_LIMIT)
+        if (intersector->getIntersectionLimit() != osgUtil::LineSegmentIntersector::NO_LIMIT)
         {
             test(intersector->getFirstIntersection());
         }
@@ -2808,6 +2861,279 @@ namespace MWRender
         mRootNode->accept(*getIntersectionVisitor(intersector, ignorePlayer, ignoreActors, ignoreMask, ignoreList));
 
         return getIntersectionResult(intersector, mIntersectionVisitor, ignoreList);
+    }
+
+    RayResult RenderingManager::castRayToNodePathPrefix(const osg::Vec3f& origin, const osg::Vec3f& dest,
+        std::string_view requiredNodePrefix, bool ignorePlayer, bool ignoreActors, uint32_t ignoreMask)
+    {
+        std::string normalizedPrefix(requiredNodePrefix);
+        Misc::StringUtils::lowerCaseInPlace(normalizedPrefix);
+
+        osg::Node* traversalRoot = mViewer->getSceneData() != nullptr ? mViewer->getSceneData() : mRootNode.get();
+        osg::Vec3f traversalOrigin = origin;
+        osg::Vec3f traversalDest = dest;
+        osg::Matrix parentToWorld = osg::Matrix::identity();
+        bool playerLocalTraversal = false;
+        MWVR::VRAnimation* const vrAnimation = dynamic_cast<MWVR::VRAnimation*>(mPlayerAnimation.get());
+        osg::Node* const pipBoyRoot = vrAnimation != nullptr ? vrAnimation->getFalloutVrPipBoySurfaceRoot() : nullptr;
+        if (normalizedPrefix == "pipboyscreen" && pipBoyRoot != nullptr)
+        {
+            traversalRoot = pipBoyRoot;
+            // The live screen binder already resolves the exact skinned drawable.
+            // Start intersection at its owning node: the direct tracked-hand clone
+            // uses custom scene nodes that a generic traversal from the asset root
+            // does not descend into during the gameplay update pass.
+            if (vrAnimation != nullptr)
+            {
+                for (const osg::ref_ptr<osg::Drawable>& drawable
+                    : vrAnimation->getFalloutVrPipBoyScreenDrawables())
+                {
+                    if (drawable != nullptr && drawable->getNumParents() > 0 && drawable->getParent(0) != nullptr)
+                    {
+                        traversalRoot = drawable->getParent(0);
+                        break;
+                    }
+                }
+            }
+            osg::NodePathList paths = traversalRoot->getParentalNodePaths();
+            if (!paths.empty())
+            {
+                osg::NodePath parentPath = paths.front();
+                if (!parentPath.empty() && parentPath.back() == traversalRoot)
+                    parentPath.pop_back();
+                parentToWorld = osg::computeLocalToWorld(parentPath);
+                const bool pathContainsPipBoyRoot
+                    = std::find(parentPath.begin(), parentPath.end(), pipBoyRoot) != parentPath.end();
+                if (!pathContainsPipBoyRoot)
+                {
+                    const osg::NodePathList rootPaths = pipBoyRoot->getParentalNodePaths();
+                    if (!rootPaths.empty())
+                        parentToWorld.postMult(osg::computeLocalToWorld(rootPaths.front()));
+                }
+                const osg::Matrix worldToParent = osg::Matrix::inverse(parentToWorld);
+                traversalOrigin = origin * worldToParent;
+                traversalDest = dest * worldToParent;
+                playerLocalTraversal = true;
+            }
+        }
+
+        osg::ref_ptr<osgUtil::LineSegmentIntersector> intersector(new osgUtil::LineSegmentIntersector(
+            osgUtil::LineSegmentIntersector::MODEL, traversalOrigin, traversalDest));
+        intersector->setIntersectionLimit(osgUtil::LineSegmentIntersector::NO_LIMIT);
+
+        osg::ref_ptr<osgUtil::IntersectionVisitor> visitor
+            = getIntersectionVisitor(intersector, ignorePlayer, ignoreActors, ignoreMask, {});
+        visitor->setNodeMaskOverride(~0u);
+        traversalRoot->accept(*visitor);
+        visitor->setNodeMaskOverride(0u);
+        RayResult result = getIntersectionResult(intersector, mIntersectionVisitor, {}, normalizedPrefix);
+        if (result.mHit && playerLocalTraversal)
+        {
+            result.mHitPointWorld = result.mHitPointWorld * parentToWorld;
+            result.mHitNormalWorld = parentToWorld.getRotate() * result.mHitNormalWorld;
+            result.mHitNormalWorld.normalize();
+        }
+        return result;
+    }
+
+    std::optional<osg::Vec3f> RenderingManager::findDrawableWorldCenterByPrefix(
+        std::string_view requiredDrawablePrefix)
+    {
+        std::string normalizedPrefix(requiredDrawablePrefix);
+        Misc::StringUtils::lowerCaseInPlace(normalizedPrefix);
+        if (MWVR::VRAnimation* const vrAnimation = dynamic_cast<MWVR::VRAnimation*>(mPlayerAnimation.get()))
+        {
+            unsigned int drawableCount = 0;
+            unsigned int matchingCount = 0;
+            unsigned int parentedCount = 0;
+            for (const osg::ref_ptr<osg::Drawable>& drawable
+                : vrAnimation->getFalloutVrPipBoyScreenDrawables())
+            {
+                if (drawable == nullptr)
+                    continue;
+                ++drawableCount;
+                std::string name = drawable->getName();
+                Misc::StringUtils::lowerCaseInPlace(name);
+                if (!name.starts_with(normalizedPrefix))
+                    continue;
+                ++matchingCount;
+
+                const osg::Geometry* geometry = dynamic_cast<const osg::Geometry*>(drawable.get());
+                if (const SceneUtil::RigGeometry* rig
+                    = dynamic_cast<const SceneUtil::RigGeometry*>(drawable.get()))
+                    geometry = rig->getLastFrameGeometry();
+                osg::BoundingBox bounds;
+                if (geometry != nullptr)
+                {
+                    if (const osg::Vec3Array* vertices
+                        = dynamic_cast<const osg::Vec3Array*>(geometry->getVertexArray()))
+                        for (const osg::Vec3f& vertex : *vertices)
+                            bounds.expandBy(vertex);
+                }
+                if (!bounds.valid())
+                    bounds = drawable->getBoundingBox();
+                if (!bounds.valid())
+                    continue;
+
+                for (unsigned int parentIndex = 0; parentIndex < drawable->getNumParents(); ++parentIndex)
+                {
+                    osg::Node* const parent = drawable->getParent(parentIndex);
+                    if (parent == nullptr)
+                        continue;
+                    const osg::NodePathList paths = parent->getParentalNodePaths();
+                    if (paths.empty())
+                        continue;
+                    ++parentedCount;
+                    osg::Matrix drawableToWorld = osg::computeLocalToWorld(paths.front());
+                    osg::Node* const pipBoyRoot = vrAnimation->getFalloutVrPipBoySurfaceRoot();
+                    const bool pathContainsPipBoyRoot = pipBoyRoot != nullptr
+                        && std::find(paths.front().begin(), paths.front().end(), pipBoyRoot) != paths.front().end();
+                    osg::Vec3f pipBoyRootTranslation;
+                    if (pipBoyRoot != nullptr && !pathContainsPipBoyRoot)
+                    {
+                        const osg::NodePathList rootPaths = pipBoyRoot->getParentalNodePaths();
+                        if (!rootPaths.empty())
+                        {
+                            const osg::Matrix pipBoyToWorld = osg::computeLocalToWorld(rootPaths.front());
+                            pipBoyRootTranslation = pipBoyToWorld.getTrans();
+                            drawableToWorld.postMult(pipBoyToWorld);
+                        }
+                    }
+                    const osg::Vec3f center = bounds.center() * drawableToWorld;
+                    static bool exactDiagnosticLogged = false;
+                    if (!exactDiagnosticLogged)
+                    {
+                        exactDiagnosticLogged = true;
+                        Log(Debug::Info) << "FNV Pip-Boy pointer exact drawable: found=1 name="
+                                         << drawable->getName() << " boundDrawables=" << drawableCount
+                                         << " matching=" << matchingCount << " parented=" << parentedCount
+                                         << " inheritedPipBoyRoot=" << !pathContainsPipBoyRoot
+                                         << " pipBoyRootTranslation=(" << pipBoyRootTranslation.x() << ','
+                                         << pipBoyRootTranslation.y() << ',' << pipBoyRootTranslation.z() << ')'
+                                         << " center=(" << center.x() << ',' << center.y() << ',' << center.z()
+                                         << ')';
+                    }
+                    return center;
+                }
+            }
+            static bool exactMissingLogged = false;
+            if (!exactMissingLogged)
+            {
+                exactMissingLogged = true;
+                Log(Debug::Error) << "FNV Pip-Boy pointer exact drawable: found=0 boundDrawables="
+                                  << drawableCount << " matching=" << matchingCount
+                                  << " parented=" << parentedCount;
+            }
+        }
+
+        class DrawableCenterVisitor final : public osg::NodeVisitor
+        {
+        public:
+            explicit DrawableCenterVisitor(std::string_view prefix)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mPrefix(prefix)
+            {
+                Misc::StringUtils::lowerCaseInPlace(mPrefix);
+                setTraversalMask(~0u);
+                setNodeMaskOverride(~0u);
+            }
+
+            void apply(osg::Node& node) override
+            {
+                ++mNodes;
+                traverse(node);
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                ++mGeodes;
+                if (mCenter)
+                    return;
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                {
+                    osg::Drawable* const drawable = geode.getDrawable(i);
+                    if (drawable == nullptr)
+                        continue;
+                    ++mDrawables;
+                    std::string name = drawable->getName();
+                    Misc::StringUtils::lowerCaseInPlace(name);
+                    if (mSampleNames.size() < 12)
+                        mSampleNames.push_back(name.empty() ? "<unnamed>" : name);
+                    if (!name.starts_with(mPrefix))
+                        continue;
+
+                    ++mMatchingDrawables;
+                    // RigGeometry's authored bound belongs to the template pose and can
+                    // be invalid after the mesh is cloned directly onto a tracked hand.
+                    // The renderer already has the current post-skin geometry; use those
+                    // exact vertices so pointer calibration follows the pixels the eye sees.
+                    const osg::Geometry* geometry = dynamic_cast<const osg::Geometry*>(drawable);
+                    if (const SceneUtil::RigGeometry* rig = dynamic_cast<const SceneUtil::RigGeometry*>(drawable))
+                        geometry = rig->getLastFrameGeometry();
+
+                    osg::BoundingBox bounds;
+                    if (geometry != nullptr)
+                    {
+                        if (const osg::Vec3Array* vertices
+                            = dynamic_cast<const osg::Vec3Array*>(geometry->getVertexArray()))
+                            for (const osg::Vec3f& vertex : *vertices)
+                                bounds.expandBy(vertex);
+                    }
+                    if (!bounds.valid())
+                        bounds = drawable->getBoundingBox();
+                    if (!bounds.valid())
+                    {
+                        ++mInvalidBounds;
+                        continue;
+                    }
+                    const osg::NodePathList paths = geode.getParentalNodePaths();
+                    if (paths.empty())
+                    {
+                        ++mMissingPaths;
+                        continue;
+                    }
+                    mCenter = bounds.center() * osg::computeLocalToWorld(paths.front());
+                    return;
+                }
+                traverse(geode);
+            }
+
+            std::string mPrefix;
+            std::optional<osg::Vec3f> mCenter;
+            unsigned int mNodes = 0;
+            unsigned int mGeodes = 0;
+            unsigned int mDrawables = 0;
+            unsigned int mMatchingDrawables = 0;
+            unsigned int mInvalidBounds = 0;
+            unsigned int mMissingPaths = 0;
+            std::vector<std::string> mSampleNames;
+        };
+
+        DrawableCenterVisitor visitor(requiredDrawablePrefix);
+        osg::Node* renderedRoot = mViewer->getSceneData() != nullptr ? mViewer->getSceneData() : mRootNode.get();
+        if (MWVR::VRAnimation* const vrAnimation = dynamic_cast<MWVR::VRAnimation*>(mPlayerAnimation.get()))
+            if (osg::Node* const pipBoyRoot = vrAnimation->getFalloutVrPipBoySurfaceRoot())
+                renderedRoot = pipBoyRoot;
+        renderedRoot->accept(visitor);
+        static bool diagnosticLogged = false;
+        if (!diagnosticLogged)
+        {
+            diagnosticLogged = true;
+            std::ostringstream names;
+            for (std::size_t i = 0; i < visitor.mSampleNames.size(); ++i)
+            {
+                if (i != 0)
+                    names << ',';
+                names << visitor.mSampleNames[i];
+            }
+            Log(visitor.mCenter ? Debug::Info : Debug::Error)
+                << "FNV Pip-Boy pointer surface audit: root=" << renderedRoot->getName()
+                << " found=" << static_cast<bool>(visitor.mCenter) << " nodes=" << visitor.mNodes
+                << " geodes=" << visitor.mGeodes << " drawables=" << visitor.mDrawables
+                << " matching=" << visitor.mMatchingDrawables << " invalidBounds=" << visitor.mInvalidBounds
+                << " missingPaths=" << visitor.mMissingPaths << " samples=[" << names.str() << ']';
+        }
+        return visitor.mCenter;
     }
 
     RayResult RenderingManager::castRay(

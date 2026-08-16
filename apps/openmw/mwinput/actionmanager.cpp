@@ -459,6 +459,10 @@ namespace MWInput
             case A_FalloutPipBoy:
                 if (!falloutContent)
                     break;
+                // The VR device is permanently worn and follows the tracked
+                // left arm. There is no raise/lower presentation in VR.
+                if (VR::getVR())
+                    break;
 
                 if (windowManager->containsMode(MWGui::GM_Inventory))
                 {

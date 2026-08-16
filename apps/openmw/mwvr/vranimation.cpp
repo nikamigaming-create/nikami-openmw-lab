@@ -67,6 +67,7 @@
 
 #include <components/esm3/loadrace.hpp>
 #include <components/esm3/loadench.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include <components/vr/session.hpp>
 #include <components/vr/space.hpp>
@@ -1585,7 +1586,41 @@ namespace MWVR
         else
             curl = getActionSample(getCurlActionIds(mSpec.source, hand), true);
 
-        const float value = curl ? curl->value : 0.f;
+        float value = curl ? curl->value : 0.f;
+        // Grip is the native pointer-mode chord in this Fallout VR slice. Once the
+        // pointer is released, keep an equipped weapon seated in a natural grasp
+        // instead of snapping the rendered fingers back to a flat open palm.
+        const int activeWeaponType = MWBase::Environment::get().getWorld()->getActiveWeaponType();
+        bool falloutWeaponEquipped = false;
+        const MWWorld::Ptr player = MWMechanics::getPlayer();
+        if (!player.isEmpty() && player.getClass().hasInventoryStore(player))
+        {
+            const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+            const MWWorld::ConstContainerStoreIterator weapon
+                = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+            falloutWeaponEquipped = weapon != inventory.end() && weapon->getType() == ESM4::Weapon::sRecordId;
+        }
+        const bool autoWeaponGrip = !mLeft && !mPointingMode
+            && getEnvFloat("OPENMW_FNV_VR_WEAPON_AUTO_GRIP", 1.f) != 0.f
+            && (falloutWeaponEquipped
+                || (activeWeaponType != ESM::Weapon::None && activeWeaponType != ESM::Weapon::HandToHand
+                    && activeWeaponType != ESM::Weapon::Spell && activeWeaponType != ESM::Weapon::Arrow
+                    && activeWeaponType != ESM::Weapon::Bolt));
+        if (autoWeaponGrip && value < 0.01f)
+        {
+            switch (mSpec.source)
+            {
+                case FingerCurlSource::Thumb:
+                    value = getEnvFloat("OPENMW_FNV_VR_WEAPON_THUMB_GRIP", 0.52f);
+                    break;
+                case FingerCurlSource::Trigger:
+                    value = getEnvFloat("OPENMW_FNV_VR_WEAPON_TRIGGER_GRIP", 0.28f);
+                    break;
+                case FingerCurlSource::Grip:
+                    value = getEnvFloat("OPENMW_FNV_VR_WEAPON_FINGER_GRIP", 0.78f);
+                    break;
+            }
+        }
         const bool shouldLog = getEnvFloat("OPENMW_FNV_VR_FINGER_CURL_LOG", 0.f) != 0.f
             && ((value > 0.01f && mCurlLogCount < 40) || mCurlLogCount < 20 || (++mCurlLogFrame % 300) == 0);
         if (shouldLog)
@@ -3574,7 +3609,11 @@ namespace MWVR
             localToWorld.preMultTranslate(position);
             localToWorld.preMultRotate(orientation);
 
-            // Finally, set transform
+            // The parental path includes this forearm transform. Multiplying by its
+            // current matrix cancels that final path component and leaves a stable
+            // controller-world transform relative to the animated parent chain.
+            // Replacing it with a cached bind matrix creates a two-state feedback
+            // loop, making both tracked hands visibly blink between poses.
             auto scale = osg::Matrix::scale(1.f, mMirror ? -1.f : 1.f, 1.f);
             mTransform->setMatrix(scale * localToWorld * worldToLocal * mTransform->getMatrix());
         }
@@ -4104,6 +4143,8 @@ namespace MWVR
 
         mFalloutVrHandSurfaceNodes.clear();
         mFalloutVrPipBoySurfaceNodes.clear();
+        mFalloutVrPipBoyScreenDrawables.clear();
+        mFalloutVrRightWeaponSurfaceNodes.clear();
         mFalloutVrHandSurfacesAttached = false;
     }
 
@@ -4275,6 +4316,8 @@ namespace MWVR
         int rightHandSurfaceCount = 0;
         int leftPipBoySurfaceCount = 0;
         int rightPipBoySurfaceCount = 0;
+        osg::Vec3f rightWeaponSocketTarget;
+        bool rightWeaponSocketTargetValid = false;
         for (const FalloutVrHandSurface& surface : mFalloutVrHandSurfaces)
         {
             if (surface.model.empty())
@@ -4286,11 +4329,13 @@ namespace MWVR
                 && surface.source.find("right-pipboy-calibration") != std::string::npos;
             const bool riggedHandPart = surface.kind == FalloutVrHandSurface::Kind::Hand;
 
-            osg::Group* attachNode = weaponSurface && weapon != nullptr
-                ? weapon
-                : (surface.left ? leftHand : rightHand);
-            if (weaponSurface && weapon == nullptr)
-                Log(Debug::Warning) << "FNV/ESM4 diag: VR weapon attachment node missing; falling back to right hand";
+            // The animated root-level Weapon target belongs to the flat-body animation graph. The
+            // visible VR hand is driven by its tracked Bip01 R Hand transform, so parenting the gun
+            // to Weapon makes it hover beside the controller. The model's authored BoneOffset is
+            // still applied by SceneUtil::attach; only its parent socket changes here.
+            osg::Group* attachNode = weaponSurface ? rightHand : (surface.left ? leftHand : rightHand);
+            if (weaponSurface && rightHand == nullptr)
+                Log(Debug::Warning) << "FNV/ESM4 diag: tracked right-hand weapon attachment node missing";
             if (attachNode == nullptr)
             {
                 Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly attach skipped missing "
@@ -4307,6 +4352,12 @@ namespace MWVR
             osg::BoundingBox staticizedHandBounds;
             HandCuffAnchor staticizedHandCuffAnchor;
             bool staticizedRiggedHandPart = false;
+            // Fallout's first-person glove meshes use the paper-doll skin coordinate
+            // space, which is not compatible with the tracked controller hierarchy.
+            // Bake that rig geometry once at attach time, then parent the real glove
+            // surface directly to the tracked hand. The finger controllers below
+            // preserve the runtime curl behavior without reintroducing the broken
+            // paper-doll skin transform.
             if (riggedHandPart)
             {
                 osg::ref_ptr<osg::Node> staticTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
@@ -4399,6 +4450,58 @@ namespace MWVR
                 continue;
             }
 
+            if (weaponSurface)
+            {
+                osg::PositionAttitudeTransform* transform
+                    = dynamic_cast<osg::PositionAttitudeTransform*>(attached.get());
+                if (transform == nullptr && attachNode->removeChild(attached.get()))
+                {
+                    osg::ref_ptr<osg::PositionAttitudeTransform> wrapper = new osg::PositionAttitudeTransform;
+                    wrapper->setName("FNV VR Tracked Weapon Socket");
+                    wrapper->addChild(attached.get());
+                    attachNode->addChild(wrapper.get());
+                    attached = wrapper;
+                    transform = wrapper.get();
+                }
+                if (transform != nullptr)
+                {
+                    const osg::Vec3f authoredPosition = transform->getPosition();
+                    const osg::Quat authoredAttitude = transform->getAttitude();
+                    const osg::Vec3f palmTarget
+                        = rightWeaponSocketTargetValid ? rightWeaponSocketTarget : osg::Vec3f();
+                    // Both Fallout weapon conventions place the authored
+                    // origin slightly outside the grasp.  Pull it across the
+                    // right-hand local X axis so the handle, not the origin,
+                    // lands at the measured palm center.
+                    const osg::Vec3f socketOffset(getEnvFloat("OPENMW_FNV_WEAPON_OFFSET_X", -4.f),
+                        getEnvFloat("OPENMW_FNV_WEAPON_OFFSET_Y", 0.f),
+                        getEnvFloat("OPENMW_FNV_WEAPON_OFFSET_Z", 0.f));
+                    const bool falloutMeleeModel
+                        = correctedModel.value().find("/1handmelee/") != std::string::npos
+                        || correctedModel.value().find("/2handmelee/") != std::string::npos;
+                    const float defaultSocketRotZ = falloutMeleeModel ? 0.f : 90.f;
+                    const osg::Quat socketRotation = makeEulerDegrees(
+                        getEnvFloat("OPENMW_FNV_WEAPON_ROT_X", 0.f),
+                        getEnvFloat("OPENMW_FNV_WEAPON_ROT_Y", 0.f),
+                        getEnvFloat("OPENMW_FNV_WEAPON_ROT_Z", defaultSocketRotZ));
+                    transform->setPosition(authoredPosition + palmTarget + socketOffset);
+                    transform->setAttitude(authoredAttitude * socketRotation);
+                    Log(Debug::Info) << "OpenMW VR weapon socket model=" << correctedModel.value()
+                                     << " parent=" << attachNode->getName()
+                                     << " authoredPosition=(" << authoredPosition.x() << ',' << authoredPosition.y()
+                                     << ',' << authoredPosition.z() << ") palmTarget=(" << palmTarget.x() << ','
+                                     << palmTarget.y() << ',' << palmTarget.z() << ") socketOffset=(" << socketOffset.x() << ','
+                                     << socketOffset.y() << ',' << socketOffset.z() << ") authoredAttitude=("
+                                     << authoredAttitude.x() << ',' << authoredAttitude.y() << ','
+                                     << authoredAttitude.z() << ',' << authoredAttitude.w() << ") convention="
+                                     << (falloutMeleeModel ? "melee-forward-y" : "firearm-forward-x")
+                                     << " defaultRotZ=" << defaultSocketRotZ;
+                }
+                else
+                    Log(Debug::Warning) << "OpenMW VR weapon socket has no authored transform model="
+                                        << correctedModel.value();
+            }
+
             if (staticizedRiggedHandPart && staticizedHandBounds.valid())
             {
                 if (osg::PositionAttitudeTransform* transform
@@ -4430,7 +4533,11 @@ namespace MWVR
                     osg::Vec3f targetCuffAnchor(0.f, 0.f, 0.f);
                     const std::size_t socketIndex = surface.left ? 0 : 1;
                     const bool anchorToPipBoy = pipBoySocketTargetValid[socketIndex]
-                        && getHandEnvFloat(surface.left, "ANCHOR_PIPBOY", 0.f) != 0.f;
+                        // The worn-side glove has an authored cuff/socket solve and must meet the
+                        // Pip-Boy body by default.  Disabling this for both hands leaves the left
+                        // glove at the raw tracking origin while the device remains at its wrist
+                        // offset, producing the visible gap.  The free hand stays controller-local.
+                        && getHandEnvFloat(surface.left, "ANCHOR_PIPBOY", surface.left ? 1.f : 0.f) != 0.f;
                     const bool mirrorLeftPipBoySocket = !surface.left && !anchorToPipBoy
                         && pipBoySocketTargetValid[0]
                         // A tracked right hand must use its own OpenXR wrist origin by default.  Mirroring a
@@ -4542,6 +4649,14 @@ namespace MWVR
                     }
                     const osg::Vec3f finalPosition = transform->getPosition();
                     const osg::Quat handRotation = transform->getAttitude();
+                    if (!surface.left)
+                    {
+                        rightWeaponSocketTarget = finalPosition + handRotation * modelPalmPivot;
+                        rightWeaponSocketTargetValid = true;
+                        Log(Debug::Info) << "OpenMW VR tracked weapon palm target=("
+                                         << rightWeaponSocketTarget.x() << ',' << rightWeaponSocketTarget.y() << ','
+                                         << rightWeaponSocketTarget.z() << ')';
+                    }
                     const osg::Vec3f candidateXMin = finalPosition
                         + handRotation
                             * osg::Vec3f(scale.x() * staticizedHandBounds.xMin(), scale.y() * center.y(),
@@ -4834,12 +4949,29 @@ namespace MWVR
             // skin overrides actor-local, then rebuild their shaders so environment maps stay in
             // the environment slot instead of being sampled as the visible base texture.
             applyFalloutVrDiffuseOverride(surface.diffuseTexture, mResourceSystem, *attached);
-            mResourceSystem->getSceneManager()->recreateShaders(attached, "objects", true);
+            // PipBoyArm already arrives with its authored material state. Re-running the generic
+            // object shader over the complete device places an overriding program above the live
+            // screen drawable, so subsequent RTT bindings report success while Screen.dds still
+            // reaches the eye. Hands and weapons still need the actor-local shader refresh.
+            if (!pipBoyArm)
+                mResourceSystem->getSceneManager()->recreateShaders(attached, "objects", true);
+
+            // These first-person surfaces retain bounds authored for the paper-doll rig. Once
+            // attached directly to a tracked wrist, those stale bounds can intermittently cull
+            // a hand or Pip-Boy even when its controller pose is stationary.
+            ConfigureCullVisitor disableFirstPersonSurfaceCulling(false);
+            attached->accept(disableFirstPersonSurfaceCulling);
 
             attached->setName("FNV VRHandsOnly " + correctedModel.value());
             mFalloutVrHandSurfaceNodes.push_back(attached);
             if (pipBoyArm)
                 mFalloutVrPipBoySurfaceNodes.push_back(attached);
+            if (weaponSurface && !surface.left)
+            {
+                mFalloutVrRightWeaponSurfaceNodes.push_back(attached);
+                if (mRightPointerEnabled)
+                    attached->setNodeMask(0);
+            }
             ++attachedCount;
             if (riggedHandPart)
                 ++(surface.left ? leftHandSurfaceCount : rightHandSurfaceCount);
@@ -4858,6 +4990,13 @@ namespace MWVR
         }
 
         mFalloutVrHandSurfacesAttached = true;
+        // Inventory/loadout changes can rebuild the tracked hand clone after
+        // the RTT was created. Reapply the cached live screen to the new owned
+        // Pip-Boy immediately so rendering and pointer refs never drift apart.
+        if (mFalloutVrPipBoyScreenTexture != nullptr)
+            setFalloutVrPipBoyScreenTexture(mFalloutVrPipBoyScreenTexture,
+                mFalloutVrPipBoyMapTexture, mFalloutVrPipBoyShowMap, mFalloutVrPipBoyMapZoom,
+                mFalloutVrPipBoyMapPanX, mFalloutVrPipBoyMapPanY, mFalloutVrPipBoyMapClip);
         const bool nativeRigReady = leftHandSurfaceCount == 1 && rightHandSurfaceCount == 1
             && leftPipBoySurfaceCount == 1 && rightPipBoySurfaceCount == 0;
         Log(nativeRigReady ? Debug::Info : Debug::Warning)
@@ -4873,12 +5012,21 @@ namespace MWVR
         osg::Texture2D* mapTexture, bool showMap, float mapZoom, float mapPanX, float mapPanY,
         const osg::Vec4f& mapClip)
     {
+        mFalloutVrPipBoyScreenTexture = screenTexture;
+        mFalloutVrPipBoyMapTexture = mapTexture;
+        mFalloutVrPipBoyShowMap = showMap;
+        mFalloutVrPipBoyMapZoom = mapZoom;
+        mFalloutVrPipBoyMapPanX = mapPanX;
+        mFalloutVrPipBoyMapPanY = mapPanY;
+        mFalloutVrPipBoyMapClip = mapClip;
         bool bound = false;
+        mFalloutVrPipBoyScreenDrawables.clear();
         for (const osg::ref_ptr<osg::Node>& pipBoy : mFalloutVrPipBoySurfaceNodes)
         {
             if (pipBoy != nullptr)
                 bound = MWRender::ESM4NpcAnimation::bindPipBoyScreenTexture(
-                    *pipBoy, screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip) || bound;
+                    *pipBoy, screenTexture, mapTexture, showMap, mapZoom, mapPanX, mapPanY, mapClip,
+                    &mFalloutVrPipBoyScreenDrawables) || bound;
         }
         Log(bound ? Debug::Info : Debug::Error)
             << "FNV Pip-Boy VR physical: screenBinding=" << (bound ? "ready" : "missing")
@@ -5269,6 +5417,16 @@ namespace MWVR
         ctx.handController->setFingerPointingMode(enable);
         for (const auto& finger : ctx.fingerBindings)
             finger.controller->setEnabled(enable);
+
+        if (topLevelPath == mRightHandPath && mRightPointerEnabled != enable)
+        {
+            mRightPointerEnabled = enable;
+            for (const osg::ref_ptr<osg::Node>& weapon : mFalloutVrRightWeaponSurfaceNodes)
+            {
+                if (weapon != nullptr)
+                    weapon->setNodeMask(enable ? 0 : ~osg::Node::NodeMask(0));
+            }
+        }
     }
 
     void VRAnimation::enableHeadAnimation(bool)
@@ -5337,6 +5495,24 @@ namespace MWVR
         trans.z() += mCharHeight;
         Stereo::Pose originPose = { Stereo::Position::fromMWUnits(trans), osg::Quat{ 0, 0, 0, 1 } };
         XR::Session::instance().setReferenceWorldPose(originPose + mCharLocalSpacePose);
+    }
+
+    osg::Matrix VRAnimation::getTrackingSpaceWorldMatrix() const
+    {
+        osg::Matrix result = osg::Matrix::identity();
+        if (mObjectRoot == nullptr || mObjectRoot->getNumParents() == 0)
+            return result;
+        osg::Node* const origin = mObjectRoot->getParent(0);
+        const osg::NodePathList paths = origin->getParentalNodePaths();
+        if (paths.empty())
+            return result;
+        osg::Vec3f translation = osg::computeLocalToWorld(paths.front()).getTrans();
+        translation.z() += mCharHeight;
+        const Stereo::Pose originPose = { Stereo::Position::fromMWUnits(translation), osg::Quat() };
+        const Stereo::Pose trackingWorldPose = originPose + mCharLocalSpacePose;
+        result.makeRotate(trackingWorldPose.orientation);
+        result.postMultTranslate(trackingWorldPose.position.asMWUnits());
+        return result;
     }
 
     void VRAnimation::recenter()

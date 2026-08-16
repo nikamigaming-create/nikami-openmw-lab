@@ -108,6 +108,7 @@ namespace MWVR
         bool mDelayedPointerActivateInjectMouseClickIfApplicable = false;
         bool mPointerActive = false;
         bool mDirectPointerClickDown = false;
+        bool mFalloutReloadDown = false;
         int mDirectPointerClickLogCount = 0;
         float mDt = 0.f;
         float mScrollSpeed = 0.f;

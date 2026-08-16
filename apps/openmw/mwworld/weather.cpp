@@ -1274,9 +1274,11 @@ namespace MWWorld
             mNightDayMode = Default;
 
         const auto applyFalloutImageSpace = [&]() {
-            // This shader and its modifier-channel mapping are retail-derived from Fallout 3/New Vegas.
-            // Other Creation Engine games retain their parsed records for their own adapters.
-            if (!usesFallout3Weather(mStore.getESM4Game()))
+            // The experimental Fallout cinematic image-space chain is not part of the
+            // playable renderer.  It can force a multi-pass post-process after a sound
+            // world frame has already been lit, producing a dark/brown presentation in
+            // VR and making flat and VR diverge.  Always resolve the shared lit scene.
+            if (usesFallout3Weather(mStore.getESM4Game()))
             {
                 mRendering.getPostProcessor()->clearFalloutImageSpace();
                 return;

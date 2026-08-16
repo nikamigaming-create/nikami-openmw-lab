@@ -136,6 +136,21 @@ namespace MWVR
             return false;
         }
 
+        bool isFalloutVrWorld()
+        {
+            MWBase::World* const world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+            for (std::string file : world->getContentFiles())
+            {
+                std::transform(file.begin(), file.end(), file.begin(),
+                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+                if (file.ends_with("falloutnv.esm"))
+                    return true;
+            }
+            return false;
+        }
+
         float actionFloat(const XR::ActionSet& actionSet, const std::initializer_list<const char*>& ids)
         {
             for (const char* id : ids)
@@ -1023,6 +1038,28 @@ namespace MWVR
         // The rest of this code assumes the game is running
         if (MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame)
             return;
+
+        // The stock VR Lua binding consumes the off-hand primary button for spell stance before
+        // Fallout's reload action sees it. Read the native OpenXR action directly so FNV weapons
+        // keep the expected off-hand reload control without changing Morrowind behavior.
+        if (VR::getVR() && isFalloutVrWorld())
+        {
+            auto& actionSet = mXRInput->getActionSet(MWActionSet::Actions);
+            const bool reloadPressed = VR::getLeftHandedMode()
+                ? actionPressed(actionSet, { "/user/hand/right/input/a/click", "/user/hand/right/input/x/click" })
+                : actionPressed(actionSet, { "/user/hand/left/input/x/click", "/user/hand/left/input/a/click" });
+            if (reloadPressed && !mFalloutReloadDown && !mPointerActive && !disableControls
+                && !retailSurfaceModal && !wm->isGuiMode())
+            {
+                const bool accepted = MWBase::Environment::get().getMechanicsManager()->reloadFalloutWeapon(
+                    MWMechanics::getPlayer());
+                Log(Debug::Info) << "OpenMW VR Fallout reload edge accepted=" << accepted
+                                 << " hand=" << (VR::getLeftHandedMode() ? "right" : "left");
+            }
+            mFalloutReloadDown = reloadPressed;
+        }
+        else
+            mFalloutReloadDown = false;
 
         if (VR::getVR())
             updateVrDebugSnapshotControls();

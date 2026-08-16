@@ -143,6 +143,7 @@ input.registerTriggerHandler('RadialMenu', async:callback(function()
     end
 end))
 
+
 input.registerActionHandler('SnapTurnLeft', async:callback(function(v) 
     if v and not smoothTurn then
         self.controls.yawChange = -snapTurnRate
