@@ -2970,13 +2970,22 @@ namespace MWRender
                     const osg::Matrix worldToDrawable = osg::Matrix::inverse(drawableToWorld);
                     const osg::Vec3d localOrigin = osg::Vec3d(origin * worldToDrawable);
                     const osg::Vec3d localDest = osg::Vec3d(dest * worldToDrawable);
+                    // The render geometry intentionally inherits RigGeometry's source-pose bound callback.
+                    // A shallow intersection-only view keeps the current vertex/UV arrays and primitives but
+                    // recomputes its bound from those current vertices, allowing the intersector to reach them.
+                    osg::ref_ptr<osg::Geometry> intersectionGeometry
+                        = new osg::Geometry(*geometry, osg::CopyOp::SHALLOW_COPY);
+                    intersectionGeometry->setComputeBoundingBoxCallback(nullptr);
+                    intersectionGeometry->setComputeBoundingSphereCallback(nullptr);
+                    intersectionGeometry->dirtyBound();
                     osg::ref_ptr<osgUtil::LineSegmentIntersector> directIntersector
                         = new osgUtil::LineSegmentIntersector(
                             osgUtil::LineSegmentIntersector::MODEL, localOrigin, localDest);
                     directIntersector->setIntersectionLimit(osgUtil::LineSegmentIntersector::NO_LIMIT);
                     osg::ref_ptr<osgUtil::IntersectionVisitor> directVisitor
                         = new osgUtil::IntersectionVisitor(directIntersector.get());
-                    directIntersector->intersect(*directVisitor, geometry, localOrigin, localDest);
+                    directIntersector->intersect(
+                        *directVisitor, intersectionGeometry.get(), localOrigin, localDest);
                     if (!directIntersector->containsIntersections())
                         continue;
 
