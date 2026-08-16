@@ -440,11 +440,10 @@ namespace MWVR
         else
             mPointerActive = false;
 
-        if (MWVR::VRAnimation* const playerAnimation = MWVR::Util::getPlayerAnimation())
-        {
-            playerAnimation->setFalloutVrPipBoyInteractionFocused(
-                mPointerActive && MWVR::VRGUIManager::instance().hasPipBoyFocus());
-        }
+        // Publish only UI-local state here. Player animation is not guaranteed
+        // to exist while content is still loading, and reaching into World from
+        // this early input tick can stall VR startup.
+        MWVR::VRGUIManager::instance().setPipBoyInteractionActive(mPointerActive);
     }
 
     void VRInputManager::updateDirectPointerClick()

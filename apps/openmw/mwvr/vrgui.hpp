@@ -169,6 +169,8 @@ namespace MWVR
 
         /// True while the pointer ray is over the authored wrist Pip-Boy screen.
         bool hasPipBoyFocus() const;
+        void setPipBoyInteractionActive(bool active);
+        bool hasActivePipBoyInteraction() const;
 
         /// Update traversal
         void update(osg::NodeVisitor* nv);
@@ -221,6 +223,7 @@ namespace MWVR
 
         osg::Vec2i mGuiCursor;
         osg::ref_ptr<VRGUILayer> mFocusLayer = nullptr;
+        bool mPipBoyInteractionActive = false;
         std::map<std::string, LayerConfig> mDefaultLayerConfigs;
 
         std::shared_ptr<VR::Session::Listener> mSessionListener;

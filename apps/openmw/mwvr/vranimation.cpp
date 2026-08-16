@@ -5098,20 +5098,17 @@ namespace MWVR
         attachFalloutVrHandSurfaces();
     }
 
-    void VRAnimation::setFalloutVrPipBoyInteractionFocused(bool focused)
-    {
-        if (mFalloutVrPipBoyInteractionFocused == focused)
-            return;
-
-        mFalloutVrPipBoyInteractionFocused = focused;
-        Log(Debug::Info) << "OpenMW VR Pip-Boy interaction zoom=" << (focused ? "engaged" : "released");
-    }
-
     void VRAnimation::updateFalloutVrPipBoyInteractionScale()
     {
         if (mFalloutVrPipBoyInteractionScaleTargets.empty())
             return;
 
+        const bool focused = VRGUIManager::instance().hasActivePipBoyInteraction();
+        if (mFalloutVrPipBoyInteractionFocused != focused)
+        {
+            mFalloutVrPipBoyInteractionFocused = focused;
+            Log(Debug::Info) << "OpenMW VR Pip-Boy interaction zoom=" << (focused ? "engaged" : "released");
+        }
         const float focusScale = std::clamp(getEnvFloat("OPENMW_FNV_PIPBOY_FOCUS_SCALE", 1.35f), 1.f, 2.f);
         const float targetScale = mFalloutVrPipBoyInteractionFocused ? focusScale : 1.f;
         const float smoothing = std::clamp(getEnvFloat("OPENMW_FNV_PIPBOY_FOCUS_LERP", 0.2f), 0.01f, 1.f);

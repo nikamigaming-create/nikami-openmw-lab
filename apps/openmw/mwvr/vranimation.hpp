@@ -104,7 +104,6 @@ namespace MWVR
         }
         bool setFalloutVrPipBoyScreenTexture(osg::Texture2D* screenTexture, osg::Texture2D* mapTexture,
             bool showMap, float mapZoom, float mapPanX, float mapPanY, const osg::Vec4f& mapClip);
-        void setFalloutVrPipBoyInteractionFocused(bool focused);
 
     protected:
 
