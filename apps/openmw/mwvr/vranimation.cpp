@@ -3989,12 +3989,17 @@ namespace MWVR
                 ctx.spaceName = i == 0 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
             const std::string gripSpace = ctx.spaceName;
             const std::string wristSpace = i == 0 ? "LeftWristTop" : "RightWristTop";
-            const bool useWristTop = xrInput.getSpace(wristSpace) != nullptr;
+            // LeftWristTop is the authored Pip-Boy/cuff anchor and already gives the left arm the
+            // placement the player expects. RightWristTop is a HUD placement space derived roughly
+            // 20 cm away from the controller aim pose; driving the weapon hand from it visibly floats
+            // the hand above the real controller. Keep the Pip-Boy wrist anchor, but drive the weapon
+            // hand from the native grip pose just like stock OpenMW VR.
+            const bool useWristTop = i == 0 && xrInput.getSpace(wristSpace) != nullptr;
             if (useWristTop)
             {
                 ctx.spaceName = wristSpace;
             }
-            else
+            else if (i == 0)
                 Log(Debug::Warning) << "FNV/ESM4 diag: VR wrist hand space missing " << wristSpace
                                     << "; using grip tracking space " << gripSpace;
             const osg::Vec3 offset = useWristTop ? osg::Vec3(0, 0, 0) : osg::Vec3(15, 0, 0);
@@ -4471,11 +4476,11 @@ namespace MWVR
                     const osg::Quat authoredAttitude = transform->getAttitude();
                     const osg::Vec3f palmTarget
                         = rightWeaponSocketTargetValid ? rightWeaponSocketTarget : osg::Vec3f();
-                    // Both Fallout weapon conventions place the authored
-                    // origin slightly outside the grasp.  Pull it across the
-                    // right-hand local X axis so the handle, not the origin,
-                    // lands at the measured palm center.
-                    const osg::Vec3f socketOffset(getEnvFloat("OPENMW_FNV_WEAPON_OFFSET_X", -4.f),
+                    // The normalized hand surface already provides the measured palm center. Keep
+                    // the authored weapon origin on that target by default; calibration remains
+                    // available through the environment variables, but must not pull the handle out
+                    // of the palm in the normal path.
+                    const osg::Vec3f socketOffset(getEnvFloat("OPENMW_FNV_WEAPON_OFFSET_X", 0.f),
                         getEnvFloat("OPENMW_FNV_WEAPON_OFFSET_Y", 0.f),
                         getEnvFloat("OPENMW_FNV_WEAPON_OFFSET_Z", 0.f));
                     const bool falloutMeleeModel

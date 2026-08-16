@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -3228,15 +3229,36 @@ namespace MWMechanics
             return fail(getFalloutCriticalFailureName(criticalFailure));
 
         osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
-        bool playerCameraOrigin = false;
-        if (mPtr == getPlayer() && !vatsAttack && world->getCamera() != nullptr)
+        std::string_view shotOriginSource = "actor-head";
+        std::optional<osg::Vec3f> trackedVrAimDirection;
+        if (mPtr == getPlayer() && !vatsAttack && VR::getVR())
+        {
+            const char* const aimSpaceName
+                = VR::getLeftHandedMode() ? MWVR::OpenXRInput::LeftHandAim : MWVR::OpenXRInput::RightHandAim;
+            if (const std::shared_ptr<VR::Space> aimSpace = MWVR::OpenXRInput::instance().getSpace(aimSpaceName))
+            {
+                const VR::TrackingPose tracked = aimSpace->locateInWorld();
+                if (!!tracked.status)
+                {
+                    osg::Vec3f candidateDirection
+                        = tracked.pose.orientation * osg::Vec3f(0.f, 1.f, 0.f);
+                    if (candidateDirection.normalize() != 0.f)
+                    {
+                        origin = tracked.pose.position.asMWUnits();
+                        trackedVrAimDirection = candidateDirection;
+                        shotOriginSource = "vr-hand-aim";
+                    }
+                }
+            }
+        }
+        if (mPtr == getPlayer() && !vatsAttack && !trackedVrAimDirection && world->getCamera() != nullptr)
         {
             // The first-person Fallout rig has no world "Head" node, so getActorHeadTransform falls back to the
             // actor root. A camera-directed ray starting at that root is not collinear with the crosshair and can
             // pass underneath low actors. Retail ordinary fire follows the view ray; V.A.T.S. retains its authored
             // actor/limb origin and fixed aim point.
             origin = osg::Vec3f(world->getCamera()->getPosition());
-            playerCameraOrigin = true;
+            shotOriginSource = "player-camera";
         }
         std::vector<MWWorld::Ptr> targetActors;
         if (!vatsTarget.isEmpty())
@@ -3251,6 +3273,8 @@ namespace MWMechanics
             fixedAimPoint = *vatsAimPoint;
             direction = *vatsAimPoint - origin;
         }
+        else if (trackedVrAimDirection)
+            direction = *trackedVrAimDirection;
         else if (mPtr == getPlayer() && world->getCamera() != nullptr)
             direction = world->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
         else if (!targetActors.empty())
@@ -3869,7 +3893,7 @@ namespace MWMechanics
         Log(Debug::Info) << "FNV combat shot: actor=" << mPtr.toString()
                          << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
                          << " origin=" << origin
-                         << " originSource=" << (playerCameraOrigin ? "player-camera" : "actor-head")
+                         << " originSource=" << shotOriginSource
                          << " aimDirection=" << direction
                          << " consumable=" << consumableRefId << " consumableKind="
                          << (contract->mConsumesWeapon ? "weapon" : "ammo")

@@ -2927,6 +2927,98 @@ namespace MWRender
         traversalRoot->accept(*visitor);
         visitor->setNodeMaskOverride(0u);
         RayResult result = getIntersectionResult(intersector, mIntersectionVisitor, {}, normalizedPrefix);
+        if (!result.mHit && normalizedPrefix == "pipboyscreen" && vrAnimation != nullptr)
+        {
+            // RigGeometry renders a double-buffered, post-skin Geometry. Its authored Drawable bound can be
+            // stale after the tracked wrist root is scaled, which lets the visible Pip-Boy screen be culled from
+            // the generic intersection even when the controller ray is centered on it. Intersect the exact
+            // post-skin vertices used for the most recent frame in their real world transform.
+            for (const osg::ref_ptr<osg::Drawable>& drawable
+                : vrAnimation->getFalloutVrPipBoyScreenDrawables())
+            {
+                if (drawable == nullptr)
+                    continue;
+                std::string drawableName = drawable->getName();
+                Misc::StringUtils::lowerCaseInPlace(drawableName);
+                if (!drawableName.starts_with(normalizedPrefix))
+                    continue;
+
+                osg::Geometry* geometry = dynamic_cast<osg::Geometry*>(drawable.get());
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(drawable.get()))
+                    geometry = rig->getLastFrameGeometry();
+                if (geometry == nullptr)
+                    continue;
+
+                for (unsigned int parentIndex = 0; parentIndex < drawable->getNumParents(); ++parentIndex)
+                {
+                    osg::Node* const parent = drawable->getParent(parentIndex);
+                    if (parent == nullptr)
+                        continue;
+                    const osg::NodePathList paths = parent->getParentalNodePaths();
+                    if (paths.empty())
+                        continue;
+
+                    osg::Matrix drawableToWorld = osg::computeLocalToWorld(paths.front());
+                    const bool pathContainsPipBoyRoot = pipBoyRoot != nullptr
+                        && std::find(paths.front().begin(), paths.front().end(), pipBoyRoot) != paths.front().end();
+                    if (pipBoyRoot != nullptr && !pathContainsPipBoyRoot)
+                    {
+                        const osg::NodePathList rootPaths = pipBoyRoot->getParentalNodePaths();
+                        if (!rootPaths.empty())
+                            drawableToWorld.postMult(osg::computeLocalToWorld(rootPaths.front()));
+                    }
+                    const osg::Matrix worldToDrawable = osg::Matrix::inverse(drawableToWorld);
+                    const osg::Vec3d localOrigin = osg::Vec3d(origin * worldToDrawable);
+                    const osg::Vec3d localDest = osg::Vec3d(dest * worldToDrawable);
+                    osg::ref_ptr<osgUtil::LineSegmentIntersector> directIntersector
+                        = new osgUtil::LineSegmentIntersector(
+                            osgUtil::LineSegmentIntersector::MODEL, localOrigin, localDest);
+                    directIntersector->setIntersectionLimit(osgUtil::LineSegmentIntersector::NO_LIMIT);
+                    osg::ref_ptr<osgUtil::IntersectionVisitor> directVisitor
+                        = new osgUtil::IntersectionVisitor(directIntersector.get());
+                    directIntersector->intersect(*directVisitor, geometry, localOrigin, localDest);
+                    if (!directIntersector->containsIntersections())
+                        continue;
+
+                    const osgUtil::LineSegmentIntersector::Intersection& intersection
+                        = *directIntersector->getIntersections().begin();
+                    result.mHit = true;
+                    result.mHitNode = parent;
+                    result.mHitNodePath.clear();
+                    for (const osg::Node* node : paths.front())
+                    {
+                        if (node != nullptr && !node->getName().empty())
+                            result.mHitNodePath.push_back(node->getName());
+                    }
+                    result.mHitNodePath.push_back(drawable->getName());
+                    result.mHitPointLocal = intersection.getLocalIntersectPoint();
+                    result.mHitPointWorld = result.mHitPointLocal * drawableToWorld;
+                    result.mHitNormalWorld
+                        = drawableToWorld.getRotate() * intersection.getLocalIntersectNormal();
+                    result.mHitNormalWorld.normalize();
+                    playerLocalTraversal = false;
+                    osg::Vec3f texCoord;
+                    if (intersection.getTextureLookUp(texCoord) != nullptr)
+                    {
+                        result.mHitTexCoord.set(texCoord.x(), texCoord.y());
+                        result.mHitTexCoordValid = true;
+                    }
+                    result.mRatio = static_cast<float>(intersection.ratio);
+                    static bool directSkinnedHitLogged = false;
+                    if (!directSkinnedHitLogged)
+                    {
+                        directSkinnedHitLogged = true;
+                        Log(Debug::Info) << "FNV Pip-Boy direct skinned-screen ray fallback status=hit"
+                                         << " drawable=" << drawable->getName()
+                                         << " texCoordValid=" << result.mHitTexCoordValid
+                                         << " ratio=" << result.mRatio;
+                    }
+                    break;
+                }
+                if (result.mHit)
+                    break;
+            }
+        }
         if (result.mHit && playerLocalTraversal)
         {
             result.mHitPointWorld = result.mHitPointWorld * parentToWorld;
