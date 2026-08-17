@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include <osg/Math>
+#include <osg/Quat>
 
 namespace MWWorld
 {
