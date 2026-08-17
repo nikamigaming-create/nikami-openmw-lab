@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 #include "fnvxrliveframesurface.hpp"
 #include "openxrinput.hpp"
@@ -1004,6 +1005,8 @@ namespace MWVR
 
     void VRGUIManager::updateFocus(osg::Node* focusNode, osg::Vec3f hitPoint)
     {
+        mPipBoyPhysicalControl.clear();
+        mPipBoyPhysicalControlDirection = 0;
         if (FNVXRLiveFrameSurface::instance().visible())
         {
             setFocusLayer(nullptr);
@@ -1038,6 +1041,8 @@ namespace MWVR
 
     bool VRGUIManager::updatePipBoyFocus(const osg::Vec2f& rawTexCoord)
     {
+        mPipBoyPhysicalControl.clear();
+        mPipBoyPhysicalControlDirection = 0;
         if (FNVXRLiveFrameSurface::instance().visible())
             return false;
 
@@ -1073,7 +1078,10 @@ namespace MWVR
             + static_cast<int>(std::lround((1.f - screenUv.y()) * static_cast<float>(layer->mRect.height() - 1)));
         static osg::Vec2f sLastLoggedPipBoyUv(-10.f, -10.f);
         static int sPipBoyFocusLogCount = 0;
-        if (sPipBoyFocusLogCount < 12 && (screenUv - sLastLoggedPipBoyUv).length2() > 0.0025f)
+        const bool calibratingPointer = std::getenv("OPENMW_FNV_VR_POINTER_CALIBRATION") != nullptr;
+        const float cursorMotion2 = (screenUv - sLastLoggedPipBoyUv).length2();
+        if ((calibratingPointer && cursorMotion2 > 1e-10f)
+            || (sPipBoyFocusLogCount < 12 && cursorMotion2 > 0.0025f))
         {
             ++sPipBoyFocusLogCount;
             sLastLoggedPipBoyUv = screenUv;
@@ -1087,9 +1095,43 @@ namespace MWVR
         return true;
     }
 
+    bool VRGUIManager::updatePipBoyControlFocus(std::string_view control, int direction)
+    {
+        if (FNVXRLiveFrameSurface::instance().visible() || control.empty())
+            return false;
+
+        setFocusLayer(nullptr);
+        computeGuiCursor(osg::Vec3(0, 0, 0));
+        direction = std::clamp(direction, -1, 1);
+        const bool changed = mPipBoyPhysicalControl != control || mPipBoyPhysicalControlDirection != direction;
+        mPipBoyPhysicalControl = control;
+        mPipBoyPhysicalControlDirection = direction;
+        MWBase::Environment::get().getWindowManager()->setCursorActive(true);
+        if (changed)
+            Log(Debug::Info) << "FNV Pip-Boy physical ray focus: control=" << mPipBoyPhysicalControl
+                             << " direction=" << mPipBoyPhysicalControlDirection;
+        return true;
+    }
+
     bool VRGUIManager::hasFocus() const
     {
-        return mFocusLayer != nullptr;
+        return mFocusLayer != nullptr || !mPipBoyPhysicalControl.empty();
+    }
+
+    bool VRGUIManager::hasPipBoyFocus() const
+    {
+        return !mPipBoyPhysicalControl.empty()
+            || (mFocusLayer != nullptr && isPipBoyDeviceLayer(mFocusLayer->mLayerName));
+    }
+
+    void VRGUIManager::setPipBoyInteractionActive(bool active)
+    {
+        mPipBoyInteractionActive = active && hasPipBoyFocus();
+    }
+
+    bool VRGUIManager::hasActivePipBoyInteraction() const
+    {
+        return mPipBoyInteractionActive && hasPipBoyFocus();
     }
 
     void VRGUIManager::update(osg::NodeVisitor* nv)
@@ -1130,6 +1172,9 @@ namespace MWVR
     bool VRGUIManager::injectMouseClick()
     {
         // TODO: This relies on a MyGUI internal functions and may break un any future version.
+        if (!mPipBoyPhysicalControl.empty())
+            return MWBase::Environment::get().getWindowManager()->handleFalloutPipBoyPhysicalControl(
+                mPipBoyPhysicalControl, mPipBoyPhysicalControlDirection);
         if (mFocusLayer && mFocusLayer->mLayerName == "PipBoyScreen")
         {
             MWBase::Environment::get().getWindowManager()->handleFalloutPipBoyPointerClick(

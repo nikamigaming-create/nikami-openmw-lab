@@ -40,6 +40,7 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/esm4/loadwrld.hpp>
 
 #include <components/misc/constants.hpp>
@@ -87,6 +88,7 @@
 #include "../mwmechanics/spellcasting.hpp"
 #include "../mwmechanics/spellutil.hpp"
 #include "../mwmechanics/summoning.hpp"
+#include "../mwmechanics/weapontype.hpp"
 
 #include "../mwrender/animation.hpp"
 #include "../mwrender/camera.hpp"
@@ -4423,12 +4425,11 @@ namespace MWWorld
                     //  VR should aim from the HAND unless it's KBMouseMode
                     if (aimFromVRPointer)
                     {
-                        auto* node = MWVR::VRInputManager::instance().vrAimNode();
-                        if (node)
+                        if (const std::optional<osg::Matrix> worldMatrix
+                            = MWVR::VRInputManager::instance().vrAimWorldMatrix())
                         {
-                            auto worldMatrix = osg::computeLocalToWorld(node->getParentalNodePaths()[0]);
-                            origin = worldMatrix.getTrans();
-                            orient = worldMatrix.getRotate();
+                            origin = worldMatrix->getTrans();
+                            orient = worldMatrix->getRotate();
                         }
                     }
                     // ## VR_PATCH END
@@ -4535,6 +4536,13 @@ namespace MWWorld
         return mProjectileManager != nullptr
             && mProjectileManager->launchFalloutHitscanTracer(
                 projectile, origin, destination, impactNormal);
+    }
+
+    bool World::launchFalloutShellCasing(const MWWorld::Ptr& actor, VFS::Path::NormalizedView model,
+        const osg::Matrixf& ejectionFrame)
+    {
+        return mProjectileManager != nullptr
+            && mProjectileManager->launchFalloutShellCasing(actor, model, ejectionFrame);
     }
 
     std::size_t World::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)
@@ -5432,11 +5440,23 @@ namespace MWWorld
             MWWorld::ConstContainerStoreIterator it = invStore.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
             if (it != invStore.end())
             {
-                if (it->getTypeDescription() == "Weapon")
+                if (it->getType() == ESM::Weapon::sRecordId)
                     return ESM::Weapon::Type(it->get<ESM::Weapon>()->mBase->mData.mType);
-                if (it->getTypeDescription() == "Lockpick")
+                if (it->getType() == ESM4::Weapon::sRecordId)
+                {
+                    const ESM4::Weapon* const weapon = it->get<ESM4::Weapon>()->mBase;
+                    const std::optional<int> falloutType
+                        = MWMechanics::getFalloutWeaponType(weapon->mData.animationType);
+                    if (falloutType)
+                        return *falloutType;
+                    Log(Debug::Warning) << "FNV VR active weapon has invalid DNAM animation type "
+                                        << static_cast<unsigned int>(weapon->mData.animationType) << ": "
+                                        << weapon->mEditorId;
+                    return ESM::Weapon::Type::None;
+                }
+                if (it->getType() == ESM::Lockpick::sRecordId)
                     return ESM::Weapon::Type::PickProbe;
-                if (it->getTypeDescription() == "Probe")
+                if (it->getType() == ESM::Probe::sRecordId)
                     return ESM::Weapon::Type::PickProbe;
             }
             return ESM::Weapon::Type::HandToHand;
@@ -5495,11 +5515,11 @@ namespace MWWorld
             * (!weapon.isEmpty() ? weapon.get<ESM::Weapon>()->mBase->mData.mReach
                                  : store.find("fHandToHandReach")->mValue.getFloat());
 
-        auto* node = MWVR::VRInputManager::instance().vrAimNode();
-        if (!node)
+        const std::optional<osg::Matrix> worldMatrix
+            = MWVR::VRInputManager::instance().vrAimWorldMatrix();
+        if (!worldMatrix)
             return std::nullopt;
-        auto worldMatrix = osg::computeLocalToWorld(node->getParentalNodePaths()[0]);
-        auto result = mPhysics->getHitContact(ptr, worldMatrix.getTrans(), worldMatrix.getRotate(), distance);
+        auto result = mPhysics->getHitContact(ptr, worldMatrix->getTrans(), worldMatrix->getRotate(), distance);
         if (result.first.isEmpty())
             return std::nullopt;
         Log(Debug::Verbose) << "Hit: " << result.first.getTypeDescription();

@@ -120,7 +120,7 @@ namespace MWWorld
         /// @return if stacking happened, return iterator to the item that was stacked against, otherwise iterator to
         /// the newly inserted item.
 
-        void equip(int slot, const ContainerStoreIterator& iterator);
+        void equip(int slot, const ContainerStoreIterator& iterator, bool applyUpdates = true);
         ///< \warning \a iterator can not be an end()-iterator, use unequip function instead
 
         bool isEquipped(const MWWorld::ConstPtr& item);

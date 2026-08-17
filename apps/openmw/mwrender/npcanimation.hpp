@@ -98,7 +98,8 @@ namespace MWRender
         NpcType getNpcType() const;
 
         PartHolderPtr insertBoundedPart(VFS::Path::NormalizedView model, std::string_view bonename,
-            std::string_view bonefilter, bool enchantedGlow, osg::Vec4f* glowColor, bool isLight);
+            std::string_view bonefilter, bool enchantedGlow, osg::Vec4f* glowColor, bool isLight,
+            const osg::Quat* localAttitude = nullptr);
 
         void removeIndividualPart(ESM::PartReferenceType type);
         void reserveIndividualPart(ESM::PartReferenceType type, int group, int priority);

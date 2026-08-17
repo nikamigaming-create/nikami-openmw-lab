@@ -5538,6 +5538,23 @@ namespace MWRender
         return -1.f;
     }
 
+    bool Animation::hasFutureTextKey(std::string_view group, std::string_view event) const
+    {
+        const auto state = mStates.find(group);
+        if (state == mStates.end() || state->second.mSource == nullptr || !state->second.mPlaying
+            || event.empty())
+            return false;
+
+        const std::string qualified = std::string(group) + ": " + std::string(event);
+        const SceneUtil::TextKeyMap& keys = state->second.mSource->getTextKeys();
+        for (auto key = keys.lowerBound(state->second.getTime()); key != keys.end(); ++key)
+        {
+            if (key->second == event || key->second == qualified)
+                return true;
+        }
+        return false;
+    }
+
     void Animation::handleTextKey(AnimState& state, std::string_view groupname,
         SceneUtil::TextKeyMap::ConstIterator key, const SceneUtil::TextKeyMap& map)
     {
@@ -8257,7 +8274,12 @@ namespace MWRender
             if (mNode->getNumParents() > 1)
                 Log(Debug::Verbose) << "Part \"" << mNode->getName() << "\" has multiple (" << mNode->getNumParents()
                                     << ") parents";
-            mNode->getParent(0)->removeChild(mNode);
+            while (mNode->getNumParents() > 0)
+            {
+                osg::Group* const parent = mNode->getParent(0);
+                if (parent == nullptr || !parent->removeChild(mNode))
+                    break;
+            }
         }
     }
 }

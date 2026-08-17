@@ -1280,6 +1280,42 @@ namespace MWMechanics
             && !guiMode && weaponDrawn && useDown;
     }
 
+    std::optional<FalloutShellCasingMotion> buildFalloutShellCasingMotion(
+        const FalloutShellCasingTuning& tuning, const osg::Quat& ejectionWorldOrientation,
+        const osg::Vec2f& directionSample, const osg::Vec3f& rotationAxisSample,
+        float rotationSpeedSample) noexcept
+    {
+        const auto finite = [](float value) { return std::isfinite(value); };
+        if (!finite(tuning.mEjectSpeed) || tuning.mEjectSpeed <= 0.f
+            || !finite(tuning.mDirectionRandomize) || tuning.mDirectionRandomize < 0.f
+            || !finite(tuning.mRotateSpeedDegrees) || tuning.mRotateSpeedDegrees < 0.f
+            || !finite(tuning.mRotateRandomize) || tuning.mRotateRandomize < 0.f
+            || !finite(tuning.mLifetime) || tuning.mLifetime <= 0.f
+            || !finite(tuning.mCameraDistance) || tuning.mCameraDistance <= 0.f
+            || !finite(directionSample.x()) || !finite(directionSample.y())
+            || std::abs(directionSample.x()) > 1.f || std::abs(directionSample.y()) > 1.f
+            || !finite(rotationAxisSample.x()) || !finite(rotationAxisSample.y())
+            || !finite(rotationAxisSample.z()) || rotationAxisSample.length2() <= 0.f
+            || !finite(rotationSpeedSample) || std::abs(rotationSpeedSample) > 1.f)
+            return std::nullopt;
+
+        osg::Vec3f localDirection(directionSample.x() * tuning.mDirectionRandomize,
+            directionSample.y() * tuning.mDirectionRandomize, 1.f);
+        if (localDirection.normalize() == 0.f)
+            return std::nullopt;
+        osg::Vec3f worldDirection = ejectionWorldOrientation * localDirection;
+        osg::Vec3f rotationAxis = ejectionWorldOrientation * rotationAxisSample;
+        if (worldDirection.normalize() == 0.f || rotationAxis.normalize() == 0.f)
+            return std::nullopt;
+
+        const float rotationDegrees
+            = tuning.mRotateSpeedDegrees * (1.f + tuning.mRotateRandomize * rotationSpeedSample);
+        if (!finite(rotationDegrees))
+            return std::nullopt;
+        return FalloutShellCasingMotion{ worldDirection * tuning.mEjectSpeed, rotationAxis,
+            osg::DegreesToRadians(rotationDegrees) };
+    }
+
     FalloutAttackDeliveryEvent getFalloutAttackDeliveryEvent(
         std::uint8_t animationType, bool authoredHitscan, bool automatic) noexcept
     {

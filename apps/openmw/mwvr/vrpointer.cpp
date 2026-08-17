@@ -35,6 +35,7 @@
 #include "../mwgui/draganddrop.hpp"
 #include "../mwgui/inventorywindow.hpp"
 #include "../mwgui/itemmodel.hpp"
+#include "../mwgui/mode.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/security.hpp"
@@ -51,13 +52,62 @@ namespace MWVR
 {
     namespace
     {
+        std::string normalizedNodeName(std::string name)
+        {
+            std::transform(name.begin(), name.end(), name.begin(),
+                [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+            return name;
+        }
+
+        std::string falloutPipBoyPhysicalControl(const MWRender::RayResult& ray)
+        {
+            for (auto it = ray.mHitNodePath.rbegin(); it != ray.mHitNodePath.rend(); ++it)
+            {
+                const std::string lowered = normalizedNodeName(*it);
+                if (lowered.starts_with("pipboybutton01"))
+                    return "PipBoyButton01";
+                if (lowered.starts_with("pipboybutton02"))
+                    return "PipBoyButton02";
+                if (lowered.starts_with("pipboybutton03"))
+                    return "PipBoyButton03";
+                if (lowered.starts_with("tabknob"))
+                    return "TabKnob";
+                if (lowered.starts_with("scrollknob"))
+                    return "ScrollKnob";
+            }
+            return {};
+        }
+
+        int falloutPipBoyPhysicalControlDirection(
+            const MWRender::RayResult& ray, std::string_view control)
+        {
+            float centerZ = 0.f;
+            float halfHeight = 0.f;
+            if (control == "TabKnob")
+            {
+                centerZ = 0.208f;
+                halfHeight = 0.40f;
+            }
+            else if (control == "ScrollKnob")
+                halfHeight = 1.20f;
+            else
+                return 0;
+
+            // Keep a neutral band around the spindle so tiny hand tremors cannot reverse a selection. A center
+            // click retains the legacy clockwise/next behavior; the upper and lower lobes select opposite detents.
+            const float delta = ray.mHitPointLocal.z() - centerZ;
+            const float deadZone = halfHeight * 0.18f;
+            if (delta > deadZone)
+                return -1;
+            if (delta < -deadZone)
+                return 1;
+            return 0;
+        }
+
         bool isPipBoyScreenHit(const MWRender::RayResult& ray)
         {
             return std::any_of(ray.mHitNodePath.begin(), ray.mHitNodePath.end(), [](const std::string& name) {
-                std::string lowered = name;
-                std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-                return lowered.starts_with("pipboyscreen");
+                return normalizedNodeName(name).starts_with("pipboyscreen");
             });
         }
 
@@ -135,7 +185,7 @@ namespace MWVR
     UserPointer::UserPointer(osg::Group* root)
         : mRoot(root)
     {
-        mSpaceTransform = new VR::SpaceTransform();
+        mSpaceTransform = new osg::MatrixTransform;
         mSpaceTransform->setNodeMask(MWRender::VisMask::Mask_Pointer);
         mSpaceTransform->setName("VR Pointer deformation");
         mCrosshair = std::make_unique<Crosshair>(mSpaceTransform, osg::Vec3f(1.f, 0.f, 0.f), 1.f, 0.f, true);
@@ -147,8 +197,48 @@ namespace MWVR
 
     void UserPointer::setSource(std::shared_ptr<VR::Space> space)
     {
+        if (mSpace != space)
+        {
+            mTrackingPoseValid = false;
+            mTrackingPoseMissFrames = 0;
+        }
         mSpace = space;
-        mSpaceTransform->setSpace(mSpace);
+    }
+
+    void UserPointer::updateTrackingPose()
+    {
+        if (mSpace == nullptr)
+        {
+            mTrackingPoseValid = false;
+            mTrackingPoseMissFrames = 0;
+        }
+        else
+        {
+            const VR::TrackingPose trackingPose = mSpace->locateInWorld();
+            if (!!trackingPose.status)
+            {
+                mTrackingPose = trackingPose.pose;
+                mTrackingPoseValid = true;
+                mTrackingPoseMissFrames = 0;
+            }
+            else
+            {
+                // Retain one coherent ray/beam pose across brief runtime tracking gaps, then fail closed. The cached
+                // pose is consumed by both rendering and intersection so the visible beam cannot disagree with it.
+                if (!mTrackingPoseValid || ++mTrackingPoseMissFrames > 8)
+                    mTrackingPoseValid = false;
+            }
+        }
+
+        if (!mTrackingStateInitialized || mTrackingPoseValid != mLastLoggedTrackingPoseValid)
+        {
+            mTrackingStateInitialized = true;
+            mLastLoggedTrackingPoseValid = mTrackingPoseValid;
+            Log(mTrackingPoseValid ? Debug::Info : Debug::Warning)
+                << "OpenMW VR pointer tracking valid=" << mTrackingPoseValid
+                << " sourcePresent=" << (mSpace != nullptr)
+                << " retainedMissFrames=" << mTrackingPoseMissFrames;
+        }
     }
 
     void UserPointer::activate()
@@ -243,7 +333,34 @@ namespace MWVR
 
     void UserPointer::update()
     {
-        auto pose = Util::getNodePose(mSpaceTransform);
+        const auto clearInactivePointer = [&]() {
+            mPointerRay = {};
+            mPointerTarget = nullptr;
+            mLastPipBoyRayValid = false;
+            mLastPipBoyTarget = nullptr;
+            mPipBoyMissFrames = 0;
+            mDistanceToPointerTarget = -1.f;
+            mCanPlaceObject = false;
+            mCrosshair->setStretch(0.f);
+            mCrosshair->hide();
+            MWVR::FNVXRLiveFrameSurface::instance().updateFocus(nullptr, osg::Vec3(0, 0, 0));
+            MWVR::VRGUIManager::instance().updateFocus(nullptr, osg::Vec3(0, 0, 0));
+        };
+        if (mSpace == nullptr)
+        {
+            mTrackingPoseMissFrames = 0;
+            clearInactivePointer();
+            return;
+        }
+
+        if (!mTrackingPoseValid)
+        {
+            clearInactivePointer();
+            return;
+        }
+        const Stereo::Pose pose = mTrackingPose;
+        mSpaceTransform->setMatrix(
+            osg::Matrix::rotate(pose.orientation) * osg::Matrix::translate(pose.position.asMWUnits()));
         MWBase::WindowManager* const windowManager = MWBase::Environment::get().getWindowManager();
         const bool guiMode = windowManager->isGuiMode();
         unsigned int ignoreMask = MWRender::Mask_3DGUI_NonIntersectable;
@@ -252,21 +369,54 @@ namespace MWVR
             ignoreMask |= MWRender::Mask_Scene;
 
         bool hitWornPipBoy = false;
-        if (!guiMode && isFalloutVrWorld())
+        const bool physicalPipBoyGui = guiMode && windowManager->isFalloutPipBoyPhysicalPresentation()
+            && windowManager->containsMode(MWGui::GM_Inventory);
+        if ((!guiMode || physicalPipBoyGui) && isFalloutVrWorld())
         {
             MWRender::RayResult wornRay;
-            // The worn Pip-Boy stays live during gameplay, so isGuiMode() is
-            // intentionally false here.  Do not inherit the short world-use
-            // ray from getPoseTarget(): the controller aim origin sits at the
-            // opposite hand and can be farther away than that limit.  Match
-            // the established OpenMW VR menu-pointer reach while restricting
-            // this first-person pass to the worn surface.
+            // The worn Pip-Boy remains the presentation surface both before and after GM_Inventory opens.
+            // Restrict this pass to that physical mode instead of dropping back to getPoseTarget() merely because
+            // isGuiMode() became true: the generic GUI ray masks first-person geometry and can never hit the screen.
+            // Do not inherit the short world-use ray either; the opposite-hand controller can be farther away.
             MWBase::World* const world = MWBase::Environment::get().getWorld();
             const osg::Vec3f origin = pose.position.asMWUnits();
             osg::Vec3f direction = pose.orientation * osg::Vec3f(0.f, 1.f, 0.f);
             direction.normalize();
             const std::optional<osg::Vec3f> screenCenter
                 = world->getRenderingManager()->findDrawableWorldCenterByPrefix("pipboyscreen");
+            const bool calibratingPointer = std::getenv("OPENMW_FNV_VR_POINTER_CALIBRATION") != nullptr;
+            static osg::Vec3f lastControlFixtureDirection(100.f, 100.f, 100.f);
+            if (calibratingPointer && (direction - lastControlFixtureDirection).length2() > 1e-8f)
+            {
+                lastControlFixtureDirection = direction;
+                for (const char* control : { "PipBoyButton01", "PipBoyButton02", "PipBoyButton03", "TabKnob",
+                         "ScrollKnob" })
+                {
+                    const std::optional<osg::Vec3f> center
+                        = world->getRenderingManager()->findDrawableWorldCenterByPrefix(control);
+                    if (!center)
+                    {
+                        Log(Debug::Error) << "FNV Pip-Boy physical ray fixture: control=" << control
+                                          << " found=0";
+                        continue;
+                    }
+                    osg::Vec3f targetDirection = *center - origin;
+                    const float targetDistance = targetDirection.normalize();
+                    const MWRender::RayResult fixtureRay
+                        = world->getRenderingManager()->castRayToNodePathPrefix(origin, *center, "pipboycontrol",
+                            false, false, 0u);
+                    const std::string fixtureHit = falloutPipBoyPhysicalControl(fixtureRay);
+                    Log(Debug::Info) << "FNV Pip-Boy physical ray fixture: control=" << control
+                                     << " found=1 center=(" << center->x() << ',' << center->y() << ','
+                                     << center->z() << ") origin=(" << origin.x() << ',' << origin.y() << ','
+                                     << origin.z() << ") direction=(" << direction.x() << ',' << direction.y()
+                                     << ',' << direction.z() << ") targetDirection=(" << targetDirection.x() << ','
+                                     << targetDirection.y() << ',' << targetDirection.z() << ") targetDistance="
+                                     << targetDistance << " alignment=" << (direction * targetDirection)
+                                     << " directCastHit=" << (fixtureRay.mHit ? 1 : 0)
+                                     << " hitControl=" << (fixtureHit.empty() ? "<none>" : fixtureHit);
+                }
+            }
             static unsigned int rayTelemetryFrame = 0;
             if (screenCenter && (++rayTelemetryFrame % 30u) == 1u)
             {
@@ -281,16 +431,49 @@ namespace MWVR
                                  << (direction * targetDirection);
             }
             const float maxDistance = world->getMaxActivationDistance() * 50.f;
-            wornRay = world->getRenderingManager()->castRayToNodePathPrefix(origin,
-                origin + direction * maxDistance, "pipboyscreen", false, false,
-                0u);
+            const osg::Vec3f rayEnd = origin + direction * maxDistance;
+            // Resolve the live post-skin display explicitly. The combined physical-control traversal starts at
+            // the Pip-Boy root so it can reach every button/knob, but an oversized control bound can otherwise
+            // prevent the exact screen-drawable fallback from running at all. Cast both authored surfaces and
+            // keep the nearest intersection so the beam reaches the display without making the controls inert.
+            MWRender::RayResult screenRay = world->getRenderingManager()->castRayToNodePathPrefix(
+                origin, rayEnd, "pipboyscreen", false, false, 0u);
+            MWRender::RayResult controlRay = world->getRenderingManager()->castRayToNodePathPrefix(
+                origin, rayEnd, "pipboycontrol", false, false, 0u);
+            if (screenRay.mHit && (!controlRay.mHit || screenRay.mRatio <= controlRay.mRatio))
+                wornRay = std::move(screenRay);
+            else
+                wornRay = std::move(controlRay);
             const float wornDistance = wornRay.mHit ? wornRay.mRatio * maxDistance : 0.f;
-            if (wornRay.mHit && isPipBoyScreenHit(wornRay))
+            if (wornRay.mHit
+                && (isPipBoyScreenHit(wornRay) || !falloutPipBoyPhysicalControl(wornRay).empty()))
             {
                 mPointerRay = std::move(wornRay);
                 mDistanceToPointerTarget = wornDistance;
                 hitWornPipBoy = true;
+                mLastPipBoyRay = mPointerRay;
+                mLastPipBoyTarget = mPointerRay.mHitNode;
+                mLastPipBoyDirection = direction;
+                mPipBoyMissFrames = 0;
+                mLastPipBoyRayValid = true;
             }
+            else if (physicalPipBoyGui && mLastPipBoyRayValid && mPipBoyMissFrames < 8
+                && (direction * mLastPipBoyDirection) >= 0.99863f)
+            {
+                // Retain a valid physical-screen/control hit for a few XR frames while the ray jitters across a
+                // triangle seam or control edge. A deliberate move of roughly three degrees drops the latch at once.
+                ++mPipBoyMissFrames;
+                mPointerRay = mLastPipBoyRay;
+                mPointerRay.mHitNode = mLastPipBoyTarget.get();
+                mDistanceToPointerTarget = mPointerRay.mRatio * maxDistance;
+                hitWornPipBoy = true;
+            }
+        }
+        else
+        {
+            mLastPipBoyRayValid = false;
+            mLastPipBoyTarget = nullptr;
+            mPipBoyMissFrames = 0;
         }
         if (!hitWornPipBoy)
             mDistanceToPointerTarget = Util::getPoseTarget(mPointerRay, pose, true, ignoreMask);
@@ -319,6 +502,9 @@ namespace MWVR
                 // The same OpenMW ray/click path now targets the UI texture on
                 // the authored wrist mesh; no surrogate GUI quad is involved.
             }
+            else if (const std::string control = falloutPipBoyPhysicalControl(mPointerRay); !control.empty())
+                MWVR::VRGUIManager::instance().updatePipBoyControlFocus(
+                    control, falloutPipBoyPhysicalControlDirection(mPointerRay, control));
             else
                 MWVR::VRGUIManager::instance().updateFocus(mPointerRay.mHitNode, mPointerRay.mHitPointLocal);
         }

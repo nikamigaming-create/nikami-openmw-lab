@@ -2,6 +2,7 @@
 
 #include <osg/Depth>
 #include <osg/MatrixTransform>
+#include <osg/PositionAttitudeTransform>
 #include <osg/UserDataContainer>
 
 #include <cstdlib>
@@ -624,6 +625,30 @@ namespace MWRender
         mAmmunition.reset();
 
         const MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
+        bool preserveVrFalloutWeaponPart = false;
+        if (mViewMode == VM_VRFirstPerson && mObjectParts[ESM::PRT_Weapon] != nullptr)
+        {
+            const MWWorld::ConstContainerStoreIterator weapon
+                = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+            if (weapon != inv.end() && weapon->getType() == ESM4::Weapon::sRecordId)
+            {
+                const ESM4::Weapon* const record = weapon->get<ESM4::Weapon>()->mBase;
+                const VFS::Path::Normalized model = weapon->getClass().getCorrectedModel(*weapon);
+                std::string boundModel;
+                std::string boundId;
+                int boundAnimationType = -1;
+                preserveVrFalloutWeaponPart
+                    = mObjectParts[ESM::PRT_Weapon]->getNode()->getUserValue(
+                          "openmwBoundWeaponModel", boundModel)
+                    && mObjectParts[ESM::PRT_Weapon]->getNode()->getUserValue(
+                        "openmwBoundWeaponId", boundId)
+                    && mObjectParts[ESM::PRT_Weapon]->getNode()->getUserValue(
+                        "openmwBoundWeaponAnimationType", boundAnimationType)
+                    && boundModel == model.value()
+                    && boundId == weapon->getCellRef().getRefId().toDebugString()
+                    && boundAnimationType == static_cast<int>(record->mData.animationType);
+            }
+        }
         for (size_t i = 0; i < slotlistsize && mViewMode != VM_HeadOnly; i++)
         {
             if (std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr && mPtr == MWMechanics::getPlayer()
@@ -636,7 +661,11 @@ namespace MWRender
 
             MWWorld::ConstContainerStoreIterator store = inv.getSlot(slotlist[i].mSlot);
 
-            removePartGroup(slotlist[i].mSlot);
+            // A VR Fallout weapon is a persistent rigid fixture. Unrelated equipment/state notifications must not
+            // destroy and recreate the same native part; showWeapons synchronizes it when identity actually changes.
+            if (slotlist[i].mSlot != MWWorld::InventoryStore::Slot_CarriedRight
+                || !preserveVrFalloutWeaponPart)
+                removePartGroup(slotlist[i].mSlot);
 
             if (store == inv.end())
                 continue;
@@ -724,9 +753,33 @@ namespace MWRender
     }
 
     PartHolderPtr NpcAnimation::insertBoundedPart(VFS::Path::NormalizedView model, std::string_view bonename,
-        std::string_view bonefilter, bool enchantedGlow, osg::Vec4f* glowColor, bool isLight)
+        std::string_view bonefilter, bool enchantedGlow, osg::Vec4f* glowColor, bool isLight,
+        const osg::Quat* localAttitude)
     {
         osg::ref_ptr<osg::Node> attached = attach(model, bonename, bonefilter, isLight);
+        if (attached != nullptr && localAttitude != nullptr)
+        {
+            if (osg::PositionAttitudeTransform* transform
+                = dynamic_cast<osg::PositionAttitudeTransform*>(attached.get()))
+            {
+                // OSG products apply left-to-right. The model adapter belongs before the authored PAT/BoneOffset.
+                transform->setAttitude(*localAttitude * transform->getAttitude());
+            }
+            else if (attached->getNumParents() == 1)
+            {
+                osg::Group* const parent = attached->getParent(0);
+                if (parent->removeChild(attached.get()))
+                {
+                    osg::ref_ptr<osg::PositionAttitudeTransform> transform
+                        = new osg::PositionAttitudeTransform;
+                    transform->setName("FNV VR Native Weapon Socket Adapter");
+                    transform->setAttitude(*localAttitude);
+                    transform->addChild(attached.get());
+                    parent->addChild(transform.get());
+                    attached = std::move(transform);
+                }
+            }
+        }
         if (enchantedGlow)
             mGlowUpdater = SceneUtil::addEnchantedGlow(attached, mResourceSystem, *glowColor);
 
@@ -807,29 +860,132 @@ namespace MWRender
         try
         {
             std::string_view bonename = sPartList.at(type);
+            const osg::Quat* localAttitude = nullptr;
+            osg::Vec3f falloutWeaponGripFixture;
+            osg::Vec3f falloutWeaponSecondaryAxis(1.f, 0.f, 0.f);
+            bool falloutWeaponFixture = false;
+            bool falloutMeleeFixture = false;
+            bool falloutGripFixtureCalibrated = false;
+            bool falloutTriggerFixtureCalibrated = false;
+            osg::Vec3f falloutTriggerFixture;
+            std::string falloutWeaponRecordId;
+            int falloutWeaponAnimationType = -1;
+            int falloutWeaponBindSerial = 0;
             if (type == ESM::PRT_Weapon)
             {
                 const MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
                 MWWorld::ConstContainerStoreIterator weapon = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                std::string_view weaponBonename;
                 if (weapon != inv.end() && weapon->getType() == ESM::Weapon::sRecordId)
                 {
-                    int weaponType = weapon->get<ESM::Weapon>()->mBase->mData.mType;
-                    const std::string& weaponBonename = MWMechanics::getWeaponType(weaponType)->mAttachBone;
-
-                    if (weaponBonename != bonename)
+                    const int weaponType = weapon->get<ESM::Weapon>()->mBase->mData.mType;
+                    weaponBonename = MWMechanics::getWeaponType(weaponType)->mAttachBone;
+                }
+                else if (weapon != inv.end() && weapon->getType() == ESM4::Weapon::sRecordId)
+                {
+                    const ESM4::Weapon* const falloutWeapon = weapon->get<ESM4::Weapon>()->mBase;
+                    falloutWeaponRecordId = weapon->getCellRef().getRefId().toDebugString();
+                    falloutWeaponAnimationType = static_cast<int>(falloutWeapon->mData.animationType);
+                    static int sFalloutWeaponBindSerial = 0;
+                    falloutWeaponBindSerial = ++sFalloutWeaponBindSerial;
+                    if (const std::optional<int> weaponType
+                        = MWMechanics::getFalloutWeaponType(falloutWeapon->mData.animationType))
                     {
-                        const NodeMap& nodeMap = getNodeMap();
-                        NodeMap::const_iterator found = nodeMap.find(weaponBonename);
-                        if (found != nodeMap.end())
-                            bonename = weaponBonename;
+                        weaponBonename = MWMechanics::getWeaponType(*weaponType)->mAttachBone;
                     }
+                    if (weaponBonename.empty())
+                        weaponBonename = "Weapon";
+
+                    // Fallout held models and the first-person Weapon bone are a single authored attachment
+                    // contract.  Preserve the returned SceneUtil::attach node bit-for-bit: even an identity
+                    // adapter can introduce an extra wrapper for some asset shapes and bypass the stock path.
+                    const std::string_view model = mesh.value();
+                    const bool meleeModel = model.find("/1handmelee/") != std::string_view::npos
+                        || model.find("/2handmelee/") != std::string_view::npos;
+                    falloutWeaponFixture = true;
+                    falloutMeleeFixture = meleeModel;
+                    if (model.ends_with("/1handpistol/9mm.nif"))
+                    {
+                        // Diagnostic-only landmark. Placement remains the model's native attachment origin.
+                        falloutTriggerFixture = osg::Vec3f(3.4728675f, 1.3588f, 0.f);
+                        falloutTriggerFixtureCalibrated = true;
+                    }
+                    else if (model.ends_with("/2handrifle/varmintrifle.nif"))
+                    {
+                        // Diagnostic-only landmark. Placement remains the model's native attachment origin.
+                        falloutTriggerFixture = osg::Vec3f(3.5924482f, 1.6694129f, 0.0040491f);
+                        falloutTriggerFixtureCalibrated = true;
+                    }
+                    // Bethesda's first-person skeleton already orients its Weapon bone for the Fallout model
+                    // convention (+X barrel for firearms, +Y blade for melee). Preserve the native PAT exactly;
+                    // an additional +X-to-+Y adapter double-transposes that authored attachment.
+                }
+
+                if (!weaponBonename.empty() && weaponBonename != bonename)
+                {
+                    const NodeMap& nodeMap = getNodeMap();
+                    const NodeMap::const_iterator found = nodeMap.find(weaponBonename);
+                    if (found != nodeMap.end())
+                        bonename = weaponBonename;
                 }
             }
 
             // PRT_Hair seems to be the only type that breaks consistency and uses a filter that's different from the
             // attachment bone
             const std::string_view bonefilter = (type == ESM::PRT_Hair) ? std::string_view{ "hair" } : bonename;
-            mObjectParts[type] = insertBoundedPart(mesh, bonename, bonefilter, enchantedGlow, glowColor, isLight);
+            mObjectParts[type]
+                = insertBoundedPart(mesh, bonename, bonefilter, enchantedGlow, glowColor, isLight, localAttitude);
+            if (type == ESM::PRT_Weapon && mObjectParts[type] != nullptr)
+            {
+                mObjectParts[type]->getNode()->setUserValue("openmwBoundWeaponModel", std::string(mesh.value()));
+                if (falloutWeaponFixture)
+                {
+                    osg::Node* const weaponNode = mObjectParts[type]->getNode();
+                    weaponNode->setUserValue("openmwFalloutVrWeaponFixture", falloutWeaponFixture ? 1 : 0);
+                    weaponNode->setUserValue("openmwFalloutVrMeleeFixture", falloutMeleeFixture ? 1 : 0);
+                    weaponNode->setUserValue("openmwBoundWeaponId", falloutWeaponRecordId);
+                    weaponNode->setUserValue("openmwBoundWeaponAnimationType", falloutWeaponAnimationType);
+                    weaponNode->setUserValue("openmwBoundWeaponBindSerial", falloutWeaponBindSerial);
+                    weaponNode->setUserValue("openmwFalloutVrNativeAttachmentOrigin", 1);
+                    weaponNode->setUserValue(
+                        "openmwFalloutVrGripFixtureCalibrated", falloutGripFixtureCalibrated ? 1 : 0);
+                    if (falloutGripFixtureCalibrated)
+                    {
+                        weaponNode->setUserValue("openmwFalloutVrGripFixtureX", falloutWeaponGripFixture.x());
+                        weaponNode->setUserValue("openmwFalloutVrGripFixtureY", falloutWeaponGripFixture.y());
+                        weaponNode->setUserValue("openmwFalloutVrGripFixtureZ", falloutWeaponGripFixture.z());
+                    }
+                    weaponNode->setUserValue(
+                        "openmwFalloutVrTriggerFixtureCalibrated", falloutTriggerFixtureCalibrated ? 1 : 0);
+                    if (falloutTriggerFixtureCalibrated)
+                    {
+                        weaponNode->setUserValue("openmwFalloutVrTriggerFixtureX", falloutTriggerFixture.x());
+                        weaponNode->setUserValue("openmwFalloutVrTriggerFixtureY", falloutTriggerFixture.y());
+                        weaponNode->setUserValue("openmwFalloutVrTriggerFixtureZ", falloutTriggerFixture.z());
+                    }
+                    weaponNode->setUserValue("openmwFalloutVrSecondaryAxisX", falloutWeaponSecondaryAxis.x());
+                    weaponNode->setUserValue("openmwFalloutVrSecondaryAxisY", falloutWeaponSecondaryAxis.y());
+                    weaponNode->setUserValue("openmwFalloutVrSecondaryAxisZ", falloutWeaponSecondaryAxis.z());
+                }
+            }
+            if (falloutWeaponFixture && mObjectParts[type] != nullptr)
+            {
+                osg::Node* const node = mObjectParts[type]->getNode();
+                osg::Vec3f partPosition;
+                osg::Quat localRotation;
+                if (const osg::PositionAttitudeTransform* transform
+                    = dynamic_cast<const osg::PositionAttitudeTransform*>(node))
+                {
+                    partPosition = transform->getPosition();
+                    localRotation = transform->getAttitude();
+                }
+                Log(Debug::Info) << "OpenMW VR native weapon attachment: model=" << mesh.value()
+                                 << " parent=" << bonename << " adapter=none conversionCount=0"
+                                 << " localPosition=(" << partPosition.x() << ',' << partPosition.y() << ','
+                                 << partPosition.z() << ") localAttitude=(" << localRotation.x() << ','
+                                 << localRotation.y() << ',' << localRotation.z() << ',' << localRotation.w()
+                                 << ") handSkeletonChanged=0 duplicateSurface=0";
+            }
         }
         catch (std::exception& e)
         {
@@ -996,15 +1152,68 @@ namespace MWRender
             MWWorld::ConstContainerStoreIterator weapon = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
             if (weapon != inv.end())
             {
-                // Native Fallout weapons are attached by the ESM4 player-equipment bridge using the retail
-                // Bip01 weapon nodes. The ESM3 part path targets "Weapon Bone", which does not exist in Fallout
-                // skeletons and used to emit an error every time a saved weapon was switched or redrawn.
-                if (weapon->getType() != ESM4::Weapon::sRecordId)
+                osg::Vec4f glowColor = weapon->getClass().getEnchantmentColor(*weapon);
+                const VFS::Path::Normalized mesh = weapon->getClass().getCorrectedModel(*weapon);
+                if (mesh.empty())
                 {
-                    osg::Vec4f glowColor = weapon->getClass().getEnchantmentColor(*weapon);
-                    const VFS::Path::Normalized mesh = weapon->getClass().getCorrectedModel(*weapon);
+                    // An empty/no-MODL right-hand slot cannot own the previous native part. Leaving it installed
+                    // makes pointer/equip visibility changes resurrect the last firearm under a new inventory ID.
+                    removeIndividualPart(ESM::PRT_Weapon);
+                    Log(Debug::Warning) << "OpenMW VR native equipped weapon rejected: reason=no-held-model"
+                                        << " slotId=" << weapon->getCellRef().getRefId().toDebugString();
+                }
+                else
+                {
+                    if (mObjectParts[ESM::PRT_Weapon] != nullptr)
+                    {
+                        std::string boundModel;
+                        osg::Node* const boundNode = mObjectParts[ESM::PRT_Weapon]->getNode();
+                        bool boundIdentity = boundNode->getUserValue("openmwBoundWeaponModel", boundModel)
+                            && boundModel == mesh.value();
+                        int falloutFixture = 0;
+                        const bool previouslyFallout = boundNode->getUserValue(
+                            "openmwFalloutVrWeaponFixture", falloutFixture) && falloutFixture != 0;
+                        if (weapon->getType() == ESM4::Weapon::sRecordId)
+                        {
+                            std::string boundId;
+                            int boundAnimationType = -1;
+                            const ESM4::Weapon* const falloutWeapon = weapon->get<ESM4::Weapon>()->mBase;
+                            boundIdentity = boundIdentity
+                                && boundNode->getUserValue("openmwBoundWeaponId", boundId)
+                                && boundNode->getUserValue(
+                                    "openmwBoundWeaponAnimationType", boundAnimationType)
+                                && boundId == weapon->getCellRef().getRefId().toDebugString()
+                                && boundAnimationType == static_cast<int>(falloutWeapon->mData.animationType);
+                        }
+                        else if (previouslyFallout)
+                            boundIdentity = false;
+                        if (!boundIdentity)
+                            removeIndividualPart(ESM::PRT_Weapon);
+                    }
                     addOrReplaceIndividualPart(ESM::PRT_Weapon, MWWorld::InventoryStore::Slot_CarriedRight, 1, mesh,
                         !weapon->getClass().getEnchantment(*weapon).empty(), &glowColor);
+                }
+                if (weapon->getType() == ESM4::Weapon::sRecordId)
+                {
+                    const ESM4::Weapon* const falloutWeapon = weapon->get<ESM4::Weapon>()->mBase;
+                    std::string boundModel;
+                    std::string boundId;
+                    int boundAnimationType = -1;
+                    const bool bound = mObjectParts[ESM::PRT_Weapon] != nullptr
+                        && mObjectParts[ESM::PRT_Weapon]->getNode()->getUserValue(
+                            "openmwBoundWeaponModel", boundModel)
+                        && mObjectParts[ESM::PRT_Weapon]->getNode()->getUserValue("openmwBoundWeaponId", boundId)
+                        && mObjectParts[ESM::PRT_Weapon]->getNode()->getUserValue(
+                            "openmwBoundWeaponAnimationType", boundAnimationType)
+                        && boundModel == mesh.value()
+                        && boundId == weapon->getCellRef().getRefId().toDebugString()
+                        && boundAnimationType == static_cast<int>(falloutWeapon->mData.animationType);
+                    Log(Debug::Info) << "OpenMW VR native equipped weapon: editor=" << falloutWeapon->mEditorId
+                                     << " model=" << mesh.value() << " attach=Weapon"
+                                     << " animationType="
+                                     << static_cast<unsigned int>(falloutWeapon->mData.animationType)
+                                     << " boundId=" << boundId << " boundAnimationType=" << boundAnimationType
+                                     << " boundIdentity=" << bound << " duplicateSurface=0";
                 }
 
                 // Crossbows start out with a bolt attached
@@ -1016,6 +1225,12 @@ namespace MWRender
                     if (ammo != inv.end() && ammo->get<ESM::Weapon>()->mBase->mData.mType == ammotype)
                         attachArrow();
                 }
+            }
+            else
+            {
+                // The authoritative carried-right slot is empty. Purge any retained Fallout fixture instead of
+                // allowing a later pointer-disable callback to show stale geometry.
+                removeIndividualPart(ESM::PRT_Weapon);
             }
         }
         else
@@ -1164,6 +1379,13 @@ namespace MWRender
     void NpcAnimation::setWeaponGroup(const std::string& group, bool relativeDuration)
     {
         mWeaponAnimationTime->setGroup(group, relativeDuration);
+        if (osg::Node* const weaponNode = getWeaponNode())
+        {
+            weaponNode->setUserValue("openmwWeaponAnimationGroup", group);
+            weaponNode->setUserValue("openmwWeaponAnimationRelative", relativeDuration ? 1 : 0);
+        }
+        Log(Debug::Info) << "OpenMW VR weapon animation boundary: group=" << group
+                         << " relative=" << relativeDuration;
     }
 
     void NpcAnimation::equipmentChanged()

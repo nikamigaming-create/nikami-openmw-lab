@@ -152,7 +152,7 @@ MWWorld::ContainerStoreIterator MWWorld::InventoryStore::add(
     return retVal;
 }
 
-void MWWorld::InventoryStore::equip(int slot, const ContainerStoreIterator& iterator)
+void MWWorld::InventoryStore::equip(int slot, const ContainerStoreIterator& iterator, bool applyUpdates)
 {
     if (iterator == end())
         throw std::runtime_error("can't equip end() iterator, use unequip function instead");
@@ -171,7 +171,9 @@ void MWWorld::InventoryStore::equip(int slot, const ContainerStoreIterator& iter
         throw std::runtime_error("invalid slot");
 
     if (mSlots[slot] != end())
-        unequipSlot(slot);
+        // Slot replacement is one atomic equipment change. Publishing the empty intermediate slot makes
+        // renderers destroy and rebuild the weapon twice and lets retiring equip controllers touch the new part.
+        unequipSlot(slot, false);
 
     // unstack item pointed to by iterator if required
     if (iterator != end() && !slots.second
@@ -184,7 +186,8 @@ void MWWorld::InventoryStore::equip(int slot, const ContainerStoreIterator& iter
 
     flagAsModified();
 
-    fireEquipmentChangedEvent();
+    if (applyUpdates)
+        fireEquipmentChangedEvent();
 }
 
 void MWWorld::InventoryStore::unequipAll()

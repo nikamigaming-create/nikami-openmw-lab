@@ -254,4 +254,26 @@ namespace
         EXPECT_EQ(weapon.mFirstPersonModel, "weapons/2handrifle/1stpersonvarmintrifle.nif");
         EXPECT_EQ(weapon.mIcon, "textures/interface/icons/weapons/varmintrifle.dds");
     }
+
+    TEST(Esm4WeaponTest, shouldParseRetail9mmShellCasingModelAndConsumeItsModelData)
+    {
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("WeapNV9mmPistol"));
+        appendSubRecord(payload, "MODL", zString("weapons\\1handpistol\\9mm.NIF"));
+        appendSubRecord(payload, "MOD2", zString("Projectiles\\45CalCasing.NIF"));
+
+        // MO2T is opaque model texture metadata. Consuming it must not disturb
+        // the following WEAP subrecord.
+        appendSubRecord(payload, "MO2T", std::string(24, '\x2a'));
+        appendSubRecord(payload, "ICON", zString("textures\\interface\\icons\\weapons\\9mmpistol.dds"));
+
+        auto reader = makeFnvWeaponReader(payload);
+        ESM4::Weapon weapon;
+        weapon.load(*reader);
+
+        EXPECT_EQ(weapon.mEditorId, "WeapNV9mmPistol");
+        EXPECT_EQ(weapon.mModel, "weapons\\1handpistol\\9mm.NIF");
+        EXPECT_EQ(weapon.mShellCasingModel, "Projectiles\\45CalCasing.NIF");
+        EXPECT_EQ(weapon.mIcon, "textures\\interface\\icons\\weapons\\9mmpistol.dds");
+    }
 }

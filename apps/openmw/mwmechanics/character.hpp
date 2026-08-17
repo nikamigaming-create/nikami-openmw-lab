@@ -143,6 +143,12 @@ namespace MWMechanics
         FalloutTriggerState mFalloutTriggerState;
         FalloutAttackDelivery mFalloutAttackDelivery;
         FalloutAttackDelivery mFalloutVatsAttackDelivery;
+        struct FalloutPendingShellCasing
+        {
+            ESM::FormId mWeapon;
+            std::string mAnimationGroup;
+        };
+        std::deque<FalloutPendingShellCasing> mFalloutPendingShellCasings;
         bool mFalloutVatsVisualAttackPrepared = false;
         bool mFalloutVatsReleaseReady = false;
         bool mFalloutReloadQueued = false;
@@ -241,6 +247,8 @@ namespace MWMechanics
         bool fireFalloutWeapon(const MWWorld::Ptr& vatsTarget = MWWorld::Ptr(),
             const std::optional<osg::Vec3f>& vatsAimPoint = std::nullopt,
             const FalloutVatsQueuedAction* vatsAction = nullptr, bool vatsTargetHit = true);
+        bool spawnFalloutShellCasing();
+        bool queueOrSpawnFalloutShellCasing();
         bool strikeFalloutMelee(std::uint8_t animationType);
         void updateIdleStormState(bool inwater) const;
 

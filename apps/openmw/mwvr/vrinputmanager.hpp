@@ -6,6 +6,7 @@
 #include <vector>
 #include <queue>
 #include <mutex>
+#include <optional>
 
 #include <components/vr/trackinglistener.hpp>
 #include <components/vr/session.hpp>
@@ -14,6 +15,7 @@
 #include "../mwworld/ptr.hpp"
 
 #include <osg/Vec2f>
+#include <osg/Matrix>
 
 namespace XR
 {
@@ -65,6 +67,12 @@ namespace MWVR
 
         osg::Node* vrAimNode() { return mVRAimNode; }
         const osg::Node* vrAimNode() const { return mVRAimNode; }
+        /// Return the production aim frame in world coordinates.  Absolute right-hand muzzle proxies are consumed
+        /// directly; legacy/fallback nodes are resolved only when they have an unambiguous scene path.
+        std::optional<osg::Matrix> vrAimWorldMatrix() const;
+        /// Return every authored production-emission frame for the current weapon bind. A multi-emitter retail
+        /// weapon supplies one frame per simultaneous projectile; ordinary weapons supply one.
+        const std::vector<osg::Matrix>& vrAimWorldMatrices() const { return mVRAimWorldMatrices; }
 
         void setPointerLeft(bool enabled);
         bool getPointerLeft() const;
@@ -114,6 +122,7 @@ namespace MWVR
         float mScrollSpeed = 0.f;
         float mScrollPoints = 0.f;
         osg::ref_ptr<osg::Node> mVRAimNode;
+        std::vector<osg::Matrix> mVRAimWorldMatrices;
         std::string mLastPointerSourceName;
         int mPointerSourceLogFrames = 0;
         bool mRetailSurfaceClickDown = false;

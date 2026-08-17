@@ -267,9 +267,13 @@ namespace SceneUtil
                 trans->setAttitude(boneOffset->getMatrix().getRotate());
                 trans->setScale(boneOffset->getMatrix().getScale());
 
-                // Now that we used it, get rid of the redundant node.
+                // Now that the authored helper transform lives on the outer attachment PAT, consume it exactly
+                // once. A non-leaf BoneOffset cannot simply be removed, but leaving its matrix in place applies
+                // the same translation/rotation/scale twice to modded held assets.
                 if (boneOffset->getNumChildren() == 0 && boneOffset->getNumParents() == 1)
                     boneOffset->getParent(0)->removeChild(boneOffset);
+                else
+                    boneOffset->setMatrix(osg::Matrix::identity());
             }
 
             if (attachNode->getName().find("Left") != std::string::npos)

@@ -710,6 +710,9 @@ namespace MWBase
             ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination,
             const osg::Vec3f& impactNormal)
             = 0;
+        virtual bool launchFalloutShellCasing(const MWWorld::Ptr& actor, VFS::Path::NormalizedView model,
+            const osg::Matrixf& ejectionFrame)
+            = 0;
     };
 }
 

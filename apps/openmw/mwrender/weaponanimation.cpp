@@ -126,12 +126,9 @@ namespace MWRender
         if (VR::getVR() && !VR::getKBMouseModeActive() && actor == MWMechanics::getPlayer())
         {
             // In VR weapon aim is taken from the real orientation of the weapon.
-            auto* node = MWVR::VRInputManager::instance().vrAimNode();
-            if (node)
-            {
-                auto worldMatrix = osg::computeLocalToWorld(node->getParentalNodePaths()[0]);
-                orient = SceneUtil::getRotationFromMatrix_SkewFriendly(worldMatrix);
-            }
+            if (const std::optional<osg::Matrix> worldMatrix
+                = MWVR::VRInputManager::instance().vrAimWorldMatrix())
+                orient = SceneUtil::getRotationFromMatrix_SkewFriendly(*worldMatrix);
         }
 
 //## VR_PATCH END

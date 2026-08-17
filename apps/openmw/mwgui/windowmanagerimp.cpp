@@ -438,39 +438,54 @@ namespace MWGui
                     case 0:
                     {
                         const ESM::RefId id = selected.getCellRef().getRefId();
-                        const std::string result
-                            = equip(id, MWWorld::InventoryStore::Slot_CarriedRight, selectedName);
-                        if (result.starts_with("EQUIPPED"))
-                        {
-                            player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
-                            const ESM4::Weapon& weapon = *selected.get<ESM4::Weapon>()->mBase;
-                            std::vector<ESM::FormId> ammoCandidates;
-                            if (store.get<ESM4::Ammunition>().search(weapon.mAmmo) != nullptr)
-                                ammoCandidates.push_back(weapon.mAmmo);
-                            else if (const ESM4::FormIdList* list
-                                = store.get<ESM4::FormIdList>().search(weapon.mAmmo))
-                                ammoCandidates = list->mObjects;
+                        MWWorld::ContainerStoreIterator weaponItem = findFalloutInventoryItem(inventory, id);
+                        if (weaponItem == inventory.end())
+                            return completeSelection("MISSING " + selectedName);
 
-                            const auto isOwnedAmmo = [&](ESM::FormId candidate) {
-                                return !candidate.isZeroOrUnset()
-                                    && store.get<ESM4::Ammunition>().search(candidate) != nullptr
-                                    && inventory.count(ESM::RefId::formIdRefId(candidate)) > 0;
-                            };
-                            const auto ownedAmmo = std::ranges::find_if(ammoCandidates, isOwnedAmmo);
-                            if (ownedAmmo != ammoCandidates.end())
-                            {
-                                const ESM::RefId ammunitionId = ESM::RefId::formIdRefId(*ownedAmmo);
-                                equip(ammunitionId, MWWorld::InventoryStore::Slot_Ammunition, "AMMUNITION");
-                                inventory.setFalloutAmmoSelection(id, ammunitionId);
-                            }
-                            else if (!ammoCandidates.empty())
-                                Log(Debug::Error) << "FNV Pip-Boy weapon equip: status=fail reason=no-owned-compatible-ammo"
-                                                  << " weapon=" << id << " authoredCandidates="
-                                                  << ammoCandidates.size();
-                            if (!inventory.getFalloutLoadedAmmo(id).has_value())
-                                inventory.setFalloutLoadedAmmo(id, 0);
+                        const ESM4::Weapon& weapon = *selected.get<ESM4::Weapon>()->mBase;
+                        std::vector<ESM::FormId> ammoCandidates;
+                        if (store.get<ESM4::Ammunition>().search(weapon.mAmmo) != nullptr)
+                            ammoCandidates.push_back(weapon.mAmmo);
+                        else if (const ESM4::FormIdList* list
+                            = store.get<ESM4::FormIdList>().search(weapon.mAmmo))
+                            ammoCandidates = list->mObjects;
+
+                        const auto isOwnedAmmo = [&](ESM::FormId candidate) {
+                            return !candidate.isZeroOrUnset()
+                                && store.get<ESM4::Ammunition>().search(candidate) != nullptr
+                                && inventory.count(ESM::RefId::formIdRefId(candidate)) > 0;
+                        };
+                        const auto ownedAmmo = std::ranges::find_if(ammoCandidates, isOwnedAmmo);
+                        MWWorld::ContainerStoreIterator ammunitionItem = inventory.end();
+                        ESM::RefId ammunitionId;
+                        if (ownedAmmo != ammoCandidates.end())
+                        {
+                            ammunitionId = ESM::RefId::formIdRefId(*ownedAmmo);
+                            ammunitionItem = findFalloutInventoryItem(inventory, ammunitionId);
                         }
-                        return completeSelection(result);
+                        const bool equipAmmunition = ammunitionItem != inventory.end();
+
+                        // Publish exactly one complete equipment state. The previous two independent equip calls
+                        // rebuilt/rebound the held weapon once for the weapon slot and again for the ammo slot.
+                        inventory.equip(MWWorld::InventoryStore::Slot_CarriedRight, weaponItem, !equipAmmunition);
+                        if (equipAmmunition)
+                        {
+                            inventory.equip(MWWorld::InventoryStore::Slot_Ammunition, ammunitionItem);
+                            inventory.setFalloutAmmoSelection(id, ammunitionId);
+                        }
+                        else if (!ammoCandidates.empty())
+                            Log(Debug::Error) << "FNV Pip-Boy weapon equip: status=fail reason=no-owned-compatible-ammo"
+                                              << " weapon=" << id << " authoredCandidates="
+                                              << ammoCandidates.size();
+                        if (!inventory.getFalloutLoadedAmmo(id).has_value())
+                            inventory.setFalloutLoadedAmmo(id, 0);
+                        player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
+                        MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(player);
+                        Log(Debug::Info) << "FNV Pip-Boy weapon equip transaction: weapon=" << id
+                                         << " ammo="
+                                         << (equipAmmunition ? ammunitionId.toDebugString() : std::string("none"))
+                                         << " equipmentEvents=1 forceStateUpdates=1";
+                        return completeSelection("EQUIPPED " + selectedName);
                     }
                     case 1:
                         return completeSelection(toggleWearable(selected, selectedName));
@@ -643,8 +658,7 @@ namespace MWGui
 //## VR_PATCH END
 
         const VFS::Manager* vfs = resourceSystem->getVFS();
-        const bool useFnvMissingGuiFallback = !VR::getVR()
-            && vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
+        const bool useFnvMissingGuiFallback = vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
             && !vfs->exists(VFS::Path::Normalized("textures/menu_thin_border_top.dds"));
         mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(useFnvMissingGuiFallback);
         if (useFnvMissingGuiFallback)
@@ -1040,7 +1054,8 @@ namespace MWGui
         mWindows.emplace_back(std::move(vrMetaMenu));
         mGuiModeStates[GM_VrMetaMenu] = GuiModeState(mVrMetaMenu);
 
-        auto radialMenu = std::make_unique<MWVR::RadialMenu>(w, h, mQuickKeysMenu);
+        auto radialMenu = std::make_unique<MWVR::RadialMenu>(
+            w, h, mQuickKeysMenu, mViewer->getSceneData()->asGroup(), mResourceSystem);
         mRadialMenu = radialMenu.get();
         mWindows.emplace_back(std::move(radialMenu));
         mGuiModeStates[GM_RadialMenu] = GuiModeState(mRadialMenu);
@@ -2531,6 +2546,52 @@ namespace MWGui
         return false;
     }
 
+    bool WindowManager::handleFalloutPipBoyPhysicalControl(std::string_view control, int direction)
+    {
+        if (!isFalloutContentLoaded() || !VR::getVR())
+            return false;
+
+        direction = direction < 0 ? -1 : 1;
+        int action = -1;
+        if (Misc::StringUtils::ciEqual(control, "PipBoyButton01"))
+            action = MWInput::A_QuickKey1; // STATUS
+        else if (Misc::StringUtils::ciEqual(control, "PipBoyButton02"))
+            action = MWInput::A_QuickKey2; // ITEMS
+        else if (Misc::StringUtils::ciEqual(control, "PipBoyButton03"))
+            action = MWInput::A_QuickKey3; // DATA
+        else if (Misc::StringUtils::ciEqual(control, "TabKnob"))
+        {
+            // The upper selector is a detented rotary control. Cycle through the four retail panes in their
+            // physical order, in either direction, and wrap at both ends.
+            static constexpr std::array<int, 4> paneOrder = { 3, 1, 2, 0 }; // STATUS, ITEMS, DATA, MAP
+            const int pane = getFalloutPipBoyActivePane();
+            const auto found = std::find(paneOrder.begin(), paneOrder.end(), pane);
+            const int current = found == paneOrder.end() ? 0 : static_cast<int>(found - paneOrder.begin());
+            const int next = (current + direction + static_cast<int>(paneOrder.size()))
+                % static_cast<int>(paneOrder.size());
+            static constexpr std::array<int, 4> paneActions = { MWInput::A_QuickKey1, MWInput::A_QuickKey2,
+                MWInput::A_QuickKey3, MWInput::A_QuickKey4 };
+            action = paneActions[next];
+        }
+        else if (Misc::StringUtils::ciEqual(control, "ScrollKnob"))
+        {
+            // The lower selector scrolls rows with wrap. On MAP it owns zoom, matching the visible rotary control
+            // instead of turning a click into a one-way pan step.
+            action = getFalloutPipBoyActivePane() == 0
+                ? (direction < 0 ? MWInput::A_ZoomIn : MWInput::A_ZoomOut)
+                : (direction < 0 ? MWInput::A_MoveForward : MWInput::A_MoveBackward);
+        }
+        else
+            return false;
+
+        const bool handled = handleFalloutPipBoyAction(action);
+        Log(handled ? Debug::Info : Debug::Error)
+            << "FNV Pip-Boy physical ray click: control=" << control << " action=" << action
+            << " direction=" << direction << " handled=" << handled << " pane=" << getFalloutPipBoyActivePane()
+            << " submenu=" << mFalloutPipBoySubmenu << " listOffset=" << mFalloutPipBoyListOffset;
+        return handled;
+    }
+
     void WindowManager::onFalloutPipBoyRetailItemClicked(MyGUI::Widget* sender)
     {
         if (sender == nullptr || (!VR::getVR() && (!mFalloutPipBoyPhysical || !containsMode(GM_Inventory)))
@@ -2633,7 +2694,8 @@ namespace MWGui
             }
             else if (pane == 2)
                 rowCount = dataRows[std::clamp(mFalloutPipBoySubmenu, 0, static_cast<int>(dataRows.size()) - 1)];
-            mFalloutPipBoyListOffset = std::clamp(mFalloutPipBoyListOffset + delta, 0, rowCount - 1);
+            mFalloutPipBoyListOffset
+                = (mFalloutPipBoyListOffset + delta + rowCount) % rowCount;
             changed = true;
         };
 

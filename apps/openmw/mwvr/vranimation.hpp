@@ -9,10 +9,12 @@
 
 #include <osg/MatrixTransform>
 #include <osg/Drawable>
+#include <osg/PositionAttitudeTransform>
 #include <osg/Texture2D>
 #include <osg/Vec4f>
 
 #include <string>
+#include <optional>
 #include <vector>
 
 namespace MWVR
@@ -20,10 +22,21 @@ namespace MWVR
     class HandController;
     class FingerController;
     class TrackingController;
+    class NativeWeaponBoneController;
     class Crosshair;
     class XrSpaceTransform;
 
     void updateVrDebugSnapshotControls();
+
+    struct CachedVrControllerPose
+    {
+        osg::Vec3f mWorldPosition;
+        osg::Quat mWorldOrientation;
+        bool mValid = false;
+    };
+
+    /// Returns the last pose sampled by the tracked-hand scene controller during a valid OpenXR frame.
+    std::optional<CachedVrControllerPose> getCachedVrControllerPose(std::string_view side);
 
     /// Subclassing NpcAnimation to implement VR related behaviour
     class VRAnimation : public MWRender::NpcAnimation, private VR::Session::Listener
@@ -57,9 +70,50 @@ namespace MWVR
         /// Overriden to include VR modifications
         void updateParts() override;
 
+        /// Route Fallout weapon parts through the same tracked aim space used by the OpenMW VR pointer.
+        void showWeapons(bool showWeapon) override;
+
         /// @return world transform that yields the position and orientation of the current weapon
-        osg::Node* getWeaponTransform() { return mWeaponDirectionTransform.get(); }
-        const osg::Node* getWeaponTransform() const { return mWeaponDirectionTransform.get(); }
+        osg::Node* getWeaponTransform()
+        {
+            return mFalloutVrWeaponRayWorldValid && mFalloutVrWeaponRayWorldNode != nullptr
+                ? mFalloutVrWeaponRayWorldNode.get()
+                : mWeaponDirectionTransform.get();
+        }
+        const osg::Node* getWeaponTransform() const
+        {
+            return mFalloutVrWeaponRayWorldValid && mFalloutVrWeaponRayWorldNode != nullptr
+                ? mFalloutVrWeaponRayWorldNode.get()
+                : mWeaponDirectionTransform.get();
+        }
+
+        struct FalloutVrNativeWeaponFrame
+        {
+            const osg::Node* mWeaponPart = nullptr;
+            const osg::Node* mProductionRay = nullptr;
+            osg::Matrix mProductionRayWorld;
+        };
+
+        /// Read-only snapshot for short-lived effects authored beneath the currently bound native weapon. Pointers
+        /// remain valid only for the current bind generation; callers must consume the snapshot immediately.
+        std::optional<FalloutVrNativeWeaponFrame> getFalloutVrNativeWeaponFrame() const
+        {
+            const osg::Node* const part = mObjectParts[ESM::PRT_Weapon] != nullptr
+                ? mObjectParts[ESM::PRT_Weapon]->getNode()
+                : nullptr;
+            if (!mFalloutVrWeaponRayWorldValid || part == nullptr || mFalloutVrWeaponRayNode == nullptr
+                || mFalloutVrWeaponRayWorldNode == nullptr)
+                return std::nullopt;
+            return FalloutVrNativeWeaponFrame{
+                part, mFalloutVrWeaponRayNode.get(), mFalloutVrWeaponRayWorldNode->getMatrix() };
+        }
+
+        /// Authored emission frames for the current bind in deterministic scene traversal order. Most weapons
+        /// expose one frame; retail multi-emitter meshes expose one frame per ProjectileNode.
+        const std::vector<osg::Matrix>& getFalloutVrWeaponEmissionFrames() const
+        {
+            return mFalloutVrWeaponRayWorldMatrices;
+        }
 
         /// Enable pointers
         void enablePointers(bool left, bool right);
@@ -72,6 +126,10 @@ namespace MWVR
 
         void updateSpace();
 
+        /// Publish the current authored muzzle frame from the tracked right-hand branch without choosing an
+        /// ambiguous scene-graph parental path.
+        void updateFalloutVrWeaponRayWorld();
+
         void modifyMovement(osg::Vec3& movement);
 
         struct FalloutVrHandSurface
@@ -80,7 +138,6 @@ namespace MWVR
             {
                 Hand,
                 PipBoy,
-                Weapon,
             };
 
             std::string model;
@@ -118,6 +175,7 @@ namespace MWVR
         void clearFalloutVrHandSurfaces();
         void attachFalloutVrHandSurfaces();
         void updateFalloutVrHandSurfaceVisibility();
+        void updateFalloutVrPipBoyInteractionScale();
 
         void enableTracking(XrPath path);
         void disableTracking(XrPath path);
@@ -147,6 +205,23 @@ namespace MWVR
         osg::ref_ptr<osg::MatrixTransform> mModelOffset;
         osg::ref_ptr<osg::MatrixTransform> mWeaponDirectionTransform;
         osg::ref_ptr<osg::MatrixTransform> mWeaponPointerTransform;
+        osg::ref_ptr<NativeWeaponBoneController> mNativeWeaponBoneController;
+        // Fallout production activation/combat rays originate at authored ProjectileNode helpers. Melee/thrown
+        // families may expose one immutable native family-axis child; firearms never guess a model axis.
+        osg::ref_ptr<osg::Node> mFalloutVrWeaponRayNode;
+        osg::ref_ptr<osg::MatrixTransform> mFalloutVrSyntheticWeaponRayNode;
+        std::vector<osg::ref_ptr<osg::MatrixTransform>> mFalloutVrSyntheticWeaponRayNodes;
+        osg::ref_ptr<osg::MatrixTransform> mFalloutVrWeaponRayWorldNode;
+        osg::Matrix mFalloutVrWeaponRayInRightHand;
+        osg::NodePath mFalloutVrWeaponRayPathFromRightHand;
+        std::vector<osg::Matrix> mFalloutVrWeaponRaysInRightHand;
+        std::vector<osg::Matrix> mFalloutVrWeaponRayWorldMatrices;
+        bool mFalloutVrWeaponRayInRightHandValid = false;
+        bool mFalloutVrWeaponRayWorldValid = false;
+        std::vector<osg::ref_ptr<osg::Node>> mFalloutVrNativeWeaponDebugNodes;
+        // The native OpenMW weapon stays on its authored skeleton Weapon attachment.  This node only publishes
+        // independent right-hand landmarks for diagnostics; it never becomes a weapon parent.
+        osg::ref_ptr<osg::Node> mFalloutVrRightPalmFrame;
 
         bool mRecenter = false;
         XrPath mLeftHandPath = XR_NULL_PATH;
@@ -156,6 +231,16 @@ namespace MWVR
         std::vector<FalloutVrHandSurface> mFalloutVrHandSurfaces;
         std::vector<osg::ref_ptr<osg::Node>> mFalloutVrHandSurfaceNodes;
         std::vector<osg::ref_ptr<osg::Node>> mFalloutVrPipBoySurfaceNodes;
+        struct PipBoyInteractionScaleTarget
+        {
+            osg::ref_ptr<osg::PositionAttitudeTransform> transform;
+            osg::Vec3f basePosition;
+            osg::Vec3f baseScale;
+            osg::Vec3f socketModel;
+        };
+        std::vector<PipBoyInteractionScaleTarget> mFalloutVrPipBoyInteractionScaleTargets;
+        bool mFalloutVrPipBoyInteractionFocused = false;
+        float mFalloutVrPipBoyInteractionScale = 1.f;
         std::vector<osg::ref_ptr<osg::Drawable>> mFalloutVrPipBoyScreenDrawables;
         osg::ref_ptr<osg::Texture2D> mFalloutVrPipBoyScreenTexture;
         osg::ref_ptr<osg::Texture2D> mFalloutVrPipBoyMapTexture;
@@ -164,7 +249,6 @@ namespace MWVR
         float mFalloutVrPipBoyMapPanX = 0.f;
         float mFalloutVrPipBoyMapPanY = 0.f;
         osg::Vec4f mFalloutVrPipBoyMapClip = osg::Vec4f(0.f, 0.f, 1.f, 1.f);
-        std::vector<osg::ref_ptr<osg::Node>> mFalloutVrRightWeaponSurfaceNodes;
         bool mRightPointerEnabled = false;
         float mCharHeight = 120.f;
         Stereo::Pose mHeadPoseInLocalSpace;

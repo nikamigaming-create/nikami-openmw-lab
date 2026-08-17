@@ -164,8 +164,16 @@ namespace MWVR
         /// rawTexCoord is the mesh's original atlas coordinate from the ray hit.
         bool updatePipBoyFocus(const osg::Vec2f& rawTexCoord);
 
+        /// Focus an authored Pip-Boy button/knob selected by the 3D ray.
+        bool updatePipBoyControlFocus(std::string_view control, int direction);
+
         /// True if user is currently pointing at something
         bool hasFocus() const;
+
+        /// True while the pointer ray is over the authored wrist Pip-Boy screen.
+        bool hasPipBoyFocus() const;
+        void setPipBoyInteractionActive(bool active);
+        bool hasActivePipBoyInteraction() const;
 
         /// Update traversal
         void update(osg::NodeVisitor* nv);
@@ -218,6 +226,9 @@ namespace MWVR
 
         osg::Vec2i mGuiCursor;
         osg::ref_ptr<VRGUILayer> mFocusLayer = nullptr;
+        std::string mPipBoyPhysicalControl;
+        int mPipBoyPhysicalControlDirection = 0;
+        bool mPipBoyInteractionActive = false;
         std::map<std::string, LayerConfig> mDefaultLayerConfigs;
 
         std::shared_ptr<VR::Session::Listener> mSessionListener;

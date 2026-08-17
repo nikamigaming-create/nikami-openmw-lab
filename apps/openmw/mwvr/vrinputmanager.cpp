@@ -439,6 +439,11 @@ namespace MWVR
         }
         else
             mPointerActive = false;
+
+        // Publish only UI-local state here. Player animation is not guaranteed
+        // to exist while content is still loading, and reaching into World from
+        // this early input tick can stall VR startup.
+        MWVR::VRGUIManager::instance().setPipBoyInteractionActive(mPointerActive);
     }
 
     void VRInputManager::updateDirectPointerClick()
@@ -790,6 +795,27 @@ namespace MWVR
         auto* anim = MWBase::Environment::get().getWorld()->getAnimation(ptr);
         auto* vrAnim = static_cast<MWVR::VRAnimation*>(anim);
         mVRAimNode = vrAnim->getWeaponTransform();
+        mVRAimWorldMatrices = vrAnim->getFalloutVrWeaponEmissionFrames();
+    }
+
+    std::optional<osg::Matrix> VRInputManager::vrAimWorldMatrix() const
+    {
+        if (mVRAimNode == nullptr)
+            return std::nullopt;
+
+        if (const osg::Transform* transform = mVRAimNode->asTransform())
+        {
+            if (const osg::MatrixTransform* matrixTransform = transform->asMatrixTransform())
+            {
+                if (matrixTransform->getReferenceFrame() == osg::Transform::ABSOLUTE_RF)
+                    return matrixTransform->getMatrix();
+            }
+        }
+
+        const osg::NodePathList paths = mVRAimNode->getParentalNodePaths();
+        if (paths.size() != 1)
+            return std::nullopt;
+        return osg::computeLocalToWorld(paths.front());
     }
 
     void VRInputManager::updateVoidMessages()
@@ -1075,6 +1101,9 @@ namespace MWVR
 
     void VRInputManager::onSpaceUpdate()
     {
+        if (mVRPointer)
+            mVRPointer->updateTrackingPose();
+
         if (VR::getVR()
             && MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_Running)
             updateRealisticCombat(mDt);

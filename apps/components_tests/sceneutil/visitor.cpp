@@ -21,6 +21,49 @@ namespace
             NodeNameMatchKind::Canonical);
     }
 
+    TEST(SceneUtilNodeNameMatcher, CanonicalizesRetailProjectileHelperDecoration)
+    {
+        const SceneUtil::NodeNameMatch match
+            = SceneUtil::matchNodeName("ProjectileNode", "##ProjectileNode");
+        EXPECT_EQ(match.mKind, NodeNameMatchKind::Canonical);
+    }
+
+    TEST(SceneUtilNodeNameMatcher, UniqueBestVisitorPrefersExactProjectileHelper)
+    {
+        osg::ref_ptr<osg::Group> root = new osg::Group;
+        osg::ref_ptr<osg::MatrixTransform> canonical = new osg::MatrixTransform;
+        canonical->setName("##ProjectileNode");
+        root->addChild(canonical);
+        osg::ref_ptr<osg::MatrixTransform> exact = new osg::MatrixTransform;
+        exact->setName("ProjectileNode");
+        root->addChild(exact);
+
+        SceneUtil::FindUniqueBestByNameVisitor visitor("ProjectileNode");
+        root->accept(visitor);
+
+        EXPECT_EQ(visitor.getFoundNode(), exact.get());
+        EXPECT_EQ(visitor.getFoundMatch().mKind, NodeNameMatchKind::Exact);
+        EXPECT_EQ(visitor.getBestMatchCount(), 1u);
+    }
+
+    TEST(SceneUtilNodeNameMatcher, UniqueBestVisitorRejectsAmbiguousCanonicalProjectileHelpers)
+    {
+        osg::ref_ptr<osg::Group> root = new osg::Group;
+        for (const char* const name : { "##ProjectileNode", "Projectile_Node" })
+        {
+            osg::ref_ptr<osg::MatrixTransform> candidate = new osg::MatrixTransform;
+            candidate->setName(name);
+            root->addChild(candidate);
+        }
+
+        SceneUtil::FindUniqueBestByNameVisitor visitor("ProjectileNode");
+        root->accept(visitor);
+
+        EXPECT_EQ(visitor.getFoundNode(), nullptr);
+        EXPECT_EQ(visitor.getFoundMatch().mKind, NodeNameMatchKind::Canonical);
+        EXPECT_EQ(visitor.getBestMatchCount(), 2u);
+    }
+
     TEST(SceneUtilNodeNameMatcher, MatchesSkeletonPrefixAndRootDecorationSemantically)
     {
         const SceneUtil::NodeNameMatch match
