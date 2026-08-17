@@ -51,13 +51,36 @@ namespace MWVR
 {
     namespace
     {
+        std::string normalizedNodeName(std::string name)
+        {
+            std::transform(name.begin(), name.end(), name.begin(),
+                [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+            return name;
+        }
+
+        std::string falloutPipBoyPhysicalControl(const MWRender::RayResult& ray)
+        {
+            for (auto it = ray.mHitNodePath.rbegin(); it != ray.mHitNodePath.rend(); ++it)
+            {
+                const std::string lowered = normalizedNodeName(*it);
+                if (lowered.starts_with("pipboybutton01"))
+                    return "PipBoyButton01";
+                if (lowered.starts_with("pipboybutton02"))
+                    return "PipBoyButton02";
+                if (lowered.starts_with("pipboybutton03"))
+                    return "PipBoyButton03";
+                if (lowered.starts_with("tabknob"))
+                    return "TabKnob";
+                if (lowered.starts_with("scrollknob"))
+                    return "ScrollKnob";
+            }
+            return {};
+        }
+
         bool isPipBoyScreenHit(const MWRender::RayResult& ray)
         {
             return std::any_of(ray.mHitNodePath.begin(), ray.mHitNodePath.end(), [](const std::string& name) {
-                std::string lowered = name;
-                std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-                return lowered.starts_with("pipboyscreen");
+                return normalizedNodeName(name).starts_with("pipboyscreen");
             });
         }
 
@@ -267,6 +290,39 @@ namespace MWVR
             direction.normalize();
             const std::optional<osg::Vec3f> screenCenter
                 = world->getRenderingManager()->findDrawableWorldCenterByPrefix("pipboyscreen");
+            const bool calibratingPointer = std::getenv("OPENMW_FNV_VR_POINTER_CALIBRATION") != nullptr;
+            static osg::Vec3f lastControlFixtureDirection(100.f, 100.f, 100.f);
+            if (calibratingPointer && (direction - lastControlFixtureDirection).length2() > 1e-8f)
+            {
+                lastControlFixtureDirection = direction;
+                for (const char* control : { "PipBoyButton01", "PipBoyButton02", "PipBoyButton03", "TabKnob",
+                         "ScrollKnob" })
+                {
+                    const std::optional<osg::Vec3f> center
+                        = world->getRenderingManager()->findDrawableWorldCenterByPrefix(control);
+                    if (!center)
+                    {
+                        Log(Debug::Error) << "FNV Pip-Boy physical ray fixture: control=" << control
+                                          << " found=0";
+                        continue;
+                    }
+                    osg::Vec3f targetDirection = *center - origin;
+                    const float targetDistance = targetDirection.normalize();
+                    const MWRender::RayResult fixtureRay
+                        = world->getRenderingManager()->castRayToNodePathPrefix(origin, *center, "pipboycontrol",
+                            false, false, 0u);
+                    const std::string fixtureHit = falloutPipBoyPhysicalControl(fixtureRay);
+                    Log(Debug::Info) << "FNV Pip-Boy physical ray fixture: control=" << control
+                                     << " found=1 center=(" << center->x() << ',' << center->y() << ','
+                                     << center->z() << ") origin=(" << origin.x() << ',' << origin.y() << ','
+                                     << origin.z() << ") direction=(" << direction.x() << ',' << direction.y()
+                                     << ',' << direction.z() << ") targetDirection=(" << targetDirection.x() << ','
+                                     << targetDirection.y() << ',' << targetDirection.z() << ") targetDistance="
+                                     << targetDistance << " alignment=" << (direction * targetDirection)
+                                     << " directCastHit=" << (fixtureRay.mHit ? 1 : 0)
+                                     << " hitControl=" << (fixtureHit.empty() ? "<none>" : fixtureHit);
+                }
+            }
             static unsigned int rayTelemetryFrame = 0;
             if (screenCenter && (++rayTelemetryFrame % 30u) == 1u)
             {
@@ -282,10 +338,11 @@ namespace MWVR
             }
             const float maxDistance = world->getMaxActivationDistance() * 50.f;
             wornRay = world->getRenderingManager()->castRayToNodePathPrefix(origin,
-                origin + direction * maxDistance, "pipboyscreen", false, false,
+                origin + direction * maxDistance, "pipboycontrol", false, false,
                 0u);
             const float wornDistance = wornRay.mHit ? wornRay.mRatio * maxDistance : 0.f;
-            if (wornRay.mHit && isPipBoyScreenHit(wornRay))
+            if (wornRay.mHit
+                && (isPipBoyScreenHit(wornRay) || !falloutPipBoyPhysicalControl(wornRay).empty()))
             {
                 mPointerRay = std::move(wornRay);
                 mDistanceToPointerTarget = wornDistance;
@@ -319,6 +376,8 @@ namespace MWVR
                 // The same OpenMW ray/click path now targets the UI texture on
                 // the authored wrist mesh; no surrogate GUI quad is involved.
             }
+            else if (const std::string control = falloutPipBoyPhysicalControl(mPointerRay); !control.empty())
+                MWVR::VRGUIManager::instance().updatePipBoyControlFocus(control);
             else
                 MWVR::VRGUIManager::instance().updateFocus(mPointerRay.mHitNode, mPointerRay.mHitPointLocal);
         }

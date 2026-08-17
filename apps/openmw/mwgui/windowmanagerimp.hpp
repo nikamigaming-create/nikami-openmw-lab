@@ -430,6 +430,7 @@ namespace MWGui
         bool isFalloutPipBoyPhysicalPresentation() const override { return mFalloutPipBoyPhysical; }
         int getFalloutPipBoyActivePane() const override;
         bool handleFalloutPipBoyPointerClick(int x, int y) override;
+        bool handleFalloutPipBoyPhysicalControl(std::string_view control) override;
         bool handleFalloutPipBoyAction(int action);
         int getFalloutPipBoySubmenu() const { return mFalloutPipBoySubmenu; }
         int getFalloutPipBoyListOffset() const { return mFalloutPipBoyListOffset; }

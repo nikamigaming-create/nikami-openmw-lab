@@ -40,6 +40,7 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/esm4/loadwrld.hpp>
 
 #include <components/misc/constants.hpp>
@@ -87,6 +88,7 @@
 #include "../mwmechanics/spellcasting.hpp"
 #include "../mwmechanics/spellutil.hpp"
 #include "../mwmechanics/summoning.hpp"
+#include "../mwmechanics/weapontype.hpp"
 
 #include "../mwrender/animation.hpp"
 #include "../mwrender/camera.hpp"
@@ -5432,11 +5434,23 @@ namespace MWWorld
             MWWorld::ConstContainerStoreIterator it = invStore.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
             if (it != invStore.end())
             {
-                if (it->getTypeDescription() == "Weapon")
+                if (it->getType() == ESM::Weapon::sRecordId)
                     return ESM::Weapon::Type(it->get<ESM::Weapon>()->mBase->mData.mType);
-                if (it->getTypeDescription() == "Lockpick")
+                if (it->getType() == ESM4::Weapon::sRecordId)
+                {
+                    const ESM4::Weapon* const weapon = it->get<ESM4::Weapon>()->mBase;
+                    const std::optional<int> falloutType
+                        = MWMechanics::getFalloutWeaponType(weapon->mData.animationType);
+                    if (falloutType)
+                        return *falloutType;
+                    Log(Debug::Warning) << "FNV VR active weapon has invalid DNAM animation type "
+                                        << static_cast<unsigned int>(weapon->mData.animationType) << ": "
+                                        << weapon->mEditorId;
+                    return ESM::Weapon::Type::None;
+                }
+                if (it->getType() == ESM::Lockpick::sRecordId)
                     return ESM::Weapon::Type::PickProbe;
-                if (it->getTypeDescription() == "Probe")
+                if (it->getType() == ESM::Probe::sRecordId)
                     return ESM::Weapon::Type::PickProbe;
             }
             return ESM::Weapon::Type::HandToHand;

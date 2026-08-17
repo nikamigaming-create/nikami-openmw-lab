@@ -3230,28 +3230,60 @@ namespace MWMechanics
 
         osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
         std::string_view shotOriginSource = "actor-head";
-        std::optional<osg::Vec3f> trackedVrAimDirection;
+        std::optional<osg::Vec3f> vrWeaponRayDirection;
         if (mPtr == getPlayer() && !vatsAttack && VR::getVR())
         {
-            const char* const aimSpaceName
-                = VR::getLeftHandedMode() ? MWVR::OpenXRInput::LeftHandAim : MWVR::OpenXRInput::RightHandAim;
-            if (const std::shared_ptr<VR::Space> aimSpace = MWVR::OpenXRInput::instance().getSpace(aimSpaceName))
+            // The visible weapon and the real shot must consume the same immutable frame. For firearms this is the
+            // authored ProjectileNode; assets without one expose a native model-axis child through getWeaponTransform.
+            osg::Node* const rayNode = MWVR::VRInputManager::instance().vrAimNode();
+            if (rayNode != nullptr && rayNode->getName() != "Weapon Direction")
             {
-                const VR::TrackingPose tracked = aimSpace->locateInWorld();
-                if (!!tracked.status)
+                const osg::NodePathList paths = rayNode->getParentalNodePaths();
+                if (!paths.empty())
                 {
+                    // Match the production VR pointer/world raycast, which consumes the first valid OSG render
+                    // path. Stereo/multi-root presentation can legitimately expose more than one root route to
+                    // the same rigid muzzle; that must not demote a valid ProjectileNode to the hand-aim fallback.
+                    const osg::Matrix rayWorld = osg::computeLocalToWorld(paths.front());
                     osg::Vec3f candidateDirection
-                        = tracked.pose.orientation * osg::Vec3f(0.f, 1.f, 0.f);
+                        = osg::Matrix::transform3x3(osg::Vec3f(0.f, 1.f, 0.f), rayWorld);
                     if (candidateDirection.normalize() != 0.f)
                     {
-                        origin = tracked.pose.position.asMWUnits();
-                        trackedVrAimDirection = candidateDirection;
-                        shotOriginSource = "vr-hand-aim";
+                        origin = rayWorld.getTrans();
+                        vrWeaponRayDirection = candidateDirection;
+                        int projectileBacked = 0;
+                        rayNode->getUserValue("openmwFalloutVrProjectileBackedRay", projectileBacked);
+                        shotOriginSource = projectileBacked != 0
+                            ? "vr-weapon-ProjectileNode" : "vr-weapon-native-axis";
+                    }
+                }
+            }
+            if (!vrWeaponRayDirection)
+            {
+                // Explicit degraded fallback only. Proof validation rejects this row for an equipped VR firearm.
+                const char* const aimSpaceName
+                    = VR::getLeftHandedMode() ? MWVR::OpenXRInput::LeftHandAim : MWVR::OpenXRInput::RightHandAim;
+                if (const std::shared_ptr<VR::Space> aimSpace
+                    = MWVR::OpenXRInput::instance().getSpace(aimSpaceName))
+                {
+                    const VR::TrackingPose tracked = aimSpace->locateInWorld();
+                    if (!!tracked.status)
+                    {
+                        osg::Vec3f candidateDirection
+                            = tracked.pose.orientation * osg::Vec3f(0.f, 1.f, 0.f);
+                        if (candidateDirection.normalize() != 0.f)
+                        {
+                            origin = tracked.pose.position.asMWUnits();
+                            vrWeaponRayDirection = candidateDirection;
+                            shotOriginSource = "vr-hand-aim-fallback";
+                            Log(Debug::Error) << "FNV VR weapon ray fallback: reason=missing-native-ray-node"
+                                              << " weapon=" << mFalloutWeapon->mEditorId;
+                        }
                     }
                 }
             }
         }
-        if (mPtr == getPlayer() && !vatsAttack && !trackedVrAimDirection && world->getCamera() != nullptr)
+        if (mPtr == getPlayer() && !vatsAttack && !vrWeaponRayDirection && world->getCamera() != nullptr)
         {
             // The first-person Fallout rig has no world "Head" node, so getActorHeadTransform falls back to the
             // actor root. A camera-directed ray starting at that root is not collinear with the crosshair and can
@@ -3273,8 +3305,8 @@ namespace MWMechanics
             fixedAimPoint = *vatsAimPoint;
             direction = *vatsAimPoint - origin;
         }
-        else if (trackedVrAimDirection)
-            direction = *trackedVrAimDirection;
+        else if (vrWeaponRayDirection)
+            direction = *vrWeaponRayDirection;
         else if (mPtr == getPlayer() && world->getCamera() != nullptr)
             direction = world->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
         else if (!targetActors.empty())

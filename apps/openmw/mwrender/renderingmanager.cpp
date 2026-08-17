@@ -798,58 +798,8 @@ namespace MWRender
                                  << " editor=<none>";
         }
 
-        bool appendFalloutVrWeaponSurface(
-            std::vector<MWVR::VRAnimation::FalloutVrHandSurface>& surfaces, const MWWorld::Ptr& actorPtr,
-            std::string_view label)
-        {
-            if (actorPtr.isEmpty())
-                return false;
-
-            const auto addWeaponSurface = [&](const ESM4::Weapon* weapon, std::string source) {
-                if (weapon == nullptr)
-                    return false;
-                const std::string_view model
-                    = !weapon->mFirstPersonModel.empty() ? weapon->mFirstPersonModel : weapon->mModel;
-                if (model.empty())
-                    return false;
-                surfaces.push_back(MWVR::VRAnimation::FalloutVrHandSurface{
-                    std::string(model), {}, std::move(source), false,
-                    MWVR::VRAnimation::FalloutVrHandSurface::Kind::Weapon });
-                Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly appended right-hand weapon source="
-                                 << surfaces.back().source << " editor=" << weapon->mEditorId
-                                 << " model=" << model
-                                 << " sourceModel="
-                                 << (!weapon->mFirstPersonModel.empty() ? "first-person" : "world-fallback");
-                return true;
-            };
-
-            const MWWorld::Class& actorClass = actorPtr.getClass();
-            if (actorClass.hasInventoryStore(actorPtr))
-            {
-                const MWWorld::InventoryStore& inventory = actorClass.getInventoryStore(actorPtr);
-                const MWWorld::ConstContainerStoreIterator weaponSlot
-                    = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
-                if (weaponSlot != inventory.end() && weaponSlot->getType() == ESM4::Weapon::sRecordId)
-                {
-                    const ESM4::Weapon* weapon = weaponSlot->get<ESM4::Weapon>()->mBase;
-                    if (addWeaponSurface(weapon, std::string(label) + ":live-weapon:" + weapon->mEditorId))
-                        return true;
-                }
-            }
-
-            if (actorPtr.getType() == ESM4::Npc::sRecordId)
-            {
-                const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(actorPtr);
-                if (weapon != nullptr)
-                    return addWeaponSurface(weapon, std::string(label) + ":npc-weapon:" + weapon->mEditorId);
-            }
-
-            Log(Debug::Verbose) << "FNV/ESM4 diag: VRHandsOnly no right-hand weapon surface source=" << label;
-            return false;
-        }
-
         std::vector<MWVR::VRAnimation::FalloutVrHandSurface> collectFalloutVrHandSurfaces(
-            const MWWorld::Ptr& actorPtr, std::string_view label, bool includeWeapon = true)
+            const MWWorld::Ptr& actorPtr, std::string_view label)
         {
             std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces;
             if (actorPtr.isEmpty() || actorPtr.getType() != ESM4::Npc::sRecordId)
@@ -918,8 +868,6 @@ namespace MWRender
                 addSurface(model, {}, std::string(label) + ":clothing:" + clothing->mEditorId, left);
             }
 
-            if (includeWeapon)
-                appendFalloutVrWeaponSurface(surfaces, actorPtr, label);
             return surfaces;
         }
 
@@ -937,8 +885,7 @@ namespace MWRender
             MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
             applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-attach");
             std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces
-                = collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record", false);
-            appendFalloutVrWeaponSurface(surfaces, player, "live-vr-player");
+                = collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record");
             const bool rightPipBoyCalibration = [] {
                 if (const char* value = std::getenv("OPENMW_FNV_RIGHT_PIPBOY_CALIBRATION"))
                     return *value != '\0' && std::string_view(value) != "0";
@@ -1874,15 +1821,15 @@ namespace MWRender
                 {
                     if (auto* vrAnimation = dynamic_cast<MWVR::VRAnimation*>(mPlayerAnimation.get()))
                     {
-                        if (const ESM4::Npc* visualRecord = findFalloutPlayerVisualRecord())
-                        {
-                            vrAnimation->setFalloutVrHandSurfaces(
-                                collectFalloutVrHandSurfacesForVisualRecord(player, visualRecord));
-                            Log(Debug::Info) << "OpenMW VR weapon handoff: right="
-                                             << (liveWeaponId.empty() ? std::string("none")
-                                                                      : liveWeaponId.toDebugString())
-                                             << " source=live-inventory-surface-refresh";
-                        }
+                        const bool shown = !liveWeaponId.empty()
+                            && player.getClass().getCreatureStats(player).getDrawState()
+                                == MWMechanics::DrawState::Weapon;
+                        vrAnimation->showWeapons(shown);
+                        Log(Debug::Info) << "OpenMW VR native weapon handoff: right="
+                                         << (liveWeaponId.empty() ? std::string("none")
+                                                                  : liveWeaponId.toDebugString())
+                                         << " shown=" << shown
+                                         << " source=live-inventory-native-weapon-part duplicateSurface=0";
                     }
                     mFalloutVrHandWeaponSignature = liveWeaponId;
                     mFalloutVrHandWeaponSignatureObserved = true;
@@ -2633,15 +2580,22 @@ namespace MWRender
 
         auto test = [&](const osgUtil::LineSegmentIntersector::Intersection& intersection) {
 //## VR_PATCH END
+            bool requiredNodePresent = requiredNodePrefix.empty();
             if (!requiredNodePrefix.empty())
             {
                 const auto nameMatchesRequiredPrefix = [&](std::string name) {
                     Misc::StringUtils::lowerCaseInPlace(name);
+                    if (requiredNodePrefix == "pipboycontrol")
+                    {
+                        return name.starts_with("pipboyscreen") || name.starts_with("pipboybutton01")
+                            || name.starts_with("pipboybutton02") || name.starts_with("pipboybutton03")
+                            || name.starts_with("tabknob") || name.starts_with("scrollknob");
+                    }
                     return name.starts_with(requiredNodePrefix);
                 };
                 const bool drawableMatches = intersection.drawable != nullptr
                     && nameMatchesRequiredPrefix(intersection.drawable->getName());
-                const bool requiredNodePresent = drawableMatches
+                requiredNodePresent = drawableMatches
                     || std::any_of(intersection.nodePath.begin(), intersection.nodePath.end(), [&](const osg::Node* node) {
                           if (node == nullptr || node->getName().empty())
                               return false;
@@ -2720,7 +2674,8 @@ namespace MWRender
                 vertexCounter += refnumMarkers[i]->mNumVertices;
             }
 
-            if (!result.mHitObject.isEmpty() || result.mHitRefnum.isSet() || hitNonObjectWorld || hitPipBoyScreen)
+            if (!result.mHitObject.isEmpty() || result.mHitRefnum.isSet() || hitNonObjectWorld || hitPipBoyScreen
+                || requiredNodePresent)
             {
                 result.mHit = true;
                 result.mHitNode = intersection.nodePath.empty() ? nullptr : intersection.nodePath.back();
@@ -2876,14 +2831,14 @@ namespace MWRender
         bool playerLocalTraversal = false;
         MWVR::VRAnimation* const vrAnimation = dynamic_cast<MWVR::VRAnimation*>(mPlayerAnimation.get());
         osg::Node* const pipBoyRoot = vrAnimation != nullptr ? vrAnimation->getFalloutVrPipBoySurfaceRoot() : nullptr;
-        if (normalizedPrefix == "pipboyscreen" && pipBoyRoot != nullptr)
+        if ((normalizedPrefix == "pipboyscreen" || normalizedPrefix == "pipboycontrol") && pipBoyRoot != nullptr)
         {
             traversalRoot = pipBoyRoot;
             // The live screen binder already resolves the exact skinned drawable.
             // Start intersection at its owning node: the direct tracked-hand clone
             // uses custom scene nodes that a generic traversal from the asset root
             // does not descend into during the gameplay update pass.
-            if (vrAnimation != nullptr)
+            if (normalizedPrefix == "pipboyscreen" && vrAnimation != nullptr)
             {
                 for (const osg::ref_ptr<osg::Drawable>& drawable
                     : vrAnimation->getFalloutVrPipBoyScreenDrawables())
@@ -2902,9 +2857,10 @@ namespace MWRender
                 if (!parentPath.empty() && parentPath.back() == traversalRoot)
                     parentPath.pop_back();
                 parentToWorld = osg::computeLocalToWorld(parentPath);
+                const bool traversalIsPipBoyRoot = traversalRoot == pipBoyRoot;
                 const bool pathContainsPipBoyRoot
                     = std::find(parentPath.begin(), parentPath.end(), pipBoyRoot) != parentPath.end();
-                if (!pathContainsPipBoyRoot)
+                if (!traversalIsPipBoyRoot && !pathContainsPipBoyRoot)
                 {
                     const osg::NodePathList rootPaths = pipBoyRoot->getParentalNodePaths();
                     if (!rootPaths.empty())
@@ -2927,7 +2883,8 @@ namespace MWRender
         traversalRoot->accept(*visitor);
         visitor->setNodeMaskOverride(0u);
         RayResult result = getIntersectionResult(intersector, mIntersectionVisitor, {}, normalizedPrefix);
-        if (!result.mHit && normalizedPrefix == "pipboyscreen" && vrAnimation != nullptr)
+        if (!result.mHit && (normalizedPrefix == "pipboyscreen" || normalizedPrefix == "pipboycontrol")
+            && vrAnimation != nullptr)
         {
             // RigGeometry renders a double-buffered, post-skin Geometry. Its authored Drawable bound can be
             // stale after the tracked wrist root is scaled, which lets the visible Pip-Boy screen be culled from
@@ -2940,7 +2897,7 @@ namespace MWRender
                     continue;
                 std::string drawableName = drawable->getName();
                 Misc::StringUtils::lowerCaseInPlace(drawableName);
-                if (!drawableName.starts_with(normalizedPrefix))
+                if (!drawableName.starts_with("pipboyscreen"))
                     continue;
 
                 osg::Geometry* geometry = dynamic_cast<osg::Geometry*>(drawable.get());
@@ -3142,6 +3099,22 @@ namespace MWRender
             void apply(osg::Node& node) override
             {
                 ++mNodes;
+                if (!mCenter && !node.getName().empty())
+                {
+                    std::string name = node.getName();
+                    Misc::StringUtils::lowerCaseInPlace(name);
+                    if (name.starts_with(mPrefix))
+                    {
+                        const osg::NodePathList paths = node.getParentalNodePaths();
+                        if (!paths.empty())
+                        {
+                            mCenter = osg::Vec3f(0.f, 0.f, 0.f) * osg::computeLocalToWorld(paths.front());
+                            ++mMatchingNodes;
+                            return;
+                        }
+                        ++mMissingPaths;
+                    }
+                }
                 traverse(node);
             }
 
@@ -3204,6 +3177,7 @@ namespace MWRender
             unsigned int mNodes = 0;
             unsigned int mGeodes = 0;
             unsigned int mDrawables = 0;
+            unsigned int mMatchingNodes = 0;
             unsigned int mMatchingDrawables = 0;
             unsigned int mInvalidBounds = 0;
             unsigned int mMissingPaths = 0;
@@ -3231,7 +3205,8 @@ namespace MWRender
                 << "FNV Pip-Boy pointer surface audit: root=" << renderedRoot->getName()
                 << " found=" << static_cast<bool>(visitor.mCenter) << " nodes=" << visitor.mNodes
                 << " geodes=" << visitor.mGeodes << " drawables=" << visitor.mDrawables
-                << " matching=" << visitor.mMatchingDrawables << " invalidBounds=" << visitor.mInvalidBounds
+                << " matchingNodes=" << visitor.mMatchingNodes
+                << " matchingDrawables=" << visitor.mMatchingDrawables << " invalidBounds=" << visitor.mInvalidBounds
                 << " missingPaths=" << visitor.mMissingPaths << " samples=[" << names.str() << ']';
         }
         return visitor.mCenter;

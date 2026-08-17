@@ -8257,7 +8257,12 @@ namespace MWRender
             if (mNode->getNumParents() > 1)
                 Log(Debug::Verbose) << "Part \"" << mNode->getName() << "\" has multiple (" << mNode->getNumParents()
                                     << ") parents";
-            mNode->getParent(0)->removeChild(mNode);
+            while (mNode->getNumParents() > 0)
+            {
+                osg::Group* const parent = mNode->getParent(0);
+                if (parent == nullptr || !parent->removeChild(mNode))
+                    break;
+            }
         }
     }
 }

@@ -7,6 +7,7 @@
 #include <osg/BlendFunc>
 #include <osg/Array>
 #include <osg/ComputeBoundsVisitor>
+#include <osg/ColorMask>
 #include <osg/CullFace>
 #include <osg/FrontFace>
 #include <osg/Depth>
@@ -24,6 +25,7 @@
 #include <osg/Quat>
 #include <osg/Shape>
 #include <osg/ShapeDrawable>
+#include <osg/observer_ptr>
 #include <osg/Image>
 #include <osg/Texture2D>
 #include <osgDB/WriteFile>
@@ -52,6 +54,7 @@
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/lower.hpp>
 #include <components/resource/imagemanager.hpp>
+#include <components/resource/keyframemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/attach.hpp>
@@ -61,6 +64,7 @@
 #include <components/sceneutil/shadow.hpp>
 #include <components/sceneutil/skeleton.hpp>
 #include <components/sceneutil/texturetype.hpp>
+#include <components/sceneutil/visitor.hpp>
 
 #include <components/settings/settings.hpp>
 #include <components/settings/values.hpp>
@@ -90,6 +94,7 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwrender/camera.hpp"
+#include "../mwrender/falloutweaponanimation.hpp"
 #include "../mwrender/renderingmanager.hpp"
 
 #include "../mwworld/class.hpp"
@@ -223,7 +228,9 @@ namespace MWVR
         const osg::Vec3f desiredUp
             = normalizeOr(rejectFromAxis(targetUp, destForward), osg::Vec3f(0.f, 0.f, 1.f));
         const osg::Quat rollRotation(signedAngleAroundAxis(rotatedUp, desiredUp, destForward), destForward);
-        return rollRotation * forwardRotation;
+        // OSG composes quaternion products left-to-right: align the source forward first,
+        // then roll around the already-aligned destination axis.
+        return forwardRotation * rollRotation;
     }
 
     // Some weapon types, such as spellcast, are classified as melee even though they are not. At least not in the way i
@@ -2638,12 +2645,32 @@ namespace MWVR
         osg::Quat rotate{ 0, 0, 0, 1 };
         auto windowManager = MWBase::Environment::get().getWindowManager();
         auto weaponType = MWBase::Environment::get().getWorld()->getActiveWeaponType();
+        bool falloutWeaponEquipped = false;
+        const MWWorld::Ptr player = MWMechanics::getPlayer();
+        if (!player.isEmpty() && player.getClass().hasInventoryStore(player))
+        {
+            const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+            const MWWorld::ConstContainerStoreIterator weapon
+                = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+            falloutWeaponEquipped = weapon != inventory.end() && weapon->getType() == ESM4::Weapon::sRecordId;
+        }
+        const bool falloutHandOwned
+            = falloutWeaponEquipped || MWMechanics::isFalloutWeaponType(weaponType);
         // Morrowind models do not hold most weapons at a natural angle, so i rotate the hand
         // to more natural angles on weapons to allow more comfortable combat.
         if ((!windowManager->isGuiMode() || FNVXRLiveFrameSurface::instance().visible()) && !mFingerPointingMode)
         {
-
-            switch (weaponType)
+            if (falloutHandOwned)
+            {
+                // Fallout hands are authored for their weapons and use the stock OpenMW-VR aim-pose path.
+                // The stock default is a Morrowind melee comfort tilt; applying it to every Fallout type rotates
+                // the right hand and its Weapon child away from the real controller.
+                static int sFalloutHandDirectionLogs = 0;
+                if (sFalloutHandDirectionLogs++ < 4)
+                    Log(Debug::Info) << "OpenMW VR Fallout hand direction: type=" << weaponType
+                                     << " trackedAimPath=1 morrowindMeleeTilt=0";
+            }
+            else switch (weaponType)
             {
                 case ESM::Weapon::None:
                 case ESM::Weapon::HandToHand:
@@ -2670,7 +2697,11 @@ namespace MWVR
 
             auto matrixTransform = node->asTransform()->asMatrixTransform();
             auto matrix = matrixTransform->getMatrix();
-            matrix.setRotate(rotate);
+            // Keep the known-good Fallout hand basis rigid. The old intermittent flop came from selecting this
+            // identity basis with the transient active-action type: fire/reload could temporarily fall through to
+            // the Morrowind comfort tilt. Inventory identity is stable for the whole equip lifetime, so it owns
+            // this decision and action state can no longer rotate the hand or its weapon child.
+            matrix.setRotate(falloutHandOwned ? osg::Quat() : rotate);
             matrixTransform->setMatrix(matrix);
         }
 
@@ -2680,6 +2711,300 @@ namespace MWVR
         traverse(node, nv);
         setNestedCallback(ncb);
     }
+
+    /// Keeps the native Fallout Weapon bone at the authored family aim pose while still traversing the weapon
+    /// model's child controllers (slide, trigger, bolt, muzzle flash, and similar local mechanisms).
+    class NativeWeaponBoneController : public osg::NodeCallback
+    {
+    public:
+        explicit NativeWeaponBoneController(std::shared_ptr<VR::Space> rightHandAim)
+            : mRightHandAim(std::move(rightHandAim))
+        {
+        }
+
+        void initializeBind(osg::MatrixTransform* bone)
+        {
+            if (bone == nullptr)
+                return;
+            if (mBoundBone.get() != bone)
+            {
+                if (mBoundBone.valid())
+                    mBoundBone->removeUpdateCallback(this);
+                mBoundBone = bone;
+                mBindMatrix = bone->getMatrix();
+                mLockedMatrix = mBindMatrix;
+                mBindValid = true;
+                mEnabled = false;
+                clearAttachment();
+            }
+        }
+
+        void installOn(osg::MatrixTransform* bone)
+        {
+            initializeBind(bone);
+            if (bone == nullptr || bone->getUpdateCallback() == this)
+                return;
+            // Be the callback-chain head. While enabled, the authored family AIM matrix is the sole Weapon-bone
+            // writer and the old action KF chain is bypassed; while disabled, operator() delegates to that chain.
+            bone->removeUpdateCallback(this);
+            osg::ref_ptr<osg::Callback> previous = bone->getUpdateCallback();
+            setNestedCallback(previous);
+            bone->setUpdateCallback(this);
+        }
+
+        void setFamilyPose(const SceneUtil::KeyframeController::KfTransform& pose,
+            int animationType, std::string source, int bindSerial)
+        {
+            if (!mBindValid || !mBoundBone.valid())
+            {
+                Log(Debug::Error) << "OpenMW VR native weapon family pose rejected: reason=no-current-Weapon-bone"
+                                  << " animationType=" << animationType << " bindSerial=" << bindSerial;
+                mEnabled = false;
+                return;
+            }
+            osg::Vec3f scale = mBindMatrix.getScale();
+            osg::Quat rotation = mBindMatrix.getRotate();
+            osg::Vec3f translation = mBindMatrix.getTrans();
+            if (pose.mScale)
+                scale.set(*pose.mScale, *pose.mScale, *pose.mScale);
+            if (pose.mRotation)
+                rotation = *pose.mRotation;
+            if (pose.mTranslation)
+                translation = *pose.mTranslation;
+            mLockedMatrix = osg::Matrix::scale(scale) * osg::Matrix::rotate(rotation)
+                * osg::Matrix::translate(translation);
+            mAnimationType = animationType;
+            mSource = std::move(source);
+            mBindSerial = bindSerial;
+            mLogFrames = 0;
+            mEnabled = true;
+        }
+
+        void useBindPose(int animationType, int bindSerial)
+        {
+            mLockedMatrix = mBindMatrix;
+            mAnimationType = animationType;
+            mSource = "first-person-skeleton-bind";
+            mBindSerial = bindSerial;
+            mLogFrames = 0;
+            mEnabled = mBindValid;
+        }
+
+        void setEnabled(bool enabled) { mEnabled = enabled && mBindValid; }
+        bool isEnabled() const { return mEnabled; }
+        const osg::Matrix& getLockedMatrix() const { return mLockedMatrix; }
+
+        void clearAttachment()
+        {
+            mRightHand = nullptr;
+            mPart = nullptr;
+            mRay = nullptr;
+            mSourceAxisNode = nullptr;
+            mAttachmentValid = false;
+            mModel.clear();
+            mRecordId.clear();
+        }
+
+        void setAttachment(osg::Node* rightHand, osg::Node* part, osg::Node* ray,
+            osg::Node* sourceAxisNode, const osg::Vec3f& sourceAxis,
+            std::string model, std::string recordId)
+        {
+            clearAttachment();
+            mRightHand = rightHand;
+            mPart = part;
+            mRay = ray;
+            mSourceAxisNode = sourceAxisNode;
+            mSourceAxis = sourceAxis;
+            mModel = std::move(model);
+            mRecordId = std::move(recordId);
+            const std::optional<osg::Matrix> handWorld = getWorldMatrix(mRightHand.get());
+            const std::optional<osg::Matrix> partWorld = getWorldMatrix(mPart.get());
+            const std::optional<osg::Matrix> rayWorld = getWorldMatrix(mRay.get());
+            osg::Matrix worldToHand;
+            osg::Matrix worldToPart;
+            if (handWorld && partWorld && rayWorld && worldToHand.invert(*handWorld)
+                && worldToPart.invert(*partWorld))
+            {
+                mPartInHand = *partWorld * worldToHand;
+                mRayInPart = *rayWorld * worldToPart;
+                mAttachmentValid = true;
+            }
+            Log(mAttachmentValid ? Debug::Info : Debug::Error)
+                << "OpenMW VR native weapon attachment bind: model=" << mModel
+                << " record=" << mRecordId << " bindSerial=" << mBindSerial
+                << " partParent=" << (part != nullptr && part->getNumParents() == 1
+                        ? part->getParent(0)->getName() : std::string("<invalid>"))
+                << " parentCount=" << (part != nullptr ? part->getNumParents() : 0)
+                << " modelAdapter=identity conversionCount=0 reparented=0 familyPoseSource=" << mSource
+                << " status=" << (mAttachmentValid ? "pass" : "fail");
+        }
+
+        void operator()(osg::Node* node, osg::NodeVisitor* nv) override
+        {
+            auto* const transform = node->asTransform() ? node->asTransform()->asMatrixTransform() : nullptr;
+            if (!mEnabled || transform == nullptr)
+            {
+                traverse(node, nv);
+                return;
+            }
+
+            transform->setMatrix(mLockedMatrix);
+            const unsigned long long frameNumber = nv != nullptr && nv->getFrameStamp() != nullptr
+                ? nv->getFrameStamp()->getFrameNumber() : 0;
+            if (frameNumber == mWriterFrame)
+                ++mWritesThisFrame;
+            else
+            {
+                mWriterFrame = frameNumber;
+                mWritesThisFrame = 1;
+            }
+            // Do not run a competing KF transform callback on the Weapon bone. Child model controllers still run.
+            osg::ref_ptr<osg::Callback> nested = getNestedCallback();
+            setNestedCallback(nullptr);
+            traverse(node, nv);
+            setNestedCallback(nested);
+
+            double maxElementDelta = 0.0;
+            const osg::Matrix& current = transform->getMatrix();
+            for (int row = 0; row < 4; ++row)
+                for (int column = 0; column < 4; ++column)
+                    maxElementDelta = std::max(
+                        maxElementDelta, std::abs(current(row, column) - mLockedMatrix(row, column)));
+            double partInHandDelta = 0.0;
+            double rayInPartDelta = 0.0;
+            float renderedRayDot = -2.f;
+            float aimRayDot = -2.f;
+            bool relationReady = false;
+            const std::optional<osg::Matrix> handWorld = getWorldMatrix(mRightHand.get());
+            const std::optional<osg::Matrix> partWorld = getWorldMatrix(mPart.get());
+            const std::optional<osg::Matrix> rayWorld = getWorldMatrix(mRay.get());
+            osg::Matrix worldToHand;
+            osg::Matrix worldToPart;
+            if (mAttachmentValid && handWorld && partWorld && rayWorld && worldToHand.invert(*handWorld)
+                && worldToPart.invert(*partWorld))
+            {
+                partInHandDelta = maxMatrixDelta(*partWorld * worldToHand, mPartInHand);
+                rayInPartDelta = maxMatrixDelta(*rayWorld * worldToPart, mRayInPart);
+                relationReady = true;
+                if (const std::optional<osg::Matrix> sourceWorld = getWorldMatrix(mSourceAxisNode.get()))
+                {
+                    osg::Vec3f productionForward
+                        = osg::Matrix::transform3x3(osg::Vec3f(0.f, 1.f, 0.f), *rayWorld);
+                    osg::Vec3f renderedForward = osg::Matrix::transform3x3(mSourceAxis, *sourceWorld);
+                    productionForward.normalize();
+                    renderedForward.normalize();
+                    renderedRayDot = productionForward * renderedForward;
+                }
+                if (mRightHandAim != nullptr)
+                {
+                    const auto aim = mRightHandAim->locateInWorld();
+                    if (!!aim.status)
+                    {
+                        osg::Vec3f productionForward
+                            = osg::Matrix::transform3x3(osg::Vec3f(0.f, 1.f, 0.f), *rayWorld);
+                        osg::Vec3f aimForward = aim.pose.orientation * osg::Vec3f(0.f, 1.f, 0.f);
+                        productionForward.normalize();
+                        aimForward.normalize();
+                        aimRayDot = productionForward * aimForward;
+                    }
+                }
+            }
+            const bool exactParent = mPart.valid() && mBoundBone.valid() && mPart->getNumParents() == 1
+                && mPart->getParent(0) == mBoundBone.get();
+            const bool callbackHead = transform->getUpdateCallback() == this;
+            osg::Node::NodeMask effectivePartMask = ~osg::Node::NodeMask(0);
+            bool uniqueRenderPath = false;
+            if (mPart.valid())
+            {
+                const osg::NodePathList paths = mPart->getParentalNodePaths();
+                uniqueRenderPath = paths.size() == 1;
+                if (uniqueRenderPath)
+                {
+                    for (const osg::Node* const pathNode : paths.front())
+                    {
+                        if (pathNode != nullptr)
+                            effectivePartMask &= pathNode->getNodeMask();
+                    }
+                    effectivePartMask &= mPart->getNodeMask();
+                }
+                else
+                    effectivePartMask = 0;
+            }
+            const bool passed = maxElementDelta <= 1e-6 && relationReady && exactParent && callbackHead
+                && partInHandDelta <= 1e-5 && rayInPartDelta <= 1e-5 && renderedRayDot >= 0.999999f
+                && mWritesThisFrame == 1;
+            const int frame = mLogFrames++;
+            const bool everyFrame = getEnvFloat("OPENMW_FNV_VR_NATIVE_WEAPON_TELEMETRY", 0.f) != 0.f;
+            if (!passed || everyFrame || frame < 8 || frame % 60 == 0)
+            {
+                Log(passed ? Debug::Info : Debug::Error)
+                    << "OpenMW VR native weapon invariant: frame=" << frameNumber
+                    << " model=" << mModel << " record=" << mRecordId
+                    << " animationType=" << mAnimationType
+                    << " bindSerial=" << mBindSerial << " source=" << mSource
+                    << " localPosition=(" << current.getTrans().x() << ',' << current.getTrans().y() << ','
+                    << current.getTrans().z() << ") maxElementDelta=" << maxElementDelta
+                    << " partInHandMaxDelta=" << partInHandDelta
+                    << " rayInPartMaxDelta=" << rayInPartDelta
+                    << " renderedRayDot=" << renderedRayDot
+                    << " aimRayDotDiagnostic=" << aimRayDot
+                    << " parentCount=" << (mPart.valid() ? mPart->getNumParents() : 0)
+                    << " exactWeaponParent=" << exactParent
+                    << " uniqueRenderPath=" << uniqueRenderPath
+                    << " effectivePartMask=" << effectivePartMask
+                    << " geometryVisible=" << (effectivePartMask != 0)
+                    << " callbackHead=" << callbackHead << " competingWeaponKfWrites=0"
+                    << " writesThisFrame=" << mWritesThisFrame
+                    << " writer=single-native-bone-lock status=" << (passed ? "pass" : "fail");
+            }
+        }
+
+    private:
+        static std::optional<osg::Matrix> getWorldMatrix(const osg::Node* node)
+        {
+            if (node == nullptr)
+                return std::nullopt;
+            const osg::NodePathList paths = node->getParentalNodePaths();
+            if (paths.empty())
+                return std::nullopt;
+            // The VR actor can be reachable through more than one render-root route.  The production pointer and
+            // world raycast already use the first OSG path, so use that same route for every hand/part/ray relation
+            // instead of treating a valid stereo graph as a missing transform.
+            return osg::computeLocalToWorld(paths.front());
+        }
+
+        static double maxMatrixDelta(const osg::Matrix& left, const osg::Matrix& right)
+        {
+            double result = 0.0;
+            for (int row = 0; row < 4; ++row)
+                for (int column = 0; column < 4; ++column)
+                    result = std::max(result, std::abs(left(row, column) - right(row, column)));
+            return result;
+        }
+
+        std::shared_ptr<VR::Space> mRightHandAim;
+        osg::observer_ptr<osg::MatrixTransform> mBoundBone;
+        osg::observer_ptr<osg::Node> mRightHand;
+        osg::observer_ptr<osg::Node> mPart;
+        osg::observer_ptr<osg::Node> mRay;
+        osg::observer_ptr<osg::Node> mSourceAxisNode;
+        osg::Matrix mBindMatrix;
+        osg::Matrix mLockedMatrix;
+        osg::Matrix mPartInHand;
+        osg::Matrix mRayInPart;
+        osg::Vec3f mSourceAxis;
+        std::string mSource;
+        std::string mModel;
+        std::string mRecordId;
+        int mAnimationType = -1;
+        int mBindSerial = 0;
+        int mLogFrames = 0;
+        unsigned long long mWriterFrame = ~0ull;
+        unsigned int mWritesThisFrame = 0;
+        bool mBindValid = false;
+        bool mEnabled = false;
+        bool mAttachmentValid = false;
+    };
 
     class ConfigureCullVisitor : public osg::NodeVisitor
     {
@@ -2695,6 +3020,214 @@ namespace MWVR
 
         bool mEnable;
     };
+
+    void setFalloutWeaponGeometryVisible(osg::Node* socket, bool visible)
+    {
+        if (socket == nullptr)
+            return;
+
+        // Visibility owns one wrapper mask only.  Recursively forcing every Geode to all-bits-on destroyed
+        // authored switch/optional-part masks and could reveal untextured internal geometry after wheel use.
+        unsigned int authoredMask = ~osg::Node::NodeMask(0);
+        int authoredMaskCached = 0;
+        if (!socket->getUserValue("openmwFalloutVrAuthoredNodeMaskCached", authoredMaskCached)
+            || authoredMaskCached == 0)
+        {
+            authoredMask = socket->getNodeMask();
+            socket->setUserValue("openmwFalloutVrAuthoredNodeMask", authoredMask);
+            socket->setUserValue("openmwFalloutVrAuthoredNodeMaskCached", 1);
+        }
+        else
+            socket->getUserValue("openmwFalloutVrAuthoredNodeMask", authoredMask);
+        socket->setNodeMask(visible ? authoredMask : osg::Node::NodeMask(0));
+    }
+
+    class NativeWeaponRenderAuditVisitor : public osg::NodeVisitor
+    {
+    public:
+        NativeWeaponRenderAuditVisitor()
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            int debugMarker = 0;
+            if (node.getUserValue("openmwFalloutVrNativeWeaponDebugMarker", debugMarker) && debugMarker != 0)
+                return;
+            auditStateSet(node.getStateSet());
+            traverse(node);
+        }
+
+        void apply(osg::Geode& geode) override
+        {
+            int debugMarker = 0;
+            if (geode.getUserValue("openmwFalloutVrNativeWeaponDebugMarker", debugMarker) && debugMarker != 0)
+                return;
+            ++mGeodes;
+            auditStateSet(geode.getStateSet());
+            for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+            {
+                osg::Drawable* const drawable = geode.getDrawable(i);
+                if (drawable == nullptr)
+                    continue;
+                ++mDrawables;
+                if (geode.getNodeMask() != 0)
+                    ++mAuthoredVisibleDrawables;
+                osg::Node::NodeMask effectiveMask = ~osg::Node::NodeMask(0);
+                for (const osg::Node* const pathNode : getNodePath())
+                {
+                    if (pathNode != nullptr)
+                        effectiveMask &= pathNode->getNodeMask();
+                }
+                if (effectiveMask != 0)
+                    ++mEffectiveVisibleDrawables;
+                auditStateSet(drawable->getStateSet());
+            }
+            traverse(geode);
+        }
+
+        unsigned int mGeodes = 0;
+        unsigned int mDrawables = 0;
+        unsigned int mAuthoredVisibleDrawables = 0;
+        unsigned int mEffectiveVisibleDrawables = 0;
+        unsigned int mTexture2D = 0;
+        unsigned int mLoadedTextureImages = 0;
+        unsigned int mInvalidTextureImages = 0;
+
+    private:
+        void auditStateSet(const osg::StateSet* stateSet)
+        {
+            if (stateSet == nullptr)
+                return;
+            const osg::StateSet::TextureAttributeList& attributes = stateSet->getTextureAttributeList();
+            for (unsigned int unit = 0; unit < attributes.size(); ++unit)
+            {
+                const osg::Texture2D* const texture = dynamic_cast<const osg::Texture2D*>(
+                    stateSet->getTextureAttribute(unit, osg::StateAttribute::TEXTURE));
+                if (texture == nullptr)
+                    continue;
+                ++mTexture2D;
+                const osg::Image* const image = texture->getImage();
+                if (image != nullptr && image->s() > 0 && image->t() > 0)
+                    ++mLoadedTextureImages;
+                else
+                    ++mInvalidTextureImages;
+            }
+        }
+    };
+
+    bool auditNativeWeaponRender(osg::Node* part, std::string_view model, int bindSerial,
+        bool requestedVisible, std::string_view reason)
+    {
+        if (part == nullptr)
+            return false;
+        NativeWeaponRenderAuditVisitor renderAudit;
+        part->accept(renderAudit);
+        const bool texturePassed = renderAudit.mDrawables > 0 && renderAudit.mAuthoredVisibleDrawables > 0
+            && renderAudit.mTexture2D > 0 && renderAudit.mLoadedTextureImages > 0
+            && renderAudit.mInvalidTextureImages == 0;
+        const bool visibilityPassed = requestedVisible
+            ? renderAudit.mEffectiveVisibleDrawables > 0 : renderAudit.mEffectiveVisibleDrawables == 0;
+        const bool passed = texturePassed && visibilityPassed;
+        Log(passed ? Debug::Info : Debug::Error)
+            << "OpenMW VR native weapon render invariant: model=" << model << " bindSerial=" << bindSerial
+            << " reason=" << reason << " requestedVisible=" << requestedVisible
+            << " rootMask=" << part->getNodeMask() << " geodes=" << renderAudit.mGeodes
+            << " drawables=" << renderAudit.mDrawables
+            << " authoredVisibleDrawables=" << renderAudit.mAuthoredVisibleDrawables
+            << " effectiveVisibleDrawables=" << renderAudit.mEffectiveVisibleDrawables
+            << " texture2D=" << renderAudit.mTexture2D
+            << " loadedTextureImages=" << renderAudit.mLoadedTextureImages
+            << " invalidTextureImages=" << renderAudit.mInvalidTextureImages
+            << " inheritedGloveState=0 texturePassed=" << texturePassed
+            << " visibilityPassed=" << visibilityPassed << " status=" << (passed ? "pass" : "fail");
+        return passed;
+    }
+
+    void addFalloutPipBoyInteractionFixtures(osg::Node& pipBoy)
+    {
+        const auto makeBoxGeometry = [](const osg::Vec3f& center, const osg::Vec3f& size) {
+            const osg::Vec3f half = size * 0.5f;
+            osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
+            vertices->reserve(8);
+            vertices->push_back(center + osg::Vec3f(-half.x(), -half.y(), -half.z()));
+            vertices->push_back(center + osg::Vec3f(half.x(), -half.y(), -half.z()));
+            vertices->push_back(center + osg::Vec3f(half.x(), half.y(), -half.z()));
+            vertices->push_back(center + osg::Vec3f(-half.x(), half.y(), -half.z()));
+            vertices->push_back(center + osg::Vec3f(-half.x(), -half.y(), half.z()));
+            vertices->push_back(center + osg::Vec3f(half.x(), -half.y(), half.z()));
+            vertices->push_back(center + osg::Vec3f(half.x(), half.y(), half.z()));
+            vertices->push_back(center + osg::Vec3f(-half.x(), half.y(), half.z()));
+            osg::ref_ptr<osg::DrawElementsUShort> triangles = new osg::DrawElementsUShort(GL_TRIANGLES);
+            static constexpr std::array<unsigned short, 36> indices = { 0, 2, 1, 0, 3, 2, 4, 5, 6, 4,
+                6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7 };
+            triangles->insert(triangles->end(), indices.begin(), indices.end());
+            osg::ref_ptr<osg::Geometry> geometry = new osg::Geometry;
+            geometry->setVertexArray(vertices);
+            geometry->addPrimitiveSet(triangles);
+            geometry->setCullingActive(false);
+            return geometry;
+        };
+
+        struct Fixture
+        {
+            const char* name;
+            osg::Vec3f center;
+            osg::Vec3f size;
+        };
+        // Measured directly from Fallout - Meshes.bsa/PipBoyArm.nif. The three
+        // button fixtures use the visible cap bounds (the deeper :0 strip is
+        // the plunger body); knob fixtures use their complete authored bounds.
+        static const std::array<Fixture, 5> fixtures = { {
+            { "PipBoyButton01", osg::Vec3f(0.f, 0.f, 0.f), osg::Vec3f(0.64f, 0.64f, 0.30f) },
+            { "PipBoyButton02", osg::Vec3f(0.f, 0.f, 0.f), osg::Vec3f(0.64f, 0.64f, 0.30f) },
+            { "PipBoyButton03", osg::Vec3f(0.f, 0.f, 0.f), osg::Vec3f(0.64f, 0.64f, 0.30f) },
+            { "TabKnob", osg::Vec3f(-0.004f, -0.044f, 0.208f), osg::Vec3f(0.83f, 0.90f, 0.80f) },
+            { "ScrollKnob", osg::Vec3f(0.f, 0.f, 0.f), osg::Vec3f(0.30f, 2.39f, 2.40f) },
+        } };
+
+        for (const Fixture& fixture : fixtures)
+        {
+            SceneUtil::FindByNameVisitor find(fixture.name);
+            pipBoy.accept(find);
+            if (find.mFoundNode == nullptr)
+            {
+                Log(Debug::Error) << "FNV Pip-Boy physical hit fixture: control=" << fixture.name
+                                  << " status=missing-node";
+                continue;
+            }
+
+            const std::string fixtureName = std::string(fixture.name) + "HitTarget";
+            bool alreadyPresent = false;
+            for (unsigned int i = 0; i < find.mFoundNode->getNumChildren(); ++i)
+                alreadyPresent = alreadyPresent || find.mFoundNode->getChild(i)->getName() == fixtureName;
+            if (alreadyPresent)
+                continue;
+
+            osg::ref_ptr<osg::Geometry> shape = makeBoxGeometry(fixture.center, fixture.size);
+            shape->setName(fixtureName);
+            shape->setCullingActive(false);
+            osg::StateSet* const state = shape->getOrCreateStateSet();
+            state->setMode(GL_BLEND, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            state->setAttributeAndModes(new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+                osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            state->setAttributeAndModes(
+                new osg::Depth(osg::Depth::ALWAYS, 0.f, 1.f, false), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            state->setAttributeAndModes(new osg::ColorMask(false, false, false, false),
+                osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+
+            osg::ref_ptr<osg::Geode> target = new osg::Geode;
+            target->setName(fixtureName);
+            target->setCullingActive(false);
+            target->addDrawable(shape);
+            find.mFoundNode->addChild(target);
+            Log(Debug::Info) << "FNV Pip-Boy physical hit fixture: control=" << fixture.name
+                             << " status=ready center=(" << fixture.center.x() << ',' << fixture.center.y() << ','
+                             << fixture.center.z() << ") size=(" << fixture.size.x() << ',' << fixture.size.y() << ','
+                             << fixture.size.z() << ") source=authored-nif-bounds";
+        }
+    }
 
     class StaticizeFalloutVrRiggedGeometryVisitor : public osg::NodeVisitor
     {
@@ -3239,6 +3772,33 @@ namespace MWVR
         return drawable;
     }
 
+    osg::ref_ptr<osg::Geode> createNamedAxisMarker(
+        std::string name, float length, float pointRadius, const osg::Vec4f& originColor)
+    {
+        osg::ref_ptr<osg::Geode> axis = new osg::Geode;
+        axis->setName(std::move(name));
+        axis->setUserValue("openmwFalloutVrNativeWeaponDebugMarker", 1);
+        axis->addDrawable(createAxisMarkerGeometry(length));
+        axis->addDrawable(createAxisOriginMarker(pointRadius, originColor));
+        const std::array<std::pair<osg::Vec3f, osg::Vec4f>, 3> endpoints = {
+            std::make_pair(osg::Vec3f(length, 0.f, 0.f), osg::Vec4f(1.f, 0.f, 0.f, 1.f)),
+            std::make_pair(osg::Vec3f(0.f, length, 0.f), osg::Vec4f(0.f, 1.f, 0.f, 1.f)),
+            std::make_pair(osg::Vec3f(0.f, 0.f, length), osg::Vec4f(0.f, 0.4f, 1.f, 1.f)),
+        };
+        for (const auto& [position, color] : endpoints)
+        {
+            osg::ref_ptr<osg::ShapeDrawable> endpoint
+                = new osg::ShapeDrawable(new osg::Sphere(position, pointRadius * 0.65f));
+            endpoint->setColor(color);
+            endpoint->setCullingActive(false);
+            endpoint->getOrCreateStateSet()->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+            endpoint->getOrCreateStateSet()->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
+            axis->addDrawable(endpoint);
+        }
+        axis->setCullingActive(false);
+        return axis;
+    }
+
     void addLocalAxisMarker(osg::Group& parent, const osg::Vec3f& position, float length)
     {
         osg::ref_ptr<osg::Geode> axis = new osg::Geode;
@@ -3366,17 +3926,115 @@ namespace MWVR
         return visitor.result();
     }
 
+    struct LiveWeaponPalmFrame
+    {
+        osg::Vec3f mWorldPosition;
+        osg::Vec3f mWorldGripDirection;
+        bool mValid = false;
+    };
+
+    LiveWeaponPalmFrame sLiveWeaponPalmFrame;
+
     /// Implements control of weapon direction
     class WeaponDirectionController : public osg::NodeCallback
     {
     public:
-        WeaponDirectionController() = default;
+        explicit WeaponDirectionController(std::shared_ptr<VR::Space> rightHandAim)
+            : mRightHandAim(std::move(rightHandAim))
+        {
+        }
         void setEnabled(bool enabled) { mEnabled = enabled; }
+        void setPalmFrameNode(osg::Node* palmFrameNode)
+        {
+            if (palmFrameNode == mPalmFrameNode.get())
+                return;
+            mPalmFrameNode = palmFrameNode;
+            mFixtureSocket = nullptr;
+            mLockedLocalMatrixValid = false;
+        }
         void operator()(osg::Node* node, osg::NodeVisitor* nv);
 
     private:
+        std::shared_ptr<VR::Space> mRightHandAim;
+        osg::ref_ptr<osg::Node> mPalmFrameNode;
+        osg::ref_ptr<osg::PositionAttitudeTransform> mFixtureSocket;
+        osg::ref_ptr<osg::Node> mProjectileNode;
+        osg::NodePath mProjectilePathFromSocket;
+        struct FixturePathTransform
+        {
+            osg::ref_ptr<osg::MatrixTransform> mNode;
+            osg::Matrix mBindMatrix;
+        };
+        std::vector<FixturePathTransform> mFixturePathTransforms;
+        osg::Vec3f mFixtureAimAxis{ 0.f, 1.f, 0.f };
+        osg::Vec3f mFixtureSideAxis{ 1.f, 0.f, 0.f };
+        osg::Vec3f mGripFixtureModel;
+        osg::Vec3f mTriggerFixtureModel;
+        osg::ref_ptr<osg::Node> mIndexFingerTipNode;
+        bool mTriggerFixtureValid = false;
+        osg::Vec3f mSocketBindPosition;
+        osg::Quat mSocketBindAttitude;
+        osg::Vec3f mSocketBindScale{ 1.f, 1.f, 1.f };
+        osg::Vec3f mSocketBindPivot;
+        bool mFixtureValid = false;
+        bool mFixtureUsesProjectile = false;
+        bool mFixtureUsesGripDirection = false;
+        float mFixtureCanonicalDot = -1.f;
+        float mFixtureRoll = 0.f;
+        bool mFixtureRollValid = false;
+        osg::Quat mPreviousDesiredWorldRotation;
+        osg::Vec3f mPreviousRayWorldForward;
+        osg::Vec3f mPreviousPalmWorld;
+        osg::Vec3f mPreviousSecondaryTargetWorld;
+        osg::Matrix mLockedLocalMatrix;
+        bool mLockedLocalMatrixValid = false;
+        bool mPreviousSolvedFrameValid = false;
+        unsigned int mWriterFrameNumber = 0;
+        unsigned int mWritesThisFrame = 0;
+        int mFixtureLogs = 0;
         bool mEnabled = true;
     };
+
+    bool findDescendantPath(osg::Node* root, osg::Node* target, osg::NodePath& path)
+    {
+        if (root == nullptr)
+            return false;
+
+        path.push_back(root);
+        if (root == target)
+            return true;
+
+        if (osg::Group* const group = root->asGroup())
+        {
+            for (unsigned int i = 0; i < group->getNumChildren(); ++i)
+            {
+                if (findDescendantPath(group->getChild(i), target, path))
+                    return true;
+            }
+        }
+
+        path.pop_back();
+        return false;
+    }
+
+    std::optional<osg::Matrix> findDescendantLocalMatrix(osg::Node& root, std::string_view name)
+    {
+        SceneUtil::FindByNameVisitor find(name);
+        root.accept(find);
+        if (find.mFoundNode == nullptr)
+            return std::nullopt;
+
+        osg::NodePath path;
+        if (!findDescendantPath(&root, find.mFoundNode, path))
+            return std::nullopt;
+        return osg::computeLocalToWorld(path);
+    }
+
+    std::optional<osg::Vec3f> findDescendantLocalOrigin(osg::Node& root, std::string_view name)
+    {
+        const std::optional<osg::Matrix> matrix = findDescendantLocalMatrix(root, name);
+        return matrix ? std::optional<osg::Vec3f>(matrix->getTrans()) : std::nullopt;
+    }
 
     void WeaponDirectionController::operator()(osg::Node* node, osg::NodeVisitor* nv)
     {
@@ -3386,34 +4044,603 @@ namespace MWVR
             return;
         }
 
-        // Arriving here implies a parent, no need to check
-        auto parent = static_cast<osg::MatrixTransform*>(node->getParent(0));
-
-        osg::Quat rotate{ 0, 0, 0, 1 };
-        auto weaponType = MWBase::Environment::get().getWorld()->getActiveWeaponType();
-        switch (weaponType)
+        if (node->getNumParents() != 1)
         {
-            case ESM::Weapon::MarksmanThrown:
-            case ESM::Weapon::Spell:
-            case ESM::Weapon::Arrow:
-            case ESM::Weapon::Bolt:
-            case ESM::Weapon::HandToHand:
-            case ESM::Weapon::MarksmanBow:
-            case ESM::Weapon::MarksmanCrossbow:
-                // Rotate to point straight forward, reverting any rotation of the hand to keep aim consistent.
-                rotate = parent->getInverseMatrix().getRotate();
-                rotate = osg::Quat(-osg::PI_2, osg::Vec3{ 0, 0, 1 }) * rotate;
-                break;
-            default:
-                // Melee weapons point straight up from the hand
-                rotate = osg::Quat(osg::PI_2, osg::Vec3{ 1, 0, 0 });
-                break;
+            traverse(node, nv);
+            return;
+        }
+        auto* const parent = dynamic_cast<osg::MatrixTransform*>(node->getParent(0));
+        if (parent == nullptr || parent->getParentalNodePaths().empty())
+        {
+            traverse(node, nv);
+            return;
         }
 
         auto matrixTransform = node->asTransform()->asMatrixTransform();
         auto matrix = matrixTransform->getMatrix();
-        matrix.setRotate(rotate);
-        matrixTransform->setMatrix(matrix);
+        auto weaponType = MWBase::Environment::get().getWorld()->getActiveWeaponType();
+        osg::PositionAttitudeTransform* socket = nullptr;
+        unsigned int markedWeaponChildren = 0;
+        if (osg::Group* const group = node->asGroup())
+        {
+            for (unsigned int i = 0; i < group->getNumChildren(); ++i)
+            {
+                auto* const candidate = dynamic_cast<osg::PositionAttitudeTransform*>(group->getChild(i));
+                int candidateMarker = 0;
+                if (candidate != nullptr
+                    && candidate->getUserValue("openmwFalloutVrWeaponFixture", candidateMarker)
+                    && candidateMarker != 0)
+                {
+                    socket = candidate;
+                    ++markedWeaponChildren;
+                }
+            }
+        }
+        if (markedWeaponChildren != 1)
+            socket = nullptr;
+        int falloutFixtureMarker = 0;
+        const bool falloutWeapon = socket != nullptr
+            && socket->getUserValue("openmwFalloutVrWeaponFixture", falloutFixtureMarker)
+            && falloutFixtureMarker != 0;
+        if (falloutWeapon)
+        {
+            if (socket != mFixtureSocket.get())
+            {
+                mFixtureSocket = socket;
+                mProjectileNode = nullptr;
+                mProjectilePathFromSocket.clear();
+                mFixturePathTransforms.clear();
+                mFixtureValid = false;
+                mFixtureUsesProjectile = false;
+                mFixtureUsesGripDirection = false;
+                mTriggerFixtureValid = false;
+                mIndexFingerTipNode = nullptr;
+                mFixtureRoll = 0.f;
+                mFixtureRollValid = false;
+                mLockedLocalMatrixValid = false;
+                mPreviousSolvedFrameValid = false;
+                mWritesThisFrame = 0;
+                mFixtureLogs = 0;
+
+                if (socket != nullptr && !node->getParentalNodePaths().empty())
+                {
+                    SceneUtil::FindByNameVisitor indexFingerTip("Bip01 R Finger12");
+                    if (mPalmFrameNode != nullptr)
+                        mPalmFrameNode->accept(indexFingerTip);
+                    mIndexFingerTipNode = indexFingerTip.mFoundNode;
+                    int meleeFixtureMarker = 0;
+                    const bool meleeFixture
+                        = socket->getUserValue("openmwFalloutVrMeleeFixture", meleeFixtureMarker)
+                        && meleeFixtureMarker != 0;
+                    SceneUtil::FindByNameVisitor projectileNode("ProjectileNode");
+                    socket->accept(projectileNode);
+                    if (projectileNode.mFoundNode != nullptr
+                        && !projectileNode.mFoundNode->getParentalNodePaths().empty())
+                    {
+                        mProjectileNode = projectileNode.mFoundNode;
+                        osg::NodePath socketToProjectile;
+                        const bool rootedPathFound
+                            = findDescendantPath(socket, mProjectileNode.get(), socketToProjectile);
+                        if (rootedPathFound)
+                            mProjectilePathFromSocket = socketToProjectile;
+                        else
+                            mProjectilePathFromSocket.clear();
+
+                        std::ostringstream fixturePathNames;
+                        for (osg::Node* const pathNode : socketToProjectile)
+                        {
+                            if (fixturePathNames.tellp() > 0)
+                                fixturePathNames << '/';
+                            fixturePathNames << (pathNode->getName().empty() ? "<unnamed>" : pathNode->getName());
+                            if (osg::MatrixTransform* const transform
+                                = pathNode->asTransform() ? pathNode->asTransform()->asMatrixTransform() : nullptr)
+                                mFixturePathTransforms.push_back({ transform, transform->getMatrix() });
+                            if (pathNode == mProjectileNode)
+                                break;
+                        }
+                        Log(Debug::Info) << "OpenMW VR barrel ancestry bind: path=" << fixturePathNames.str()
+                                         << " matrixTransforms=" << mFixturePathTransforms.size()
+                                         << " rootedAtSocket=" << rootedPathFound
+                                         << " mutation=none";
+                        if (!rootedPathFound)
+                        {
+                            mProjectileNode = nullptr;
+                            mFixturePathTransforms.clear();
+                        }
+                        const osg::Matrix projectileToJoint
+                            = rootedPathFound ? osg::computeLocalToWorld(mProjectilePathFromSocket) : osg::Matrix();
+                        if (rootedPathFound)
+                        {
+                            // The fixture belongs to the weapon joint, so derive it from the socket-rooted local
+                            // path only. No animated hand/world transform is allowed into this immutable basis.
+                            mFixtureAimAxis = normalizeOr(osg::Matrix::transform3x3(
+                                osg::Vec3f(0.f, 1.f, 0.f), projectileToJoint),
+                                osg::Vec3f(0.f, 1.f, 0.f));
+                            mFixtureUsesProjectile = true;
+                        }
+                        else
+                        {
+                            const osg::Vec3f modelAimAxis
+                                = meleeFixture ? osg::Vec3f(0.f, 1.f, 0.f) : osg::Vec3f(1.f, 0.f, 0.f);
+                            mFixtureAimAxis = normalizeOr(
+                                socket->getAttitude() * modelAimAxis, osg::Vec3f(0.f, 1.f, 0.f));
+                        }
+                    }
+                    else
+                    {
+                        // Melee assets are authored along +Y; ranged assets without a ProjectileNode use
+                        // the Fallout firearm +X convention. Cache the class-aware axis once at bind.
+                        const osg::Vec3f modelAimAxis
+                            = meleeFixture ? osg::Vec3f(0.f, 1.f, 0.f) : osg::Vec3f(1.f, 0.f, 0.f);
+                        mFixtureAimAxis = normalizeOr(
+                            socket->getAttitude() * modelAimAxis, osg::Vec3f(0.f, 1.f, 0.f));
+                    }
+
+                    osg::Vec3f secondaryAxisModel(1.f, 0.f, 0.f);
+                    mFixtureUsesGripDirection = mFixtureUsesProjectile || !meleeFixture;
+                    socket->getUserValue("openmwFalloutVrSecondaryAxisX", secondaryAxisModel.x());
+                    socket->getUserValue("openmwFalloutVrSecondaryAxisY", secondaryAxisModel.y());
+                    socket->getUserValue("openmwFalloutVrSecondaryAxisZ", secondaryAxisModel.z());
+                    const osg::Vec3f socketScale = socket->getScale();
+                    const osg::Vec3f socketPivot = socket->getPivotPoint();
+                    if (std::abs(socketScale.x()) <= 1e-6f || std::abs(socketScale.y()) <= 1e-6f
+                        || std::abs(socketScale.z()) <= 1e-6f)
+                    {
+                        Log(Debug::Error) << "OpenMW VR weapon fixture bind rejected zero socket scale=("
+                                          << socketScale.x() << ',' << socketScale.y() << ',' << socketScale.z()
+                                          << ')';
+                        traverse(node, nv);
+                        return;
+                    }
+                    mFixtureSideAxis = normalizeOr(
+                        socket->getAttitude() * scaleVec3(socketScale, secondaryAxisModel),
+                        osg::Vec3f(1.f, 0.f, 0.f));
+
+                    // Fallout's official held NIFs do not author BoneOffset/grip nodes. A zero PAT therefore means
+                    // model origin, not a handle. Accept only a hash-locked anatomical fixture; uncalibrated assets
+                    // fail closed instead of silently seating their origin in the palm.
+                    const osg::Vec3f gripFromPivotScaled
+                        = socket->getAttitude().inverse() * (-socket->getPosition());
+                    mGripFixtureModel = socketPivot
+                        + osg::Vec3f(gripFromPivotScaled.x() / socketScale.x(),
+                            gripFromPivotScaled.y() / socketScale.y(),
+                            gripFromPivotScaled.z() / socketScale.z());
+                    int gripFixtureCalibrated = 0;
+                    const bool hasCalibratedGrip
+                        = socket->getUserValue(
+                              "openmwFalloutVrGripFixtureCalibrated", gripFixtureCalibrated)
+                        && gripFixtureCalibrated != 0
+                        && socket->getUserValue("openmwFalloutVrGripFixtureX", mGripFixtureModel.x())
+                        && socket->getUserValue("openmwFalloutVrGripFixtureY", mGripFixtureModel.y())
+                        && socket->getUserValue("openmwFalloutVrGripFixtureZ", mGripFixtureModel.z());
+                    if (!hasCalibratedGrip)
+                    {
+                        std::string boundModel;
+                        socket->getUserValue("openmwBoundWeaponModel", boundModel);
+                        Log(Debug::Error) << "OpenMW VR weapon fixture bind rejected: model=" << boundModel
+                                          << " reason=missing-hash-locked-anatomical-grip";
+                        traverse(node, nv);
+                        return;
+                    }
+                    int triggerFixtureCalibrated = 0;
+                    mTriggerFixtureValid
+                        = socket->getUserValue(
+                              "openmwFalloutVrTriggerFixtureCalibrated", triggerFixtureCalibrated)
+                        && triggerFixtureCalibrated != 0
+                        && socket->getUserValue("openmwFalloutVrTriggerFixtureX", mTriggerFixtureModel.x())
+                        && socket->getUserValue("openmwFalloutVrTriggerFixtureY", mTriggerFixtureModel.y())
+                        && socket->getUserValue("openmwFalloutVrTriggerFixtureZ", mTriggerFixtureModel.z());
+                    socket->setPosition(-(
+                        socket->getAttitude() * scaleVec3(socketScale, mGripFixtureModel - socketPivot)));
+                    mFixtureCanonicalDot = std::clamp(
+                        mFixtureAimAxis * osg::Vec3f(0.f, 1.f, 0.f), -1.f, 1.f);
+                    if (mFixtureCanonicalDot < 0.999f)
+                    {
+                        Log(Debug::Error) << "OpenMW VR weapon fixture bind rejected noncanonical production axis: dot="
+                                          << mFixtureCanonicalDot << " fixtureAim=(" << mFixtureAimAxis.x() << ','
+                                          << mFixtureAimAxis.y() << ',' << mFixtureAimAxis.z()
+                                          << ") required=(0,1,0)";
+                        traverse(node, nv);
+                        return;
+                    }
+                    mSocketBindPosition = socket->getPosition();
+                    mSocketBindAttitude = socket->getAttitude();
+                    mSocketBindScale = socket->getScale();
+                    mSocketBindPivot = socket->getPivotPoint();
+                    mFixtureValid = true;
+                    Log(Debug::Info) << "OpenMW VR weapon fixture bound: type=" << weaponType
+                                     << " socket=" << socket->getName()
+                                     << " source=" << (mFixtureUsesProjectile ? "ProjectileNode" : "class-axis")
+                                     << " aimAxisJoint=(" << mFixtureAimAxis.x() << ',' << mFixtureAimAxis.y()
+                                     << ',' << mFixtureAimAxis.z() << ") sideAxisJoint=("
+                                     << mFixtureSideAxis.x() << ',' << mFixtureSideAxis.y() << ','
+                                     << mFixtureSideAxis.z() << ") gripFixtureModel=("
+                                     << mGripFixtureModel.x() << ',' << mGripFixtureModel.y() << ','
+                                      << mGripFixtureModel.z() << ") secondaryTarget="
+                                      << (mFixtureUsesGripDirection ? "visiblePalmWebToPinky" : "RightHandAim+X")
+                                      << " fixtureCanonicalDot=" << mFixtureCanonicalDot << " immutable=1";
+                }
+            }
+
+            const unsigned int frameNumber
+                = nv != nullptr && nv->getFrameStamp() != nullptr ? nv->getFrameStamp()->getFrameNumber() : 0;
+            if (frameNumber != mWriterFrameNumber)
+            {
+                mWriterFrameNumber = frameNumber;
+                mWritesThisFrame = 0;
+            }
+
+            // Once calibrated, the item has one immutable transform below the palm socket. Keep publishing that
+            // exact matrix even if OpenXR Aim is temporarily unavailable; live poses are diagnostics only after
+            // bind and must never be able to drop or replace the rigid attachment writer.
+            if (mLockedLocalMatrixValid)
+            {
+                matrixTransform->setMatrix(mLockedLocalMatrix);
+                ++mWritesThisFrame;
+            }
+            if (mRightHandAim == nullptr)
+            {
+                traverse(node, nv);
+                return;
+            }
+
+            const auto aim = mRightHandAim->locateInWorld();
+            osg::Node* const palmFrameNode = mPalmFrameNode.get();
+            int palmTargetReady = 0;
+            osg::Vec3f livePalmTarget;
+            const bool hasPalmTarget = palmFrameNode != nullptr
+                && palmFrameNode->getUserValue("openmwFalloutVrPalmTargetReady", palmTargetReady)
+                && palmTargetReady != 0
+                && palmFrameNode->getUserValue("openmwFalloutVrPalmTargetX", livePalmTarget.x())
+                && palmFrameNode->getUserValue("openmwFalloutVrPalmTargetY", livePalmTarget.y())
+                && palmFrameNode->getUserValue("openmwFalloutVrPalmTargetZ", livePalmTarget.z());
+            osg::Vec3f gripPalmFrameDirection;
+            const bool hasGripDirection
+                = palmFrameNode != nullptr
+                && palmFrameNode->getUserValue("openmwFalloutVrGripDirectionX", gripPalmFrameDirection.x())
+                && palmFrameNode->getUserValue("openmwFalloutVrGripDirectionY", gripPalmFrameDirection.y())
+                && palmFrameNode->getUserValue("openmwFalloutVrGripDirectionZ", gripPalmFrameDirection.z());
+            const bool completeFixtureFrame = hasPalmTarget && (!mFixtureUsesGripDirection || hasGripDirection);
+            if (!!aim.status && mFixtureValid && completeFixtureFrame
+                && palmFrameNode != nullptr && !palmFrameNode->getParentalNodePaths().empty())
+            {
+                const osg::Matrix palmFrameToWorld
+                    = osg::computeLocalToWorld(palmFrameNode->getParentalNodePaths().front());
+                const osg::Vec3f palmTargetWorld = livePalmTarget * palmFrameToWorld;
+                const osg::Matrix parentToWorld
+                    = osg::computeLocalToWorld(parent->getParentalNodePaths().front());
+                osg::Matrix worldToParent;
+                if (!worldToParent.invert(parentToWorld))
+                {
+                    traverse(node, nv);
+                    return;
+                }
+                const osg::Vec3f rayWorldForward
+                    = normalizeOr(aim.pose.orientation * osg::Vec3f(0.f, 1.f, 0.f), osg::Vec3f(0.f, 1.f, 0.f));
+                const osg::Vec3f rayWorldSide
+                    = normalizeOr(aim.pose.orientation * osg::Vec3f(1.f, 0.f, 0.f), osg::Vec3f(1.f, 0.f, 0.f));
+
+                // Solve the complete desired frame in world space first. Converting both target vectors into the
+                // animated hand-parent frame independently produced a 90-degree error while that parent rotated.
+                osg::Quat forwardWorldRotation;
+                forwardWorldRotation.makeRotate(mFixtureAimAxis, rayWorldForward);
+                const osg::Vec3f rotatedSide = rejectFromAxis(
+                    forwardWorldRotation * mFixtureSideAxis, rayWorldForward);
+                osg::Vec3f secondaryTargetWorld = rayWorldSide;
+                if (mFixtureUsesGripDirection)
+                    secondaryTargetWorld = normalizeOr(
+                        osg::Matrix::transform3x3(gripPalmFrameDirection, palmFrameToWorld), rayWorldSide);
+                const osg::Vec3f desiredSide = rejectFromAxis(secondaryTargetWorld, rayWorldForward);
+                osg::Quat desiredWorldRotation = forwardWorldRotation;
+                if (rotatedSide.length2() > 1e-8f && desiredSide.length2() > 1e-8f)
+                {
+                    mFixtureRoll = signedAngleAroundAxis(normalizeOr(rotatedSide, osg::Vec3f(1.f, 0.f, 0.f)),
+                        normalizeOr(desiredSide, osg::Vec3f(1.f, 0.f, 0.f)), rayWorldForward);
+                    mFixtureRollValid = true;
+                }
+                // Retain the last valid roll through a projection singularity instead of snapping to the
+                // arbitrary shortest-arc roll. OSG applies barrel alignment first, target-axis roll second.
+                if (mFixtureRollValid)
+                    desiredWorldRotation = forwardWorldRotation * osg::Quat(mFixtureRoll, rayWorldForward);
+
+                // Calibrate the asset frame once, then keep one immutable hand-local transform.  The production
+                // ray is read from this same Weapon Direction node, so following a separately animated Aim pose
+                // after bind would only make the item rotate inside the fingers.
+                if (!mLockedLocalMatrixValid)
+                {
+                    const osg::Vec3f structuralPalmWorld = palmTargetWorld;
+                    const float palmSocketError
+                        = ((palmTargetWorld * worldToParent) - livePalmTarget).length();
+                    if (palmSocketError > 0.001f)
+                    {
+                        Log(Debug::Error) << "OpenMW VR weapon rigid bind: frame=" << frameNumber
+                                          << " structuralPalmError=" << palmSocketError
+                                          << " status=fail-closed";
+                        traverse(node, nv);
+                        return;
+                    }
+
+                    osg::Matrix desiredWorldMatrix;
+                    desiredWorldMatrix.makeRotate(desiredWorldRotation);
+                    desiredWorldMatrix.setTrans(structuralPalmWorld);
+                    mLockedLocalMatrix = desiredWorldMatrix * worldToParent;
+                    mLockedLocalMatrixValid = true;
+                    Log(Debug::Info) << "OpenMW VR weapon rigid bind: frame=" << frameNumber
+                                     << " renderPath=Bip01 R Hand/Weapon Direction"
+                                     << " rotationOwner=immutable-palm-local-bind calibration=RightHandAim"
+                                     << " positionOwner=native-right-hand-frame localTranslation=("
+                                     << mLockedLocalMatrix.getTrans().x() << ','
+                                     << mLockedLocalMatrix.getTrans().y() << ','
+                                     << mLockedLocalMatrix.getTrans().z() << ')'
+                                     << " structuralPalmError=" << palmSocketError;
+                }
+
+                // One writer, one matrix: after bind neither tracking-space deltas nor action animation can change
+                // Weapon Direction relative to the anatomical palm socket.
+                if (mWritesThisFrame == 0)
+                {
+                    matrixTransform->setMatrix(mLockedLocalMatrix);
+                    ++mWritesThisFrame;
+                }
+
+                // Independent visible-hand measurement. This is not the point the weapon algebraically maps to;
+                // it crosses the live hand surface path and therefore catches any hand/weapon separation.
+                const osg::Vec3f palmWorld = livePalmTarget * palmFrameToWorld;
+                const auto quaternionDeltaDegrees = [](const osg::Quat& first, const osg::Quat& second) {
+                    const double dot = std::clamp(std::abs(first.x() * second.x() + first.y() * second.y()
+                        + first.z() * second.z() + first.w() * second.w()), 0.0, 1.0);
+                    return osg::RadiansToDegrees(2.0 * std::acos(dot));
+                };
+                const auto vectorDeltaDegrees = [](const osg::Vec3f& first, const osg::Vec3f& second) {
+                    return osg::RadiansToDegrees(std::acos(std::clamp(
+                        static_cast<double>(normalizeOr(first, osg::Vec3f(0.f, 1.f, 0.f))
+                            * normalizeOr(second, osg::Vec3f(0.f, 1.f, 0.f))),
+                        -1.0, 1.0)));
+                };
+                if (mPreviousSolvedFrameValid)
+                {
+                    const osg::Quat rigidWorldRotation
+                        = mLockedLocalMatrix.getRotate() * parentToWorld.getRotate();
+                    const double weaponDeltaDegrees
+                        = quaternionDeltaDegrees(mPreviousDesiredWorldRotation, rigidWorldRotation);
+                    const double rayDeltaDegrees = vectorDeltaDegrees(mPreviousRayWorldForward, rayWorldForward);
+                    const double gripDirectionDeltaDegrees
+                        = vectorDeltaDegrees(mPreviousSecondaryTargetWorld, secondaryTargetWorld);
+                    const float palmDelta = (palmWorld - mPreviousPalmWorld).length();
+                    if (mWritesThisFrame > 1)
+                    {
+                        Log(Debug::Error) << "OpenMW VR weapon rigid invariant: frame=" << frameNumber
+                                          << " writesThisFrame=" << mWritesThisFrame
+                                          << " weaponDeltaDeg=" << weaponDeltaDegrees
+                                          << " rayDeltaDeg=" << rayDeltaDegrees
+                                          << " gripDirectionDeltaDeg=" << gripDirectionDeltaDegrees
+                                          << " palmDelta=" << palmDelta << " status=fail";
+                    }
+                }
+                mPreviousDesiredWorldRotation = mLockedLocalMatrix.getRotate() * parentToWorld.getRotate();
+                mPreviousRayWorldForward = rayWorldForward;
+                mPreviousPalmWorld = palmWorld;
+                mPreviousSecondaryTargetWorld = secondaryTargetWorld;
+                mPreviousSolvedFrameValid = true;
+
+                // Child weapon controllers (reload, bolt, trigger, recoil) run below this joint. Audit only after
+                // they have updated so telemetry describes the rendered state for this traversal, not the state
+                // immediately before the event animation mutates descendants.
+                traverse(node, nv);
+
+                float signedGripAxisDot = -2.f;
+                if (!node->getParentalNodePaths().empty())
+                {
+                    const osg::Matrix postTraversalJointToWorld
+                        = osg::computeLocalToWorld(node->getParentalNodePaths().front());
+                    const osg::Quat lockedWorldRotation
+                        = mLockedLocalMatrix.getRotate() * parentToWorld.getRotate();
+                    const double postSolveErrorDegrees
+                        = quaternionDeltaDegrees(postTraversalJointToWorld.getRotate(), lockedWorldRotation);
+                    double lockedLocalMaxElementDelta = 0.0;
+                    const osg::Matrix& currentLocalMatrix = matrixTransform->getMatrix();
+                    for (int row = 0; row < 4; ++row)
+                        for (int column = 0; column < 4; ++column)
+                            lockedLocalMaxElementDelta = std::max(lockedLocalMaxElementDelta,
+                                std::abs(currentLocalMatrix(row, column) - mLockedLocalMatrix(row, column)));
+                    const float socketPositionDelta = (socket->getPosition() - mSocketBindPosition).length();
+                    const double socketAttitudeDeltaDegrees
+                        = quaternionDeltaDegrees(socket->getAttitude(), mSocketBindAttitude);
+                    const float socketScaleDelta = (socket->getScale() - mSocketBindScale).length();
+                    const float socketPivotDelta = (socket->getPivotPoint() - mSocketBindPivot).length();
+                    if (mFixtureUsesGripDirection)
+                    {
+                        const osg::Vec3f productionForward = normalizeOr(osg::Matrix::transform3x3(
+                            osg::Vec3f(0.f, 1.f, 0.f), postTraversalJointToWorld), rayWorldForward);
+                        const osg::Vec3f renderedGripAxis = rejectFromAxis(normalizeOr(
+                            osg::Matrix::transform3x3(mFixtureSideAxis, postTraversalJointToWorld),
+                            osg::Vec3f(1.f, 0.f, 0.f)), productionForward);
+                        const osg::Vec3f anatomicalHandleAxis = rejectFromAxis(normalizeOr(
+                            osg::Matrix::transform3x3(gripPalmFrameDirection, palmFrameToWorld),
+                            osg::Vec3f(1.f, 0.f, 0.f)), productionForward);
+                        if (renderedGripAxis.length2() > 1e-8f && anatomicalHandleAxis.length2() > 1e-8f)
+                            signedGripAxisDot = std::clamp(
+                                normalizeOr(renderedGripAxis, osg::Vec3f(1.f, 0.f, 0.f))
+                                    * normalizeOr(anatomicalHandleAxis, osg::Vec3f(1.f, 0.f, 0.f)),
+                                -1.f, 1.f);
+                    }
+                    if (postSolveErrorDegrees > 0.25 || lockedLocalMaxElementDelta > 1e-5
+                        || socketPositionDelta > 1e-4f
+                        || socketAttitudeDeltaDegrees > 0.01 || socketScaleDelta > 1e-4f
+                        || socketPivotDelta > 1e-4f || node->getNumParents() != 1
+                        || socket->getNumParents() != 1
+                        || (mFixtureUsesGripDirection && signedGripAxisDot < 0.995f))
+                    {
+                        Log(Debug::Error) << "OpenMW VR weapon post-traversal invariant: frame=" << frameNumber
+                                          << " postSolveErrorDeg=" << postSolveErrorDegrees
+                                          << " lockedLocalMaxElementDelta=" << lockedLocalMaxElementDelta
+                                          << " socketPositionDelta=" << socketPositionDelta
+                                          << " socketAttitudeDeltaDeg=" << socketAttitudeDeltaDegrees
+                                          << " socketScaleDelta=" << socketScaleDelta
+                                          << " socketPivotDelta=" << socketPivotDelta
+                                          << " jointParentCount=" << node->getNumParents()
+                                          << " socketParentCount=" << socket->getNumParents()
+                                          << " signedGripAxisDot=" << signedGripAxisDot
+                                          << " status=fail";
+                    }
+                }
+
+                const int fixtureFrame = mFixtureLogs++;
+                if ((fixtureFrame < 8 || fixtureFrame % 60 == 0)
+                    && socket != nullptr && !socket->getParentalNodePaths().empty()
+                    && !node->getParentalNodePaths().empty())
+                {
+                    const osg::Matrix jointToWorld
+                        = osg::computeLocalToWorld(node->getParentalNodePaths().front());
+                    osg::NodePath socketPath = node->getParentalNodePaths().front();
+                    socketPath.push_back(socket);
+                    const osg::Matrix socketToWorld = osg::computeLocalToWorld(socketPath);
+                    const osg::Vec3f jointSolvedAim = normalizeOr(osg::Matrix::transform3x3(
+                        mFixtureAimAxis, jointToWorld), osg::Vec3f(0.f, 1.f, 0.f));
+                    osg::Vec3f renderedAim = jointSolvedAim;
+                    osg::Vec3f muzzleWorld = jointToWorld.getTrans();
+                    osg::Matrix productionRayToWorld = jointToWorld;
+                    if (mProjectileNode != nullptr && !mProjectilePathFromSocket.empty())
+                    {
+                        osg::NodePath projectilePath = node->getParentalNodePaths().front();
+                        projectilePath.insert(projectilePath.end(),
+                            mProjectilePathFromSocket.begin(), mProjectilePathFromSocket.end());
+                        const osg::Matrix projectileToWorld
+                            = osg::computeLocalToWorld(projectilePath);
+                        renderedAim = normalizeOr(osg::Matrix::transform3x3(
+                            osg::Vec3f(0.f, 1.f, 0.f), projectileToWorld), renderedAim);
+                        muzzleWorld = projectileToWorld.getTrans();
+                        productionRayToWorld = projectileToWorld;
+                    }
+                    const osg::Vec3f productionRayForward = normalizeOr(osg::Matrix::transform3x3(
+                        osg::Vec3f(0.f, 1.f, 0.f), productionRayToWorld), jointSolvedAim);
+                    const osg::Vec3f gripWorld = mGripFixtureModel * socketToWorld;
+                    osg::Vec3f triggerWorld;
+                    osg::Vec3f indexFingerWorld;
+                    float triggerFingerDistance = -1.f;
+                    if (mTriggerFixtureValid)
+                    {
+                        triggerWorld = mTriggerFixtureModel * socketToWorld;
+                        if (mIndexFingerTipNode != nullptr
+                            && !mIndexFingerTipNode->getParentalNodePaths().empty())
+                        {
+                            indexFingerWorld = osg::computeLocalToWorld(
+                                mIndexFingerTipNode->getParentalNodePaths().front()).getTrans();
+                            triggerFingerDistance = (triggerWorld - indexFingerWorld).length();
+                        }
+                    }
+                    const osg::Vec3f productionRayOrigin = productionRayToWorld.getTrans();
+                    const osg::Vec3f muzzleFromRayOrigin = muzzleWorld - productionRayOrigin;
+                    const osg::Vec3f muzzleRayPerpendicular = muzzleFromRayOrigin
+                        - productionRayForward * (muzzleFromRayOrigin * productionRayForward);
+                    const float renderedProductionDot
+                        = std::clamp(renderedAim * productionRayForward, -1.f, 1.f);
+                    const float aimRayDot = std::clamp(productionRayForward * rayWorldForward, -1.f, 1.f);
+                    std::ostringstream ancestryDelta;
+                    for (const FixturePathTransform& sample : mFixturePathTransforms)
+                    {
+                        const osg::Matrix& current = sample.mNode->getMatrix();
+                        double maxElementDelta = 0.0;
+                        for (int row = 0; row < 4; ++row)
+                            for (int column = 0; column < 4; ++column)
+                                maxElementDelta = std::max(maxElementDelta,
+                                    std::abs(current(row, column) - sample.mBindMatrix(row, column)));
+                        if (maxElementDelta <= 1e-5f)
+                            continue;
+                        const osg::Quat currentRotation = current.getRotate();
+                        const osg::Quat bindRotation = sample.mBindMatrix.getRotate();
+                        const double quaternionDot = std::clamp(std::abs(currentRotation.x() * bindRotation.x()
+                            + currentRotation.y() * bindRotation.y() + currentRotation.z() * bindRotation.z()
+                            + currentRotation.w() * bindRotation.w()), 0.0, 1.0);
+                        if (ancestryDelta.tellp() > 0)
+                            ancestryDelta << '|';
+                        ancestryDelta << (sample.mNode->getName().empty() ? "<unnamed>" : sample.mNode->getName())
+                                      << ":angleDeg=" << osg::RadiansToDegrees(2.f * std::acos(quaternionDot))
+                                      << ",translation="
+                                      << (current.getTrans() - sample.mBindMatrix.getTrans()).length()
+                                      << ",maxElement=" << maxElementDelta;
+                    }
+                    std::string boundModel;
+                    std::string boundId;
+                    std::string weaponAnimationGroup;
+                    int bindSerial = 0;
+                    socket->getUserValue("openmwBoundWeaponModel", boundModel);
+                    socket->getUserValue("openmwBoundWeaponId", boundId);
+                    socket->getUserValue("openmwBoundWeaponBindSerial", bindSerial);
+                    socket->getUserValue("openmwWeaponAnimationGroup", weaponAnimationGroup);
+                    Log(Debug::Info) << "OpenMW VR weapon fixture: type=" << weaponType
+                                     << " boundId=" << boundId << " boundModel=" << boundModel
+                                     << " bindSerial=" << bindSerial
+                                     << " animationGroup=" << weaponAnimationGroup
+                                     << " source=" << (mFixtureUsesProjectile ? "ProjectileNode" : "class-axis")
+                                     << " muzzleWorld=(" << muzzleWorld.x() << ',' << muzzleWorld.y() << ','
+                                     << muzzleWorld.z() << ") renderedAim=(" << renderedAim.x() << ','
+                                     << renderedAim.y() << ',' << renderedAim.z() << ") jointSolvedAim=("
+                                     << jointSolvedAim.x() << ',' << jointSolvedAim.y() << ','
+                                     << jointSolvedAim.z() << ") socketAttitude=(" << socket->getAttitude().x()
+                                     << ',' << socket->getAttitude().y() << ',' << socket->getAttitude().z() << ','
+                                     << socket->getAttitude().w() << ") socketPosition=(" << socket->getPosition().x()
+                                     << ',' << socket->getPosition().y() << ',' << socket->getPosition().z()
+                                     << ") ancestryDelta=[" << ancestryDelta.str() << "] rayForward=("
+                                     << productionRayForward.x() << ',' << productionRayForward.y() << ','
+                                     << productionRayForward.z() << ") rightHandAimForward=("
+                                     << rayWorldForward.x() << ',' << rayWorldForward.y() << ','
+                                     << rayWorldForward.z() << ") renderedProductionDot=" << renderedProductionDot
+                                     << " aimRayDot=" << aimRayDot
+                                     << " aimRayAngleDeg=" << osg::RadiansToDegrees(std::acos(aimRayDot))
+                                     << " fixtureCanonicalDot=" << mFixtureCanonicalDot
+                                     << " signedGripAxisDot=" << signedGripAxisDot
+                                     << " gripFixtureModel=(" << mGripFixtureModel.x() << ','
+                                     << mGripFixtureModel.y() << ',' << mGripFixtureModel.z() << ") gripWorld=("
+                                     << gripWorld.x() << ',' << gripWorld.y() << ',' << gripWorld.z()
+                                     << ") palmWorld=(" << palmWorld.x() << ',' << palmWorld.y() << ','
+                                     << palmWorld.z() << ") gripPalmDistance=" << (gripWorld - palmWorld).length()
+                                     << " productionRayOrigin=(" << productionRayOrigin.x() << ','
+                                     << productionRayOrigin.y() << ',' << productionRayOrigin.z() << ')'
+                                     << " muzzleRayPerpendicularDistance=" << muzzleRayPerpendicular.length()
+                                     << " triggerFixtureValid=" << mTriggerFixtureValid << " triggerWorld=("
+                                     << triggerWorld.x() << ',' << triggerWorld.y() << ',' << triggerWorld.z()
+                                     << ") indexFingerWorld=(" << indexFingerWorld.x() << ',' << indexFingerWorld.y()
+                                     << ',' << indexFingerWorld.z() << ") triggerFingerDistance="
+                                     << triggerFingerDistance
+                                     << " solver=immutable-part-local-frame palmFrame=live-visible-hand"
+                                     << " frame=" << frameNumber << " writesThisFrame=" << mWritesThisFrame;
+                }
+                return;
+            }
+        }
+        else
+        {
+            osg::Quat rotate{ 0, 0, 0, 1 };
+            switch (weaponType)
+            {
+                case ESM::Weapon::MarksmanThrown:
+                case ESM::Weapon::Spell:
+                case ESM::Weapon::Arrow:
+                case ESM::Weapon::Bolt:
+                case ESM::Weapon::HandToHand:
+                case ESM::Weapon::MarksmanBow:
+                case ESM::Weapon::MarksmanCrossbow:
+                    rotate = osg::Quat(-osg::PI_2, osg::Vec3{ 0, 0, 1 });
+                    break;
+                default:
+                    rotate = osg::Quat(osg::PI_2, osg::Vec3{ 1, 0, 0 });
+                    break;
+            }
+            if (mRightHandAim != nullptr)
+            {
+                const auto aim = mRightHandAim->locateInWorld();
+                if (!!aim.status)
+                {
+                    osg::Matrix desiredWorldMatrix;
+                    desiredWorldMatrix.makeRotate(rotate * aim.pose.orientation);
+                    desiredWorldMatrix.setTrans(aim.pose.position.asMWUnits());
+                    osg::Matrix worldToParent;
+                    if (worldToParent.invert(osg::computeLocalToWorld(parent->getParentalNodePaths().front())))
+                        matrixTransform->setMatrix(desiredWorldMatrix * worldToParent);
+                }
+            }
+        }
 
         traverse(node, nv);
     }
@@ -3458,14 +4685,15 @@ namespace MWVR
         traverse(node, nv);
     }
 
-    struct CachedControllerPose
-    {
-        osg::Vec3f mWorldPosition;
-        osg::Quat mWorldOrientation;
-        bool mValid = false;
-    };
+    std::map<std::string, CachedVrControllerPose> sCachedControllerPoses;
 
-    std::map<std::string, CachedControllerPose> sCachedControllerPoses;
+    std::optional<CachedVrControllerPose> getCachedVrControllerPose(std::string_view side)
+    {
+        const auto it = sCachedControllerPoses.find(std::string(side));
+        if (it == sCachedControllerPoses.end() || !it->second.mValid)
+            return std::nullopt;
+        return it->second;
+    }
 
     class TrackingController
     {
@@ -3847,10 +5075,11 @@ namespace MWVR
     {
     public:
         FalloutHandControllerSpacePosition(std::string side, std::string model, osg::Vec3f modelCuffAnchor,
-            osg::Vec3f controllerLocalTarget, osg::Quat controllerLocalAttitude)
+            osg::Vec3f modelPalmPivot, osg::Vec3f controllerLocalTarget, osg::Quat controllerLocalAttitude)
             : mSide(std::move(side))
             , mModel(std::move(model))
             , mModelCuffAnchor(modelCuffAnchor)
+            , mModelPalmPivot(modelPalmPivot)
             , mControllerLocalTarget(controllerLocalTarget)
             , mControllerLocalAttitude(controllerLocalAttitude)
         {
@@ -3884,6 +5113,28 @@ namespace MWVR
                         const osg::Vec3f localPosition = localTarget - rotatedModelCuff;
                         transform->setAttitude(localRotation.getRotate());
                         transform->setPosition(localPosition);
+
+                        // The visible hand surface and the weapon socket are siblings below the tracked hand.
+                        // Publish the live anatomical palm frame after every grip-pose update so the weapon never
+                        // consumes the one-time construction pose while the visible hand consumes the current pose.
+                        const osg::Vec3f palmLocal = localPosition + mModelPalmPivot * localRotation;
+                        const osg::Vec3f wristLocal = localPosition + mModelCuffAnchor * localRotation;
+                        const osg::Vec3f gripDirection
+                            = normalizeOr(wristLocal - palmLocal, osg::Vec3f(-1.f, 0.f, 0.f));
+                        sLiveWeaponPalmFrame.mWorldPosition = palmLocal * parentLocalToWorld;
+                        sLiveWeaponPalmFrame.mWorldGripDirection = normalizeOr(
+                            osg::Matrix::transform3x3(gripDirection, parentLocalToWorld),
+                            osg::Vec3f(-1.f, 0.f, 0.f));
+                        sLiveWeaponPalmFrame.mValid = true;
+                        parent->setUserValue("openmwFalloutVrPalmTargetX", palmLocal.x());
+                        parent->setUserValue("openmwFalloutVrPalmTargetY", palmLocal.y());
+                        parent->setUserValue("openmwFalloutVrPalmTargetZ", palmLocal.z());
+                        parent->setUserValue("openmwFalloutVrPalmTargetReady", 1);
+                        parent->setUserValue("openmwFalloutVrPalmTargetLive", 1);
+                        parent->setUserValue("openmwFalloutVrPalmTargetSerial", ++mPalmPublishSerial);
+                        parent->setUserValue("openmwFalloutVrGripDirectionX", gripDirection.x());
+                        parent->setUserValue("openmwFalloutVrGripDirectionY", gripDirection.y());
+                        parent->setUserValue("openmwFalloutVrGripDirectionZ", gripDirection.z());
 
                         if (mLogCount < 20 || (++mLogFrame % 300) == 0)
                         {
@@ -3940,10 +5191,12 @@ namespace MWVR
         std::string mSide;
         std::string mModel;
         osg::Vec3f mModelCuffAnchor;
+        osg::Vec3f mModelPalmPivot;
         osg::Vec3f mControllerLocalTarget;
         osg::Quat mControllerLocalAttitude;
         int mLogCount = 0;
         int mLogFrame = 0;
+        int mPalmPublishSerial = 0;
     };
 
     VRAnimation::VRAnimation(const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode,
@@ -3962,9 +5215,14 @@ namespace MWVR
         mLeftHandPath = VR::stringToXrPath(VR::Paths::LEFT_HAND);
         mRightHandPath = VR::stringToXrPath(VR::Paths::RIGHT_HAND);
 
+        auto& xrInput = OpenXRInput::instance();
+
         mWeaponDirectionTransform = new osg::MatrixTransform();
         mWeaponDirectionTransform->setName("Weapon Direction");
-        mWeaponDirectionTransform->setUpdateCallback(new WeaponDirectionController);
+        mWeaponDirectionTransform->setUpdateCallback(
+            new WeaponDirectionController(xrInput.getSpace(OpenXRInput::RightHandAim)));
+        mNativeWeaponBoneController = new NativeWeaponBoneController(
+            xrInput.getSpace(OpenXRInput::RightHandAim));
 
         mModelOffset->setName("ModelOffset");
 
@@ -3974,8 +5232,6 @@ namespace MWVR
         mWeaponPointerTransform->setUpdateCallback(new WeaponPointerController);
         // mWeaponDirectionTransform->addChild(mWeaponPointerTransform);
 
-        auto& xrInput = OpenXRInput::instance();
-
         Log(Debug::Verbose) << "FNV/ESM4 diag: VR hand tracking mode inventoryHands=1";
 
         for (int i = 0; i < 2; i++)
@@ -3983,17 +5239,19 @@ namespace MWVR
             XrPath path = i == 0 ? mLeftHandPath : mRightHandPath;
             auto& ctx = mVrControllers[path] = {};
             ctx.topLevelPath = path;
+            // The original OpenMW-VR implementation drives both tracked forearms from aim pose.  Keep that exact
+            // contract for the weapon hand so hand, native Weapon bone, rendered item, and gameplay ray share one
+            // pose owner.  Splitting the hand onto Grip while calibrating the item from Aim creates a lever-arm
+            // pivot whenever those runtime spaces diverge.
             if (VR::getLeftHandedMode())
-                ctx.spaceName = i == 1 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
+                ctx.spaceName = i == 1 ? OpenXRInput::LeftHandAim : OpenXRInput::RightHandAim;
             else
-                ctx.spaceName = i == 0 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
-            const std::string gripSpace = ctx.spaceName;
+                ctx.spaceName = i == 0 ? OpenXRInput::LeftHandAim : OpenXRInput::RightHandAim;
+            const std::string stockAimSpace = ctx.spaceName;
             const std::string wristSpace = i == 0 ? "LeftWristTop" : "RightWristTop";
             // LeftWristTop is the authored Pip-Boy/cuff anchor and already gives the left arm the
-            // placement the player expects. RightWristTop is a HUD placement space derived roughly
-            // 20 cm away from the controller aim pose; driving the weapon hand from it visibly floats
-            // the hand above the real controller. Keep the Pip-Boy wrist anchor, but drive the weapon
-            // hand from the native grip pose just like stock OpenMW VR.
+            // placement the player expects. Keep that authored left-wrist exception; the weapon hand follows the
+            // original OpenMW-VR aim-pose path above.
             const bool useWristTop = i == 0 && xrInput.getSpace(wristSpace) != nullptr;
             if (useWristTop)
             {
@@ -4001,7 +5259,7 @@ namespace MWVR
             }
             else if (i == 0)
                 Log(Debug::Warning) << "FNV/ESM4 diag: VR wrist hand space missing " << wristSpace
-                                    << "; using grip tracking space " << gripSpace;
+                                    << "; using stock aim tracking space " << stockAimSpace;
             const osg::Vec3 offset = useWristTop ? osg::Vec3(0, 0, 0) : osg::Vec3(15, 0, 0);
             const bool useNativeGripOrientation = useWristTop;
             Log(Debug::Verbose) << "FNV/ESM4 diag: VR hand tracking source hand=" << (i == 0 ? "left" : "right")
@@ -4027,6 +5285,15 @@ namespace MWVR
     VRAnimation::~VRAnimation()
     {
         clearFalloutVrHandSurfaces();
+        // Destroy the part while its palm/aim parent is still alive. ObjectAnimation removes
+        // its root from the current parent during destruction.
+        removeIndividualPart(ESM::PRT_Weapon);
+        while (mWeaponDirectionTransform != nullptr && mWeaponDirectionTransform->getNumParents() > 0)
+        {
+            osg::Group* const parent = mWeaponDirectionTransform->getParent(0);
+            if (!parent->removeChild(mWeaponDirectionTransform))
+                break;
+        }
     }
 
     void VRAnimation::setViewMode(NpcAnimation::ViewMode viewMode)
@@ -4103,6 +5370,367 @@ namespace MWVR
         updateCharHeight();
     }
 
+    void VRAnimation::showWeapons(bool showWeapon)
+    {
+        const auto clearNativeWeaponDebug = [&]() {
+            for (const osg::ref_ptr<osg::Node>& marker : mFalloutVrNativeWeaponDebugNodes)
+            {
+                if (marker == nullptr)
+                    continue;
+                while (marker->getNumParents() > 0)
+                {
+                    osg::Group* const parent = marker->getParent(0);
+                    if (!parent->removeChild(marker))
+                        break;
+                }
+            }
+            mFalloutVrNativeWeaponDebugNodes.clear();
+        };
+        const auto clearNativeWeaponRay = [&]() {
+            mFalloutVrWeaponRayNode = nullptr;
+            if (mFalloutVrSyntheticWeaponRayNode != nullptr)
+            {
+                while (mFalloutVrSyntheticWeaponRayNode->getNumParents() > 0)
+                {
+                    osg::Group* const parent = mFalloutVrSyntheticWeaponRayNode->getParent(0);
+                    if (!parent->removeChild(mFalloutVrSyntheticWeaponRayNode))
+                        break;
+                }
+                mFalloutVrSyntheticWeaponRayNode = nullptr;
+            }
+        };
+        if (!showWeapon)
+        {
+            const MWWorld::InventoryStore& inventory = mPtr.getClass().getInventoryStore(mPtr);
+            const MWWorld::ConstContainerStoreIterator weapon
+                = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+            osg::Node* const retainedPart = mObjectParts[ESM::PRT_Weapon] != nullptr
+                ? mObjectParts[ESM::PRT_Weapon]->getNode()
+                : nullptr;
+            bool currentBoundIdentity = false;
+            int retainedBindSerial = 0;
+            std::string retainedModel;
+            if (weapon != inventory.end() && weapon->getType() == ESM4::Weapon::sRecordId
+                && retainedPart != nullptr)
+            {
+                const VFS::Path::Normalized model = weapon->getClass().getCorrectedModel(*weapon);
+                const ESM4::Weapon* const record = weapon->get<ESM4::Weapon>()->mBase;
+                std::string boundModel;
+                std::string boundId;
+                int boundAnimationType = -1;
+                currentBoundIdentity = !model.empty()
+                    && retainedPart->getUserValue("openmwBoundWeaponModel", boundModel)
+                    && retainedPart->getUserValue("openmwBoundWeaponId", boundId)
+                    && retainedPart->getUserValue("openmwBoundWeaponAnimationType", boundAnimationType)
+                    && boundModel == model.value()
+                    && boundId == weapon->getCellRef().getRefId().toDebugString()
+                    && boundAnimationType == static_cast<int>(record->mData.animationType);
+                if (currentBoundIdentity)
+                {
+                    retainedModel = boundModel;
+                    retainedPart->getUserValue("openmwBoundWeaponBindSerial", retainedBindSerial);
+                }
+            }
+            if (currentBoundIdentity)
+            {
+                // Equip callbacks carry no identity token, so an outgoing weapon can deliver a late hide after the
+                // incoming slot has already committed. Derive visibility from authoritative draw state plus pointer
+                // state; the edge callback may retain the fixture but cannot hide a newer generation.
+                const bool drawStateOwnsWeapon
+                    = mPtr.getClass().getCreatureStats(mPtr).getDrawState() == MWMechanics::DrawState::Weapon;
+                mShowWeapons = drawStateOwnsWeapon;
+                setFalloutWeaponGeometryVisible(retainedPart, drawStateOwnsWeapon && !mRightPointerEnabled);
+                // A late hide callback must not sever gameplay from the still-current barrel.  The ray is an
+                // immutable child of the retained native part and remains valid for the whole bind generation.
+                if (drawStateOwnsWeapon && mFalloutVrSyntheticWeaponRayNode != nullptr
+                    && mFalloutVrSyntheticWeaponRayNode->getNumParents() == 1)
+                    mFalloutVrWeaponRayNode = mFalloutVrSyntheticWeaponRayNode;
+                else if (drawStateOwnsWeapon)
+                    Log(Debug::Error) << "OpenMW VR native weapon retained ray invariant: status=fail reason="
+                                      << "missing-or-multiparent-production-ray";
+                else
+                    mFalloutVrWeaponRayNode = nullptr;
+                auditNativeWeaponRender(retainedPart, retainedModel, retainedBindSerial,
+                    drawStateOwnsWeapon && !mRightPointerEnabled, "retained-visibility-transition");
+                Log(Debug::Info) << "OpenMW VR Fallout weapon visibility: visible="
+                                 << (drawStateOwnsWeapon && !mRightPointerEnabled)
+                                 << " fixtureRetained=1 requestedVisible=0 drawStateWeapon=" << drawStateOwnsWeapon
+                                 << " generationOwned=1 reason=authoritative-draw-state";
+                return;
+            }
+        }
+
+        NpcAnimation::showWeapons(showWeapon);
+        if (!showWeapon || mObjectParts[ESM::PRT_Weapon] == nullptr || mWeaponDirectionTransform == nullptr)
+        {
+            if (mNativeWeaponBoneController != nullptr)
+            {
+                mNativeWeaponBoneController->setEnabled(false);
+                mNativeWeaponBoneController->clearAttachment();
+            }
+            clearNativeWeaponDebug();
+            clearNativeWeaponRay();
+            return;
+        }
+
+        const MWWorld::InventoryStore& inventory = mPtr.getClass().getInventoryStore(mPtr);
+        const MWWorld::ConstContainerStoreIterator weapon
+            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+        if (weapon == inventory.end() || weapon->getType() != ESM4::Weapon::sRecordId)
+        {
+            if (mNativeWeaponBoneController != nullptr)
+            {
+                mNativeWeaponBoneController->setEnabled(false);
+                mNativeWeaponBoneController->clearAttachment();
+            }
+            clearNativeWeaponDebug();
+            clearNativeWeaponRay();
+            return;
+        }
+
+        osg::Node* const part = mObjectParts[ESM::PRT_Weapon]->getNode();
+        // Identity-root official FNV weapon NIFs are returned by SceneUtil::attach as their native osg::Group,
+        // not a synthetic PositionAttitudeTransform.  This path never edits the part transform; it only needs
+        // the native group as the parent for a diagnostic/production-ray child.
+        osg::Group* const socket = part->asGroup();
+        if (socket == nullptr)
+        {
+            Log(Debug::Warning) << "OpenMW VR Fallout weapon aim routing failed: native part is not a group";
+            if (mNativeWeaponBoneController != nullptr)
+            {
+                mNativeWeaponBoneController->setEnabled(false);
+                mNativeWeaponBoneController->clearAttachment();
+            }
+            clearNativeWeaponDebug();
+            clearNativeWeaponRay();
+            return;
+        }
+        const auto nativeWeaponBone = mNodeMap.find("Weapon");
+        const auto rightHandBone = mNodeMap.find("Bip01 R Hand");
+        // NpcAnimation::attach has already put this native part beneath the family-authored skeleton Weapon bone and
+        // preserved its native position/BoneOffset.  Never tear it off that parent: doing so discards the
+        // Weapon-to-right-hand transform and makes the item float even when its local model transform is valid.
+        bool weaponBoneUnderRightHand = false;
+        std::size_t weaponBoneParentPathCount = 0;
+        if (nativeWeaponBone != mNodeMap.end() && rightHandBone != mNodeMap.end())
+        {
+            const osg::NodePathList paths = nativeWeaponBone->second->getParentalNodePaths();
+            weaponBoneParentPathCount = paths.size();
+            // The actor root can itself be multi-parented by the render graph, so a single skeleton chain may
+            // legitimately yield more than one complete parental path.  Every route must still pass through the
+            // same tracked R Hand so later world-space consumers can use any of those equivalent stereo routes;
+            // requiring paths.size()==1 falsely
+            // rejected the stock Bethesda R-Hand -> Weapon hierarchy and dropped every official held model back
+            // onto the animated/floppy path.
+            weaponBoneUnderRightHand = !paths.empty()
+                && std::all_of(paths.begin(), paths.end(), [&](const osg::NodePath& path) {
+                       return std::find(path.begin(), path.end(), rightHandBone->second.get()) != path.end();
+                   });
+        }
+        if (part->getNumParents() != 1 || nativeWeaponBone == mNodeMap.end()
+            || rightHandBone == mNodeMap.end() || part->getParent(0) != nativeWeaponBone->second.get()
+            || !weaponBoneUnderRightHand)
+        {
+            setFalloutWeaponGeometryVisible(part, false);
+            if (mNativeWeaponBoneController != nullptr)
+            {
+                mNativeWeaponBoneController->setEnabled(false);
+                mNativeWeaponBoneController->clearAttachment();
+            }
+            Log(Debug::Error) << "OpenMW VR Fallout native weapon attachment rejected: parentCount="
+                              << part->getNumParents() << " exactWeaponParent="
+                              << (nativeWeaponBone != mNodeMap.end() && part->getNumParents() == 1
+                                      && part->getParent(0) == nativeWeaponBone->second.get())
+                              << " weaponBoneUnderRightHand=" << weaponBoneUnderRightHand
+                              << " weaponBoneParentPaths=" << weaponBoneParentPathCount;
+            clearNativeWeaponDebug();
+            clearNativeWeaponRay();
+            return;
+        }
+        osg::Group* const nativeWeaponParent = part->getParent(0);
+        if (nativeWeaponParent == nullptr)
+        {
+            if (mNativeWeaponBoneController != nullptr)
+            {
+                mNativeWeaponBoneController->setEnabled(false);
+                mNativeWeaponBoneController->clearAttachment();
+            }
+            clearNativeWeaponDebug();
+            clearNativeWeaponRay();
+            return;
+        }
+
+        SceneUtil::FindByNameVisitor projectileNode("ProjectileNode");
+        // Pointer/Pip-Boy presentation temporarily masks the held part root to zero. ProjectileNode is structural
+        // bind data, not visible-state data, so discovery must traverse hidden branches; otherwise a same-bind show
+        // rehomes the production ray to the model-origin fallback until the next visible rebuild.
+        projectileNode.setTraversalMask(~0u);
+        projectileNode.setNodeMaskOverride(~0u);
+        part->accept(projectileNode);
+        osg::Group* const projectileParent
+            = projectileNode.mFoundNode != nullptr ? projectileNode.mFoundNode->asGroup() : nullptr;
+
+        const ESM4::Weapon* const falloutWeapon = weapon->get<ESM4::Weapon>()->mBase;
+        int bindSerial = 0;
+        part->getUserValue("openmwBoundWeaponBindSerial", bindSerial);
+        if (mNativeWeaponBoneController != nullptr)
+        {
+            mNativeWeaponBoneController->initializeBind(nativeWeaponBone->second.get());
+
+            const std::string thirdPersonAim
+                = MWRender::getFonvWeaponAnimationKf(falloutWeapon->mData.animationType, "aim");
+            const std::string firstPersonAim
+                = MWRender::getFonvFirstPersonWeaponAnimationKf(thirdPersonAim);
+            bool familyPoseReady = false;
+            if (!firstPersonAim.empty())
+            {
+                try
+                {
+                    const osg::ref_ptr<const SceneUtil::KeyframeHolder> keyframes
+                        = mResourceSystem->getKeyframeManager()->get(
+                            VFS::Path::toNormalized(firstPersonAim));
+                    if (keyframes != nullptr)
+                    {
+                        const auto pose = MWRender::sampleFonvWeaponAttachmentEndpoint(*keyframes);
+                        if (pose)
+                        {
+                            mNativeWeaponBoneController->setFamilyPose(
+                                *pose, falloutWeapon->mData.animationType, firstPersonAim, bindSerial);
+                            familyPoseReady = true;
+                        }
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Error) << "OpenMW VR native weapon family pose load failed: path="
+                                      << firstPersonAim << " error=" << e.what();
+                }
+            }
+            if (!familyPoseReady)
+            {
+                mNativeWeaponBoneController->useBindPose(
+                    falloutWeapon->mData.animationType, bindSerial);
+                Log(Debug::Warning) << "OpenMW VR native weapon family pose fallback: animationType="
+                                    << static_cast<unsigned int>(falloutWeapon->mData.animationType)
+                                    << " source=first-person-skeleton-bind";
+            }
+            else
+            {
+                Log(Debug::Info) << "OpenMW VR native weapon family pose: animationType="
+                                 << static_cast<unsigned int>(falloutWeapon->mData.animationType)
+                                 << " source=" << firstPersonAim << " bindSerial=" << bindSerial
+                                 << " lock=Weapon-bone-local";
+            }
+            if (mNativeWeaponBoneController->isEnabled())
+                nativeWeaponBone->second->setMatrix(mNativeWeaponBoneController->getLockedMatrix());
+        }
+        const std::optional<int> weaponType
+            = MWMechanics::getFalloutWeaponType(falloutWeapon->mData.animationType);
+        const bool melee = weaponType
+            && MWMechanics::getWeaponType(*weaponType)->mWeaponClass == ESM::WeaponType::Melee;
+        osg::Group* const rayParent = projectileParent != nullptr ? projectileParent : socket;
+        if (mFalloutVrSyntheticWeaponRayNode == nullptr
+            || mFalloutVrSyntheticWeaponRayNode->getNumParents() != 1
+            || mFalloutVrSyntheticWeaponRayNode->getParent(0) != rayParent)
+        {
+            if (mFalloutVrSyntheticWeaponRayNode != nullptr)
+            {
+                while (mFalloutVrSyntheticWeaponRayNode->getNumParents() > 0)
+                    mFalloutVrSyntheticWeaponRayNode->getParent(0)->removeChild(mFalloutVrSyntheticWeaponRayNode);
+            }
+            mFalloutVrSyntheticWeaponRayNode = new osg::MatrixTransform;
+            mFalloutVrSyntheticWeaponRayNode->setName("FNV VR Native Weapon Production Ray");
+            rayParent->addChild(mFalloutVrSyntheticWeaponRayNode);
+        }
+        // NifOsg transposes the NIF Matrix3 into OSG's row-vector form. ProjectileNode's authored barrel axis is
+        // therefore local +Z, not +Y. Rx(+90deg) makes this child +Y equal Projectile +Z without touching the model.
+        const bool projectileBacked = projectileParent != nullptr;
+        mFalloutVrSyntheticWeaponRayNode->setMatrix(projectileBacked
+            ? osg::Matrix::rotate(osg::Quat(osg::PI_2, osg::Vec3f(1.f, 0.f, 0.f)))
+            : (melee ? osg::Matrix::identity()
+                     : osg::Matrix::rotate(osg::Quat(-osg::PI_2, osg::Vec3f(0.f, 0.f, 1.f)))));
+        mFalloutVrSyntheticWeaponRayNode->setUserValue(
+            "openmwFalloutVrProjectileBackedRay", projectileBacked ? 1 : 0);
+        mFalloutVrWeaponRayNode = mFalloutVrSyntheticWeaponRayNode;
+        Log(Debug::Info) << "OpenMW VR production ray ownership: origin="
+                         << (projectileBacked ? "ProjectileNode" : "native-model")
+                         << " direction=" << (projectileBacked ? "ProjectileNode+Z-via-child+Y"
+                                 : (melee ? "model+Y" : "model+X-via-child+Y"))
+                         << " parentPaths=" << mFalloutVrWeaponRayNode->getNumParents();
+        if (mNativeWeaponBoneController != nullptr)
+            mNativeWeaponBoneController->setAttachment(rightHandBone->second.get(), part,
+                mFalloutVrWeaponRayNode.get(), projectileBacked ? projectileNode.mFoundNode : part,
+                projectileBacked ? osg::Vec3f(0.f, 0.f, 1.f)
+                                 : (melee ? osg::Vec3f(0.f, 1.f, 0.f) : osg::Vec3f(1.f, 0.f, 0.f)),
+                weapon->getClass().getCorrectedModel(*weapon).value(),
+                weapon->getCellRef().getRefId().toDebugString());
+        clearNativeWeaponDebug();
+        if (getEnvFloat("OPENMW_FNV_VR_NATIVE_WEAPON_DEBUG_AXES", 0.f) != 0.f)
+        {
+            const float length = getEnvFloat("OPENMW_FNV_VR_NATIVE_WEAPON_DEBUG_AXIS_LENGTH", 12.f);
+            const float radius = getEnvFloat("OPENMW_FNV_VR_NATIVE_WEAPON_DEBUG_POINT_RADIUS", 1.5f);
+            const auto attachAxis = [&](osg::Group* parent, std::string name, const osg::Vec4f& color) {
+                if (parent == nullptr)
+                    return;
+                osg::ref_ptr<osg::Geode> marker
+                    = createNamedAxisMarker(std::move(name), length, radius, color);
+                parent->addChild(marker);
+                mFalloutVrNativeWeaponDebugNodes.push_back(marker);
+            };
+
+            osg::Vec3f palmLocal;
+            if (rightHandBone->second->getUserValue("openmwFalloutVrPalmTargetX", palmLocal.x())
+                && rightHandBone->second->getUserValue("openmwFalloutVrPalmTargetY", palmLocal.y())
+                && rightHandBone->second->getUserValue("openmwFalloutVrPalmTargetZ", palmLocal.z()))
+            {
+                osg::ref_ptr<osg::PositionAttitudeTransform> palmMarker = new osg::PositionAttitudeTransform;
+                palmMarker->setName("FNV VR native weapon debug palm-web frame");
+                palmMarker->setUserValue("openmwFalloutVrNativeWeaponDebugMarker", 1);
+                palmMarker->setPosition(palmLocal);
+                palmMarker->addChild(createNamedAxisMarker(
+                    "FNV VR native weapon debug palm-web XYZ", length, radius, osg::Vec4f(1.f, 0.5f, 0.f, 1.f)));
+                rightHandBone->second->addChild(palmMarker);
+                mFalloutVrNativeWeaponDebugNodes.push_back(palmMarker);
+            }
+            attachAxis(nativeWeaponBone->second.get(), "FNV VR native weapon debug Weapon-bone XYZ",
+                osg::Vec4f(1.f, 0.f, 1.f, 1.f));
+            attachAxis(socket, "FNV VR native weapon debug model-origin XYZ", osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+            attachAxis(mFalloutVrWeaponRayNode->asGroup(), "FNV VR native weapon debug production-ray XYZ",
+                osg::Vec4f(0.f, 1.f, 1.f, 1.f));
+
+            if (mSceneRoot != nullptr)
+            {
+                if (const std::shared_ptr<VR::Space> aimSpace
+                    = OpenXRInput::instance().getSpace(OpenXRInput::RightHandAim))
+                {
+                    osg::ref_ptr<VR::SpaceTransform> aimMarker = new VR::SpaceTransform(aimSpace);
+                    aimMarker->setName("FNV VR native weapon debug tracked-Aim reference XYZ");
+                    aimMarker->setUserValue("openmwFalloutVrNativeWeaponDebugMarker", 1);
+                    aimMarker->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+                    aimMarker->addChild(createNamedAxisMarker("FNV VR native weapon debug tracked-Aim XYZ",
+                        length, radius, osg::Vec4f(0.f, 1.f, 1.f, 1.f)));
+                    mSceneRoot->addChild(aimMarker);
+                    mFalloutVrNativeWeaponDebugNodes.push_back(aimMarker);
+                }
+            }
+            Log(Debug::Info) << "OpenMW VR native weapon debug axes: enabled=1 model="
+                             << weapon->getClass().getCorrectedModel(*weapon).value()
+                             << " frames=palm-web,Weapon-bone,model-origin,production-ray,tracked-Aim"
+                             << " convention=X-red,Y-green,Z-blue positiveEndpoint=large negativeStub=quarter";
+        }
+        const bool requestedVisible = !mRightPointerEnabled;
+        setFalloutWeaponGeometryVisible(part, requestedVisible);
+        auditNativeWeaponRender(part, weapon->getClass().getCorrectedModel(*weapon).value(),
+            bindSerial, requestedVisible, "bind-or-show");
+        Log(Debug::Info) << "OpenMW VR Fallout weapon aim routing: editor=" << falloutWeapon->mEditorId
+                         << " parent=" << nativeWeaponParent->getName()
+                         << " attachmentOwner=native-OpenMW-Weapon-bone class=" << (melee ? "melee" : "ranged")
+                         << " modelForward=" << (melee ? "+Y" : "+X")
+                         << " aimForward=authored-Weapon-bone modelAdapter=identity conversionCount=0"
+                         << " pointerSharedBasis=1 authoredOriginPreserved=1 reparented=0"
+                         << " handSkeletonChanged=0 duplicateSurface=0";
+    }
+
     void VRAnimation::setFalloutVrHandSurfaces(std::vector<FalloutVrHandSurface> surfaces)
     {
         const bool sameSurfaces = surfaces.size() == mFalloutVrHandSurfaces.size()
@@ -4127,6 +5755,44 @@ namespace MWVR
 
     void VRAnimation::clearFalloutVrHandSurfaces()
     {
+        for (const osg::ref_ptr<osg::Node>& marker : mFalloutVrNativeWeaponDebugNodes)
+        {
+            if (marker == nullptr)
+                continue;
+            while (marker->getNumParents() > 0)
+            {
+                osg::Group* const parent = marker->getParent(0);
+                if (!parent->removeChild(marker))
+                    break;
+            }
+        }
+        mFalloutVrNativeWeaponDebugNodes.clear();
+        // Preserve the stock OpenMW-VR owner: Weapon Direction is always a direct child of Bip01 R Hand.  Hand
+        // surface rebuilds only replace visual siblings and must never detach the native held-item subtree.
+        if (mWeaponDirectionTransform != nullptr)
+        {
+            if (auto* const controller
+                = dynamic_cast<WeaponDirectionController*>(mWeaponDirectionTransform->getUpdateCallback()))
+                controller->setPalmFrameNode(nullptr);
+
+            const auto hand = mNodeMap.find("Bip01 R Hand");
+            osg::Group* const fallbackParent = hand != mNodeMap.end() ? hand->second : nullptr;
+            if (fallbackParent != nullptr)
+                fallbackParent->setUserValue("openmwFalloutVrPalmTargetReady", 0);
+            if (mWeaponDirectionTransform->getNumParents() != 1
+                || mWeaponDirectionTransform->getParent(0) != fallbackParent)
+            {
+                while (mWeaponDirectionTransform->getNumParents() > 0)
+                {
+                    osg::Group* const previousParent = mWeaponDirectionTransform->getParent(0);
+                    if (!previousParent->removeChild(mWeaponDirectionTransform))
+                        break;
+                }
+                if (fallbackParent != nullptr && mWeaponDirectionTransform->getNumParents() == 0)
+                    fallbackParent->addChild(mWeaponDirectionTransform);
+            }
+        }
+
         int parentLinksRemoved = 0;
         for (const osg::ref_ptr<osg::Node>& node : mFalloutVrHandSurfaceNodes)
         {
@@ -4151,7 +5817,8 @@ namespace MWVR
         mFalloutVrPipBoyInteractionScaleTargets.clear();
         mFalloutVrPipBoyInteractionScale = 1.f;
         mFalloutVrPipBoyScreenDrawables.clear();
-        mFalloutVrRightWeaponSurfaceNodes.clear();
+        mFalloutVrRightPalmFrame = nullptr;
+        sLiveWeaponPalmFrame = {};
         mFalloutVrHandSurfacesAttached = false;
     }
 
@@ -4324,25 +5991,17 @@ namespace MWVR
         int leftPipBoySurfaceCount = 0;
         int rightPipBoySurfaceCount = 0;
         osg::Vec3f rightWeaponSocketTarget;
-        bool rightWeaponSocketTargetValid = false;
         for (const FalloutVrHandSurface& surface : mFalloutVrHandSurfaces)
         {
             if (surface.model.empty())
                 continue;
 
             const bool pipBoyArm = surface.kind == FalloutVrHandSurface::Kind::PipBoy;
-            const bool weaponSurface = surface.kind == FalloutVrHandSurface::Kind::Weapon;
             const bool rightPipBoyCalibration = pipBoyArm && !surface.left
                 && surface.source.find("right-pipboy-calibration") != std::string::npos;
             const bool riggedHandPart = surface.kind == FalloutVrHandSurface::Kind::Hand;
 
-            // The animated root-level Weapon target belongs to the flat-body animation graph. The
-            // visible VR hand is driven by its tracked Bip01 R Hand transform, so parenting the gun
-            // to Weapon makes it hover beside the controller. The model's authored BoneOffset is
-            // still applied by SceneUtil::attach; only its parent socket changes here.
-            osg::Group* attachNode = weaponSurface ? rightHand : (surface.left ? leftHand : rightHand);
-            if (weaponSurface && rightHand == nullptr)
-                Log(Debug::Warning) << "FNV/ESM4 diag: tracked right-hand weapon attachment node missing";
+            osg::Group* attachNode = surface.left ? leftHand : rightHand;
             if (attachNode == nullptr)
             {
                 Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly attach skipped missing "
@@ -4358,6 +6017,13 @@ namespace MWVR
             osg::ref_ptr<osg::Node> directStaticHandNode;
             osg::BoundingBox staticizedHandBounds;
             HandCuffAnchor staticizedHandCuffAnchor;
+            osg::Vec3f staticizedHandPalmAnchor;
+            osg::Vec3f staticizedHandWristAnchor;
+            osg::Vec3f staticizedHandHandleAnchor;
+            osg::Vec3f staticizedHandTriggerAnchor;
+            osg::Matrix staticizedHandModelToRightHand;
+            bool staticizedHandModelToRightHandValid = false;
+            bool staticizedHandPalmFrameValid = false;
             bool staticizedRiggedHandPart = false;
             // Fallout's first-person glove meshes use the paper-doll skin coordinate
             // space, which is not compatible with the tracked controller hierarchy.
@@ -4376,6 +6042,57 @@ namespace MWVR
                     directStaticHandNode = staticTemplate;
                     staticizedRiggedHandPart = true;
                     staticizedHandBounds = computeNodeBounds(*staticTemplate);
+                    if (!surface.left)
+                    {
+                        if (const std::optional<osg::Matrix> rightHandBind
+                            = findDescendantLocalMatrix(*staticTemplate, "Bip01 R Hand"))
+                        {
+                            staticizedHandModelToRightHandValid
+                                = staticizedHandModelToRightHand.invert(*rightHandBind);
+                        }
+                        // Use authored hand bones as anatomical landmarks.  The index metacarpal and first thumb
+                        // joint bound the thumb/index web where a pistol backstrap or tool handle is seated; the
+                        // hand bone supplies the corresponding wrist/handle direction.  This is independent of
+                        // the glove mesh bounds and survives glove shape changes.
+                        const std::optional<osg::Vec3f> indexRoot
+                            = findDescendantLocalOrigin(*staticTemplate, "Bip01 R Finger1");
+                        const std::optional<osg::Vec3f> thumbWeb
+                            = findDescendantLocalOrigin(*staticTemplate, "Bip01 R Thumb11");
+                        const std::optional<osg::Vec3f> wrist
+                            = findDescendantLocalOrigin(*staticTemplate, "Bip01 R Hand");
+                        const std::optional<osg::Vec3f> pinkyRoot
+                            = findDescendantLocalOrigin(*staticTemplate, "Bip01 R Finger4");
+                        const std::optional<osg::Vec3f> indexTip
+                            = findDescendantLocalOrigin(*staticTemplate, "Bip01 R Finger12");
+                        if (indexRoot && thumbWeb && wrist && pinkyRoot && indexTip)
+                        {
+                            staticizedHandPalmAnchor = (*indexRoot + *thumbWeb) * 0.5f;
+                            staticizedHandWristAnchor = *wrist;
+                            staticizedHandHandleAnchor = *pinkyRoot;
+                            staticizedHandTriggerAnchor = *indexTip;
+                            staticizedHandPalmFrameValid
+                                = (staticizedHandHandleAnchor - staticizedHandPalmAnchor).length2() > 1e-5f
+                                && (staticizedHandWristAnchor - staticizedHandPalmAnchor).length2() > 1e-5f
+                                && (staticizedHandTriggerAnchor - staticizedHandPalmAnchor).length2() > 1e-5f;
+                            Log(staticizedHandPalmFrameValid ? Debug::Info : Debug::Error)
+                                << "OpenMW VR anatomical palm fixture: model=" << correctedModel.value()
+                                << " source=authored-hand-bones palmWeb=(" << staticizedHandPalmAnchor.x() << ','
+                                << staticizedHandPalmAnchor.y() << ',' << staticizedHandPalmAnchor.z()
+                                << ") wrist=(" << staticizedHandWristAnchor.x() << ','
+                                << staticizedHandWristAnchor.y() << ',' << staticizedHandWristAnchor.z()
+                                << ") pinkyRoot=(" << staticizedHandHandleAnchor.x() << ','
+                                << staticizedHandHandleAnchor.y() << ',' << staticizedHandHandleAnchor.z()
+                                << ") indexTip=(" << staticizedHandTriggerAnchor.x() << ','
+                                << staticizedHandTriggerAnchor.y() << ',' << staticizedHandTriggerAnchor.z()
+                                << ") status=" << (staticizedHandPalmFrameValid ? "ready" : "invalid");
+                        }
+                        else
+                        {
+                            Log(Debug::Error) << "OpenMW VR anatomical palm fixture: model="
+                                              << correctedModel.value()
+                                              << " source=authored-hand-bones status=missing-landmark";
+                        }
+                    }
                     if (staticizedHandBounds.valid())
                     {
                         staticizedHandCuffAnchor
@@ -4457,58 +6174,6 @@ namespace MWVR
                 continue;
             }
 
-            if (weaponSurface)
-            {
-                osg::PositionAttitudeTransform* transform
-                    = dynamic_cast<osg::PositionAttitudeTransform*>(attached.get());
-                if (transform == nullptr && attachNode->removeChild(attached.get()))
-                {
-                    osg::ref_ptr<osg::PositionAttitudeTransform> wrapper = new osg::PositionAttitudeTransform;
-                    wrapper->setName("FNV VR Tracked Weapon Socket");
-                    wrapper->addChild(attached.get());
-                    attachNode->addChild(wrapper.get());
-                    attached = wrapper;
-                    transform = wrapper.get();
-                }
-                if (transform != nullptr)
-                {
-                    const osg::Vec3f authoredPosition = transform->getPosition();
-                    const osg::Quat authoredAttitude = transform->getAttitude();
-                    const osg::Vec3f palmTarget
-                        = rightWeaponSocketTargetValid ? rightWeaponSocketTarget : osg::Vec3f();
-                    // The normalized hand surface already provides the measured palm center. Keep
-                    // the authored weapon origin on that target by default; calibration remains
-                    // available through the environment variables, but must not pull the handle out
-                    // of the palm in the normal path.
-                    const osg::Vec3f socketOffset(getEnvFloat("OPENMW_FNV_WEAPON_OFFSET_X", 0.f),
-                        getEnvFloat("OPENMW_FNV_WEAPON_OFFSET_Y", 0.f),
-                        getEnvFloat("OPENMW_FNV_WEAPON_OFFSET_Z", 0.f));
-                    const bool falloutMeleeModel
-                        = correctedModel.value().find("/1handmelee/") != std::string::npos
-                        || correctedModel.value().find("/2handmelee/") != std::string::npos;
-                    const float defaultSocketRotZ = falloutMeleeModel ? 0.f : 90.f;
-                    const osg::Quat socketRotation = makeEulerDegrees(
-                        getEnvFloat("OPENMW_FNV_WEAPON_ROT_X", 0.f),
-                        getEnvFloat("OPENMW_FNV_WEAPON_ROT_Y", 0.f),
-                        getEnvFloat("OPENMW_FNV_WEAPON_ROT_Z", defaultSocketRotZ));
-                    transform->setPosition(authoredPosition + palmTarget + socketOffset);
-                    transform->setAttitude(authoredAttitude * socketRotation);
-                    Log(Debug::Info) << "OpenMW VR weapon socket model=" << correctedModel.value()
-                                     << " parent=" << attachNode->getName()
-                                     << " authoredPosition=(" << authoredPosition.x() << ',' << authoredPosition.y()
-                                     << ',' << authoredPosition.z() << ") palmTarget=(" << palmTarget.x() << ','
-                                     << palmTarget.y() << ',' << palmTarget.z() << ") socketOffset=(" << socketOffset.x() << ','
-                                     << socketOffset.y() << ',' << socketOffset.z() << ") authoredAttitude=("
-                                     << authoredAttitude.x() << ',' << authoredAttitude.y() << ','
-                                     << authoredAttitude.z() << ',' << authoredAttitude.w() << ") convention="
-                                     << (falloutMeleeModel ? "melee-forward-y" : "firearm-forward-x")
-                                     << " defaultRotZ=" << defaultSocketRotZ;
-                }
-                else
-                    Log(Debug::Warning) << "OpenMW VR weapon socket has no authored transform model="
-                                        << correctedModel.value();
-            }
-
             if (staticizedRiggedHandPart && staticizedHandBounds.valid())
             {
                 if (osg::PositionAttitudeTransform* transform
@@ -4578,9 +6243,12 @@ namespace MWVR
                             getHandEnvFloat(surface.left, "OFFSET_Z", 0.f));
                     }
                     osg::Vec3f normalizeOffset = targetCuffAnchor - (transform->getAttitude() * modelCuffAnchor);
-                    const osg::Vec3f modelPalmPivot(scale.x() * getHandEnvFloat(surface.left, "PIVOT_X", center.x()),
-                        scale.y() * getHandEnvFloat(surface.left, "PIVOT_Y", center.y()),
-                        scale.z() * getHandEnvFloat(surface.left, "PIVOT_Z", center.z()));
+                    const osg::Vec3f defaultPalmPivot
+                        = staticizedHandPalmFrameValid ? staticizedHandPalmAnchor : center;
+                    const osg::Vec3f modelPalmPivot(
+                        scale.x() * getHandEnvFloat(surface.left, "PIVOT_X", defaultPalmPivot.x()),
+                        scale.y() * getHandEnvFloat(surface.left, "PIVOT_Y", defaultPalmPivot.y()),
+                        scale.z() * getHandEnvFloat(surface.left, "PIVOT_Z", defaultPalmPivot.z()));
                     const float pivotRotX = getHandEnvFloat(surface.left, "PIVOT_ROT_X", 0.f);
                     const float pivotRotY = getHandEnvFloat(surface.left, "PIVOT_ROT_Y", 0.f);
                     const float pivotRotZ = getHandEnvFloat(surface.left, "PIVOT_ROT_Z", 0.f);
@@ -4640,10 +6308,26 @@ namespace MWVR
                         transform->setAttitude(pivotRotation);
                         transform->setPosition(pivotTarget - pivotRotation * modelPalmPivot);
                     }
-                    if (!surface.left && getHandEnvFloat(surface.left, "CONTROLLER_SPACE_POSITION", 0.f) != 0.f)
+                    const bool nativeRightHandBind = !surface.left && staticizedHandModelToRightHandValid;
+                    if (nativeRightHandBind)
+                    {
+                        // The staticized glove vertices and its authored bones are in skeleton-root bind space.
+                        // OpenMW's Weapon attachment is already authored relative to Bip01 R Hand, so convert the
+                        // glove once with that same bind inverse instead of trial Euler/cuff offsets.
+                        transform->setPivotPoint(osg::Vec3f());
+                        transform->setScale(osg::Vec3f(1.f, 1.f, 1.f));
+                        transform->setAttitude(staticizedHandModelToRightHand.getRotate());
+                        transform->setPosition(staticizedHandModelToRightHand.getTrans());
+                        Log(Debug::Info) << "OpenMW VR right hand bind solve: source=Bip01-R-Hand-bind-inverse"
+                                         << " position=(" << transform->getPosition().x() << ','
+                                         << transform->getPosition().y() << ',' << transform->getPosition().z()
+                                         << ") authoredWeaponBonePreserved=1 status=ready";
+                    }
+                    if (!surface.left && !nativeRightHandBind
+                        && getHandEnvFloat(surface.left, "CONTROLLER_SPACE_POSITION", 0.f) != 0.f)
                     {
                         transform->addUpdateCallback(new FalloutHandControllerSpacePosition(
-                            auditSide, correctedModel.value(), modelCuffAnchor, targetCuffAnchor,
+                            auditSide, correctedModel.value(), modelCuffAnchor, modelPalmPivot, targetCuffAnchor,
                             transform->getAttitude()));
                     }
                     if (!surface.left && getEnvFloat("OPENMW_FNV_VR_DEBUG_AXES", 0.f) != 0.f)
@@ -4658,11 +6342,53 @@ namespace MWVR
                     const osg::Quat handRotation = transform->getAttitude();
                     if (!surface.left)
                     {
-                        rightWeaponSocketTarget = finalPosition + handRotation * modelPalmPivot;
-                        rightWeaponSocketTargetValid = true;
-                        Log(Debug::Info) << "OpenMW VR tracked weapon palm target=("
+                        if (!staticizedHandPalmFrameValid)
+                        {
+                            Log(Debug::Error) << "OpenMW VR tracked weapon palm socket: model="
+                                              << correctedModel.value()
+                                              << " status=fail-closed reason=missing-anatomical-landmarks";
+                        }
+                        else
+                        {
+                        const osg::Vec3f landmarkScale
+                            = nativeRightHandBind ? osg::Vec3f(1.f, 1.f, 1.f) : scale;
+                        const osg::Vec3f palmAnchor
+                            = nativeRightHandBind ? staticizedHandPalmAnchor : modelPalmPivot;
+                        rightWeaponSocketTarget = finalPosition + handRotation * palmAnchor;
+                        const osg::Vec3f gripDirection = normalizeOr(handRotation * scaleVec3(landmarkScale,
+                            staticizedHandHandleAnchor - staticizedHandPalmAnchor),
+                            osg::Vec3f(0.f, -1.f, 0.f));
+                        const osg::Vec3f triggerTarget = handRotation * scaleVec3(landmarkScale,
+                            staticizedHandTriggerAnchor - staticizedHandPalmAnchor);
+                        const osg::Vec3f triggerDirection
+                            = normalizeOr(triggerTarget, osg::Vec3f(1.f, 0.f, 0.f));
+
+                        // Publish immutable landmarks in Bip01 R Hand local coordinates.  The visual glove and the
+                        // native Weapon bone remain siblings under that proven OpenMW-VR hand; neither becomes the
+                        // other's render-state or transform parent.
+                        mFalloutVrRightPalmFrame = rightHand;
+                        rightHand->setUserValue("openmwFalloutVrPalmTargetX", rightWeaponSocketTarget.x());
+                        rightHand->setUserValue("openmwFalloutVrPalmTargetY", rightWeaponSocketTarget.y());
+                        rightHand->setUserValue("openmwFalloutVrPalmTargetZ", rightWeaponSocketTarget.z());
+                        rightHand->setUserValue("openmwFalloutVrPalmTargetReady", 1);
+                        rightHand->setUserValue("openmwFalloutVrPalmTargetLive", 1);
+                        rightHand->setUserValue("openmwFalloutVrGripDirectionX", gripDirection.x());
+                        rightHand->setUserValue("openmwFalloutVrGripDirectionY", gripDirection.y());
+                        rightHand->setUserValue("openmwFalloutVrGripDirectionZ", gripDirection.z());
+                        rightHand->setUserValue("openmwFalloutVrTriggerTargetX", triggerTarget.x());
+                        rightHand->setUserValue("openmwFalloutVrTriggerTargetY", triggerTarget.y());
+                        rightHand->setUserValue("openmwFalloutVrTriggerTargetZ", triggerTarget.z());
+                        rightHand->setUserValue("openmwFalloutVrTriggerDirectionX", triggerDirection.x());
+                        rightHand->setUserValue("openmwFalloutVrTriggerDirectionY", triggerDirection.y());
+                        rightHand->setUserValue("openmwFalloutVrTriggerDirectionZ", triggerDirection.z());
+                        Log(Debug::Info) << "OpenMW VR tracked weapon hand landmarks: parent=Bip01 R Hand palmLocal=("
                                          << rightWeaponSocketTarget.x() << ',' << rightWeaponSocketTarget.y() << ','
-                                         << rightWeaponSocketTarget.z() << ')';
+                                         << rightWeaponSocketTarget.z() << ") handleDirection=(" << gripDirection.x()
+                                         << ',' << gripDirection.y() << ',' << gripDirection.z()
+                                         << ") triggerTarget=(" << triggerTarget.x() << ',' << triggerTarget.y()
+                                         << ',' << triggerTarget.z()
+                                         << ") source=authored-hand-bones weaponParentUnchanged=1";
+                        }
                     }
                     const osg::Vec3f candidateXMin = finalPosition
                         + handRotation
@@ -5006,9 +6732,11 @@ namespace MWVR
             // PipBoyArm already arrives with its authored material state. Re-running the generic
             // object shader over the complete device places an overriding program above the live
             // screen drawable, so subsequent RTT bindings report success while Screen.dds still
-            // reaches the eye. Hands and weapons still need the actor-local shader refresh.
+            // reaches the eye. Hand surfaces still need the actor-local shader refresh.
             if (!pipBoyArm)
                 mResourceSystem->getSceneManager()->recreateShaders(attached, "objects", true);
+            else
+                addFalloutPipBoyInteractionFixtures(*attached);
 
             // These first-person surfaces retain bounds authored for the paper-doll rig. Once
             // attached directly to a tracked wrist, those stale bounds can intermittently cull
@@ -5020,12 +6748,6 @@ namespace MWVR
             mFalloutVrHandSurfaceNodes.push_back(attached);
             if (pipBoyArm)
                 mFalloutVrPipBoySurfaceNodes.push_back(attached);
-            if (weaponSurface && !surface.left)
-            {
-                mFalloutVrRightWeaponSurfaceNodes.push_back(attached);
-                if (mRightPointerEnabled)
-                    attached->setNodeMask(0);
-            }
             ++attachedCount;
             if (riggedHandPart)
                 ++(surface.left ? leftHandSurfaceCount : rightHandSurfaceCount);
@@ -5038,7 +6760,6 @@ namespace MWVR
                              << " riggedHandPart=" << riggedHandPart
                              << " staticizedHandPart=" << staticizedRiggedHandPart
                              << " pipBoyArm=" << pipBoyArm
-                             << " weaponSurface=" << weaponSurface
                              << " master=" << master->getName()
                              << " diffuse=" << surface.diffuseTexture;
         }
@@ -5422,11 +7143,47 @@ namespace MWVR
                 enableTracking(it.second.topLevelPath);
         }
 
-        auto hand = mNodeMap.find("Bip01 R Hand");
+        const auto hand = mNodeMap.find("Bip01 R Hand");
+        if (auto* const controller
+            = dynamic_cast<WeaponDirectionController*>(mWeaponDirectionTransform->getUpdateCallback()))
+            controller->setPalmFrameNode(mFalloutVrRightPalmFrame.get());
+
+        const auto nativeWeaponBone = mNodeMap.find("Weapon");
+        if (nativeWeaponBone != mNodeMap.end() && mNativeWeaponBoneController != nullptr)
+            mNativeWeaponBoneController->installOn(nativeWeaponBone->second.get());
+
         if (hand != mNodeMap.end())
         {
-            hand->second->removeChild(mWeaponDirectionTransform);
-            hand->second->addChild(mWeaponDirectionTransform);
+            osg::Group* const weaponParent = hand->second;
+            // Match the original OpenMW-VR graph exactly. Weapon Direction is a direct child of Bip01 R Hand;
+            // native held geometry remains independently attached to the skeleton Weapon bone.
+            if (mWeaponDirectionTransform->getNumParents() != 1
+                || mWeaponDirectionTransform->getParent(0) != weaponParent)
+            {
+                while (mWeaponDirectionTransform->getNumParents() > 0)
+                {
+                    osg::Group* const previousParent = mWeaponDirectionTransform->getParent(0);
+                    if (!previousParent->removeChild(mWeaponDirectionTransform))
+                        break;
+                }
+                if (mWeaponDirectionTransform->getNumParents() == 0)
+                    weaponParent->addChild(mWeaponDirectionTransform);
+            }
+            Log(Debug::Info) << "OpenMW VR weapon joint ownership: renderParent=" << weaponParent->getName()
+                             << " parentCount=" << mWeaponDirectionTransform->getNumParents()
+                             << " poseOwner=stock-OpenMW-VR-right-hand aimOwner=WeaponDirection+Y"
+                             << " nativeWeaponParentUnchanged=1 inheritedBonePose=1";
+        }
+        else
+        {
+            while (mWeaponDirectionTransform->getNumParents() > 0)
+            {
+                osg::Group* const previousParent = mWeaponDirectionTransform->getParent(0);
+                if (!previousParent->removeChild(mWeaponDirectionTransform))
+                    break;
+            }
+            Log(Debug::Error) << "OpenMW VR weapon joint ownership: renderParent=<missing Bip01 R Hand> parentCount="
+                              << mWeaponDirectionTransform->getNumParents() << " ownership=detached";
         }
     }
 
@@ -5507,10 +7264,57 @@ namespace MWVR
         if (topLevelPath == mRightHandPath && mRightPointerEnabled != enable)
         {
             mRightPointerEnabled = enable;
-            for (const osg::ref_ptr<osg::Node>& weapon : mFalloutVrRightWeaponSurfaceNodes)
+            if (mObjectParts[ESM::PRT_Weapon] != nullptr && mObjectParts[ESM::PRT_Weapon]->getNode() != nullptr)
             {
-                if (weapon != nullptr)
-                    weapon->setNodeMask(enable ? 0 : ~osg::Node::NodeMask(0));
+                osg::Node* const part = mObjectParts[ESM::PRT_Weapon]->getNode();
+                int falloutFixtureMarker = 0;
+                const bool falloutFixture = part->getUserValue(
+                    "openmwFalloutVrWeaponFixture", falloutFixtureMarker) && falloutFixtureMarker != 0;
+                bool currentBoundIdentity = !falloutFixture;
+                if (falloutFixture)
+                {
+                    const MWWorld::InventoryStore& inventory = mPtr.getClass().getInventoryStore(mPtr);
+                    const MWWorld::ConstContainerStoreIterator weapon
+                        = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                    if (weapon != inventory.end() && weapon->getType() == ESM4::Weapon::sRecordId)
+                    {
+                        const VFS::Path::Normalized model = weapon->getClass().getCorrectedModel(*weapon);
+                        const ESM4::Weapon* const record = weapon->get<ESM4::Weapon>()->mBase;
+                        std::string boundModel;
+                        std::string boundId;
+                        int boundAnimationType = -1;
+                        currentBoundIdentity = !model.empty()
+                            && part->getUserValue("openmwBoundWeaponModel", boundModel)
+                            && part->getUserValue("openmwBoundWeaponId", boundId)
+                            && part->getUserValue("openmwBoundWeaponAnimationType", boundAnimationType)
+                            && boundModel == model.value()
+                            && boundId == weapon->getCellRef().getRefId().toDebugString()
+                            && boundAnimationType == static_cast<int>(record->mData.animationType);
+                    }
+                }
+
+                if (!currentBoundIdentity)
+                {
+                    mFalloutVrWeaponRayNode = nullptr;
+                    removeIndividualPart(ESM::PRT_Weapon);
+                    if (mNativeWeaponBoneController != nullptr)
+                    {
+                        mNativeWeaponBoneController->setEnabled(false);
+                        mNativeWeaponBoneController->clearAttachment();
+                    }
+                    if (mFalloutVrSyntheticWeaponRayNode != nullptr)
+                    {
+                        while (mFalloutVrSyntheticWeaponRayNode->getNumParents() > 0)
+                        {
+                            osg::Group* const parent = mFalloutVrSyntheticWeaponRayNode->getParent(0);
+                            if (!parent->removeChild(mFalloutVrSyntheticWeaponRayNode))
+                                break;
+                        }
+                        mFalloutVrSyntheticWeaponRayNode = nullptr;
+                    }
+                }
+                else
+                    setFalloutWeaponGeometryVisible(part, mShowWeapons && !enable);
             }
         }
     }
@@ -5609,7 +7413,6 @@ namespace MWVR
     void VRAnimation::onInteractionProfileActiveChanged(XrPath topLevelPath, bool isActive) 
     {
         updateParts();
-        updateTrackingControllers();
     }
 
     void VRAnimation::addAnimSource(std::string_view model, const std::string& baseModel) 
