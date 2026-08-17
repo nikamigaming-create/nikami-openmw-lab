@@ -252,7 +252,7 @@ namespace MWVR
                 previewMaterial->setColorMode(osg::Material::OFF);
                 previewMaterial->setAmbient(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
                 previewMaterial->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4f(1.f, 1.f, 1.f, 1.f));
-                previewMaterial->setEmission(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.18f, 0.18f, 0.18f, 1.f));
+                previewMaterial->setEmission(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.65f, 0.65f, 0.65f, 1.f));
                 previewState->setAttributeAndModes(
                     previewMaterial, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
                 // A wheel entry is a static preview, not another live weapon animation surface. Keep every preview

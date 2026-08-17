@@ -76,15 +76,43 @@ namespace MWVR
         /// @return world transform that yields the position and orientation of the current weapon
         osg::Node* getWeaponTransform()
         {
-            return mFalloutVrWeaponRayNode != nullptr
-                ? mFalloutVrWeaponRayNode.get()
+            return mFalloutVrWeaponRayWorldValid && mFalloutVrWeaponRayWorldNode != nullptr
+                ? mFalloutVrWeaponRayWorldNode.get()
                 : mWeaponDirectionTransform.get();
         }
         const osg::Node* getWeaponTransform() const
         {
-            return mFalloutVrWeaponRayNode != nullptr
-                ? mFalloutVrWeaponRayNode.get()
+            return mFalloutVrWeaponRayWorldValid && mFalloutVrWeaponRayWorldNode != nullptr
+                ? mFalloutVrWeaponRayWorldNode.get()
                 : mWeaponDirectionTransform.get();
+        }
+
+        struct FalloutVrNativeWeaponFrame
+        {
+            const osg::Node* mWeaponPart = nullptr;
+            const osg::Node* mProductionRay = nullptr;
+            osg::Matrix mProductionRayWorld;
+        };
+
+        /// Read-only snapshot for short-lived effects authored beneath the currently bound native weapon. Pointers
+        /// remain valid only for the current bind generation; callers must consume the snapshot immediately.
+        std::optional<FalloutVrNativeWeaponFrame> getFalloutVrNativeWeaponFrame() const
+        {
+            const osg::Node* const part = mObjectParts[ESM::PRT_Weapon] != nullptr
+                ? mObjectParts[ESM::PRT_Weapon]->getNode()
+                : nullptr;
+            if (!mFalloutVrWeaponRayWorldValid || part == nullptr || mFalloutVrWeaponRayNode == nullptr
+                || mFalloutVrWeaponRayWorldNode == nullptr)
+                return std::nullopt;
+            return FalloutVrNativeWeaponFrame{
+                part, mFalloutVrWeaponRayNode.get(), mFalloutVrWeaponRayWorldNode->getMatrix() };
+        }
+
+        /// Authored emission frames for the current bind in deterministic scene traversal order. Most weapons
+        /// expose one frame; retail multi-emitter meshes expose one frame per ProjectileNode.
+        const std::vector<osg::Matrix>& getFalloutVrWeaponEmissionFrames() const
+        {
+            return mFalloutVrWeaponRayWorldMatrices;
         }
 
         /// Enable pointers
@@ -97,6 +125,10 @@ namespace MWVR
         virtual void addAnimSource(std::string_view model, const std::string& baseModel) override;
 
         void updateSpace();
+
+        /// Publish the current authored muzzle frame from the tracked right-hand branch without choosing an
+        /// ambiguous scene-graph parental path.
+        void updateFalloutVrWeaponRayWorld();
 
         void modifyMovement(osg::Vec3& movement);
 
@@ -174,10 +206,18 @@ namespace MWVR
         osg::ref_ptr<osg::MatrixTransform> mWeaponDirectionTransform;
         osg::ref_ptr<osg::MatrixTransform> mWeaponPointerTransform;
         osg::ref_ptr<NativeWeaponBoneController> mNativeWeaponBoneController;
-        // Fallout production activation/combat rays originate at the authored ProjectileNode. Assets without one
-        // receive one immutable child frame at the native model origin (+X firearms, +Y melee), never a palm guess.
+        // Fallout production activation/combat rays originate at authored ProjectileNode helpers. Melee/thrown
+        // families may expose one immutable native family-axis child; firearms never guess a model axis.
         osg::ref_ptr<osg::Node> mFalloutVrWeaponRayNode;
         osg::ref_ptr<osg::MatrixTransform> mFalloutVrSyntheticWeaponRayNode;
+        std::vector<osg::ref_ptr<osg::MatrixTransform>> mFalloutVrSyntheticWeaponRayNodes;
+        osg::ref_ptr<osg::MatrixTransform> mFalloutVrWeaponRayWorldNode;
+        osg::Matrix mFalloutVrWeaponRayInRightHand;
+        osg::NodePath mFalloutVrWeaponRayPathFromRightHand;
+        std::vector<osg::Matrix> mFalloutVrWeaponRaysInRightHand;
+        std::vector<osg::Matrix> mFalloutVrWeaponRayWorldMatrices;
+        bool mFalloutVrWeaponRayInRightHandValid = false;
+        bool mFalloutVrWeaponRayWorldValid = false;
         std::vector<osg::ref_ptr<osg::Node>> mFalloutVrNativeWeaponDebugNodes;
         // The native OpenMW weapon stays on its authored skeleton Weapon attachment.  This node only publishes
         // independent right-hand landmarks for diagnostics; it never becomes a weapon parent.

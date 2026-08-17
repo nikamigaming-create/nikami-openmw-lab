@@ -6,6 +6,7 @@
 
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include <components/misc/strings/algorithm.hpp>
 
@@ -61,6 +62,38 @@ namespace SceneUtil
 
         std::string_view mNameToFind;
         osg::Group* mFoundNode;
+    };
+
+    /// Find the unique highest-scoring group for an authored node name.
+    ///
+    /// Unlike FindByNameVisitor, this uses matchNodeName so exporter decorations such as
+    /// "##ProjectileNode" can resolve to their canonical target.  It deliberately scans the
+    /// complete subtree: an exact match must outrank an earlier canonical match, and a tied best
+    /// score is reported as ambiguous instead of binding whichever node traversal encountered first.
+    class FindUniqueBestByNameVisitor : public osg::NodeVisitor
+    {
+    public:
+        explicit FindUniqueBestByNameVisitor(std::string_view nameToFind)
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            , mNameToFind(nameToFind)
+        {
+        }
+
+        void apply(osg::Group& group) override;
+        void apply(osg::MatrixTransform& node) override;
+        void apply(osg::Geometry& node) override;
+
+        osg::Group* getFoundNode() const { return mBestNodes.size() == 1 ? mBestNodes.front() : nullptr; }
+        const std::vector<osg::Group*>& getBestNodes() const { return mBestNodes; }
+        const NodeNameMatch& getFoundMatch() const { return mBestMatch; }
+        std::size_t getBestMatchCount() const { return mBestNodes.size(); }
+
+    private:
+        void consider(osg::Group& group);
+
+        std::string_view mNameToFind;
+        std::vector<osg::Group*> mBestNodes;
+        NodeNameMatch mBestMatch;
     };
 
     class FindByClassVisitor : public osg::NodeVisitor

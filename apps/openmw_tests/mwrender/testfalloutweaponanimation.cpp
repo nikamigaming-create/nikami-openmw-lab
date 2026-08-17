@@ -239,6 +239,29 @@ namespace MWRender
         EXPECT_TRUE(getFonvWeaponHandGripKf(3, 0xff).empty());
     }
 
+    TEST(FalloutWeaponAnimationTest, mapsEveryRetailWeaponTypeToItsFirstPersonAimFamily)
+    {
+        static constexpr std::array<std::string_view, 14> expectedPrefixes{
+            "h2h", "1hm", "2hm", "1hp", "1hp", "2hr", "2ha",
+            "2hr", "2hh", "2hl", "1gt", "1md", "1lm", "1gt",
+        };
+
+        for (std::uint8_t animationType = 0; animationType < expectedPrefixes.size(); ++animationType)
+        {
+            const std::string_view prefix = expectedPrefixes[animationType];
+            EXPECT_EQ(getFonvWeaponAnimationPrefix(animationType), prefix) << unsigned(animationType);
+            EXPECT_EQ(getFonvWeaponAnimationKf(animationType, "aim"),
+                "meshes/characters/_male/" + std::string(prefix) + "aim.kf")
+                << unsigned(animationType);
+            EXPECT_EQ(getFonvFirstPersonWeaponAnimationKf(getFonvWeaponAnimationKf(animationType, "aim")),
+                "meshes/characters/_1stperson/" + std::string(prefix) + "aim.kf")
+                << unsigned(animationType);
+        }
+
+        EXPECT_TRUE(getFonvWeaponAnimationPrefix(14).empty());
+        EXPECT_TRUE(getFonvWeaponAnimationKf(14, "aim").empty());
+    }
+
     TEST(FalloutWeaponAnimationTest, resolvesExactRetailWeaponActionManifestsFromDnam)
     {
         const std::vector<FonvWeaponActionSource> melee = getFonvWeaponActionManifest(1, 0);

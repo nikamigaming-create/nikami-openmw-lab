@@ -38,10 +38,12 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -2817,6 +2819,21 @@ namespace MWVR
             mSourceAxis = sourceAxis;
             mModel = std::move(model);
             mRecordId = std::move(recordId);
+            refreshAttachmentRelations();
+            Log(mAttachmentValid ? Debug::Info : Debug::Error)
+                << "OpenMW VR native weapon attachment bind: model=" << mModel
+                << " record=" << mRecordId << " bindSerial=" << mBindSerial
+                << " partParent=" << (part != nullptr && part->getNumParents() == 1
+                        ? part->getParent(0)->getName() : std::string("<invalid>"))
+                << " parentCount=" << (part != nullptr ? part->getNumParents() : 0)
+                << " modelAdapter=identity conversionCount=0 reparented=0 familyPoseSource=" << mSource
+                << " status=" << (mAttachmentValid ? "pass" : "fail");
+        }
+
+    private:
+        void refreshAttachmentRelations()
+        {
+            mAttachmentValid = false;
             const std::optional<osg::Matrix> handWorld = getWorldMatrix(mRightHand.get());
             const std::optional<osg::Matrix> partWorld = getWorldMatrix(mPart.get());
             const std::optional<osg::Matrix> rayWorld = getWorldMatrix(mRay.get());
@@ -2829,15 +2846,9 @@ namespace MWVR
                 mRayInPart = *rayWorld * worldToPart;
                 mAttachmentValid = true;
             }
-            Log(mAttachmentValid ? Debug::Info : Debug::Error)
-                << "OpenMW VR native weapon attachment bind: model=" << mModel
-                << " record=" << mRecordId << " bindSerial=" << mBindSerial
-                << " partParent=" << (part != nullptr && part->getNumParents() == 1
-                        ? part->getParent(0)->getName() : std::string("<invalid>"))
-                << " parentCount=" << (part != nullptr ? part->getNumParents() : 0)
-                << " modelAdapter=identity conversionCount=0 reparented=0 familyPoseSource=" << mSource
-                << " status=" << (mAttachmentValid ? "pass" : "fail");
         }
+
+    public:
 
         void operator()(osg::Node* node, osg::NodeVisitor* nv) override
         {
@@ -2868,8 +2879,8 @@ namespace MWVR
             const osg::Matrix& current = transform->getMatrix();
             for (int row = 0; row < 4; ++row)
                 for (int column = 0; column < 4; ++column)
-                    maxElementDelta = std::max(
-                        maxElementDelta, std::abs(current(row, column) - mLockedMatrix(row, column)));
+                    maxElementDelta = std::max(maxElementDelta,
+                        static_cast<double>(std::abs(current(row, column) - mLockedMatrix(row, column))));
             double partInHandDelta = 0.0;
             double rayInPartDelta = 0.0;
             float renderedRayDot = -2.f;
@@ -2895,7 +2906,7 @@ namespace MWVR
                     renderedForward.normalize();
                     renderedRayDot = productionForward * renderedForward;
                 }
-                if (mRightHandAim != nullptr)
+                if (mRightHandAim != nullptr && VR::getLocatingSpacesAllowed())
                 {
                     const auto aim = mRightHandAim->locateInWorld();
                     if (!!aim.status)
@@ -2978,7 +2989,8 @@ namespace MWVR
             double result = 0.0;
             for (int row = 0; row < 4; ++row)
                 for (int column = 0; column < 4; ++column)
-                    result = std::max(result, std::abs(left(row, column) - right(row, column)));
+                    result = std::max(result,
+                        static_cast<double>(std::abs(left(row, column) - right(row, column))));
             return result;
         }
 
@@ -3048,6 +3060,10 @@ namespace MWVR
         NativeWeaponRenderAuditVisitor()
             : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
         {
+            // Presentation masks are part of what this visitor audits, not a reason to skip the subtree. Traverse
+            // every authored node, then calculate effective visibility from the collected node path below.
+            setTraversalMask(~osg::Node::NodeMask(0));
+            setNodeMaskOverride(~osg::Node::NodeMask(0));
         }
 
         void apply(osg::Node& node) override
@@ -4112,12 +4128,13 @@ namespace MWVR
                     const bool meleeFixture
                         = socket->getUserValue("openmwFalloutVrMeleeFixture", meleeFixtureMarker)
                         && meleeFixtureMarker != 0;
-                    SceneUtil::FindByNameVisitor projectileNode("ProjectileNode");
+                    SceneUtil::FindUniqueBestByNameVisitor projectileNode("ProjectileNode");
                     socket->accept(projectileNode);
-                    if (projectileNode.mFoundNode != nullptr
-                        && !projectileNode.mFoundNode->getParentalNodePaths().empty())
+                    osg::Group* const resolvedProjectileNode = projectileNode.getFoundNode();
+                    if (resolvedProjectileNode != nullptr
+                        && !resolvedProjectileNode->getParentalNodePaths().empty())
                     {
-                        mProjectileNode = projectileNode.mFoundNode;
+                        mProjectileNode = resolvedProjectileNode;
                         osg::NodePath socketToProjectile;
                         const bool rootedPathFound
                             = findDescendantPath(socket, mProjectileNode.get(), socketToProjectile);
@@ -4278,7 +4295,7 @@ namespace MWVR
                 matrixTransform->setMatrix(mLockedLocalMatrix);
                 ++mWritesThisFrame;
             }
-            if (mRightHandAim == nullptr)
+            if (mRightHandAim == nullptr || !VR::getLocatingSpacesAllowed())
             {
                 traverse(node, nv);
                 return;
@@ -4387,8 +4404,9 @@ namespace MWVR
                 // it crosses the live hand surface path and therefore catches any hand/weapon separation.
                 const osg::Vec3f palmWorld = livePalmTarget * palmFrameToWorld;
                 const auto quaternionDeltaDegrees = [](const osg::Quat& first, const osg::Quat& second) {
-                    const double dot = std::clamp(std::abs(first.x() * second.x() + first.y() * second.y()
-                        + first.z() * second.z() + first.w() * second.w()), 0.0, 1.0);
+                    const double dot = std::clamp(static_cast<double>(std::abs(first.x() * second.x()
+                        + first.y() * second.y() + first.z() * second.z() + first.w() * second.w())),
+                        0.0, 1.0);
                     return osg::RadiansToDegrees(2.0 * std::acos(dot));
                 };
                 const auto vectorDeltaDegrees = [](const osg::Vec3f& first, const osg::Vec3f& second) {
@@ -4442,7 +4460,8 @@ namespace MWVR
                     for (int row = 0; row < 4; ++row)
                         for (int column = 0; column < 4; ++column)
                             lockedLocalMaxElementDelta = std::max(lockedLocalMaxElementDelta,
-                                std::abs(currentLocalMatrix(row, column) - mLockedLocalMatrix(row, column)));
+                                static_cast<double>(std::abs(
+                                    currentLocalMatrix(row, column) - mLockedLocalMatrix(row, column))));
                     const float socketPositionDelta = (socket->getPosition() - mSocketBindPosition).length();
                     const double socketAttitudeDeltaDegrees
                         = quaternionDeltaDegrees(socket->getAttitude(), mSocketBindAttitude);
@@ -4544,14 +4563,16 @@ namespace MWVR
                         for (int row = 0; row < 4; ++row)
                             for (int column = 0; column < 4; ++column)
                                 maxElementDelta = std::max(maxElementDelta,
-                                    std::abs(current(row, column) - sample.mBindMatrix(row, column)));
+                                    static_cast<double>(std::abs(
+                                        current(row, column) - sample.mBindMatrix(row, column))));
                         if (maxElementDelta <= 1e-5f)
                             continue;
                         const osg::Quat currentRotation = current.getRotate();
                         const osg::Quat bindRotation = sample.mBindMatrix.getRotate();
-                        const double quaternionDot = std::clamp(std::abs(currentRotation.x() * bindRotation.x()
-                            + currentRotation.y() * bindRotation.y() + currentRotation.z() * bindRotation.z()
-                            + currentRotation.w() * bindRotation.w()), 0.0, 1.0);
+                        const double quaternionDot = std::clamp(static_cast<double>(std::abs(
+                            currentRotation.x() * bindRotation.x() + currentRotation.y() * bindRotation.y()
+                            + currentRotation.z() * bindRotation.z() + currentRotation.w() * bindRotation.w())),
+                            0.0, 1.0);
                         if (ancestryDelta.tellp() > 0)
                             ancestryDelta << '|';
                         ancestryDelta << (sample.mNode->getName().empty() ? "<unnamed>" : sample.mNode->getName())
@@ -4627,7 +4648,7 @@ namespace MWVR
                     rotate = osg::Quat(osg::PI_2, osg::Vec3{ 1, 0, 0 });
                     break;
             }
-            if (mRightHandAim != nullptr)
+            if (mRightHandAim != nullptr && VR::getLocatingSpacesAllowed())
             {
                 const auto aim = mRightHandAim->locateInWorld();
                 if (!!aim.status)
@@ -4719,12 +4740,18 @@ namespace MWVR
 
         void update(osg::MatrixTransform& transform)
         {
-            if (!mTransform)
+            if (!mTransform || !VR::getLocatingSpacesAllowed())
+            {
+                mHandWorldValid = false;
                 return;
+            }
 
             auto tp = mSpace->locateInWorld();
             if (!tp.status)
+            {
+                mHandWorldValid = false;
                 return;
+            }
 
             auto orientation = mBaseOrientation * tp.pose.orientation;
             sCachedControllerPoses[mDebugName] = { tp.pose.position.asMWUnits(), orientation, true };
@@ -4843,7 +4870,22 @@ namespace MWVR
             // Replacing it with a cached bind matrix creates a two-state feedback
             // loop, making both tracked hands visibly blink between poses.
             auto scale = osg::Matrix::scale(1.f, mMirror ? -1.f : 1.f, 1.f);
+            // HandController replaces the Fallout hand bone's 3x3 with identity while retaining its translation.
+            // Cache that exact final hand world matrix from this tracking sample.  This avoids selecting an
+            // arbitrary global parental path when the actor is reachable through multiple stereo/render routes.
+            osg::Matrix finalHandLocal = handMatrix;
+            finalHandLocal.setRotate(osg::Quat());
+            mHandWorldMatrix = finalHandLocal * scale * localToWorld;
+            mHandWorldValid = true;
             mTransform->setMatrix(scale * localToWorld * worldToLocal * mTransform->getMatrix());
+        }
+
+        bool getHandWorldMatrix(osg::Matrix& handWorld) const
+        {
+            if (!mHandWorldValid)
+                return false;
+            handWorld = mHandWorldMatrix;
+            return true;
         }
 
         void setTransform(osg::MatrixTransform* transform) {
@@ -4852,6 +4894,8 @@ namespace MWVR
             mTransform = transform;
             if (mTransform)
                 mTransform->setCullingActive(false);
+            else
+                mHandWorldValid = false;
         }
 
         std::shared_ptr<VR::Space> mSpace;
@@ -4869,6 +4913,8 @@ namespace MWVR
         bool mLeft;
         bool mMirror;
         bool mUseNativeGripOrientation;
+        osg::Matrix mHandWorldMatrix;
+        bool mHandWorldValid = false;
     };
 
     class FalloutSpaceAxisLogCallback : public osg::NodeCallback
@@ -5223,6 +5269,11 @@ namespace MWVR
             new WeaponDirectionController(xrInput.getSpace(OpenXRInput::RightHandAim)));
         mNativeWeaponBoneController = new NativeWeaponBoneController(
             xrInput.getSpace(OpenXRInput::RightHandAim));
+        mFalloutVrWeaponRayWorldNode = new osg::MatrixTransform;
+        mFalloutVrWeaponRayWorldNode->setName("FNV VR Right-Hand Weapon Ray World");
+        mFalloutVrWeaponRayWorldNode->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+        if (mSceneRoot != nullptr)
+            mSceneRoot->addChild(mFalloutVrWeaponRayWorldNode);
 
         mModelOffset->setName("ModelOffset");
 
@@ -5292,6 +5343,12 @@ namespace MWVR
         {
             osg::Group* const parent = mWeaponDirectionTransform->getParent(0);
             if (!parent->removeChild(mWeaponDirectionTransform))
+                break;
+        }
+        while (mFalloutVrWeaponRayWorldNode != nullptr && mFalloutVrWeaponRayWorldNode->getNumParents() > 0)
+        {
+            osg::Group* const parent = mFalloutVrWeaponRayWorldNode->getParent(0);
+            if (!parent->removeChild(mFalloutVrWeaponRayWorldNode))
                 break;
         }
     }
@@ -5388,16 +5445,24 @@ namespace MWVR
         };
         const auto clearNativeWeaponRay = [&]() {
             mFalloutVrWeaponRayNode = nullptr;
-            if (mFalloutVrSyntheticWeaponRayNode != nullptr)
+            if (mFalloutVrWeaponRayWorldNode != nullptr)
+                mFalloutVrWeaponRayWorldNode->setUserValue("openmwFalloutVrProjectileBackedRay", 0);
+            mFalloutVrWeaponRayPathFromRightHand.clear();
+            mFalloutVrWeaponRaysInRightHand.clear();
+            mFalloutVrWeaponRayWorldMatrices.clear();
+            mFalloutVrWeaponRayInRightHandValid = false;
+            mFalloutVrWeaponRayWorldValid = false;
+            for (const osg::ref_ptr<osg::MatrixTransform>& ray : mFalloutVrSyntheticWeaponRayNodes)
             {
-                while (mFalloutVrSyntheticWeaponRayNode->getNumParents() > 0)
+                while (ray != nullptr && ray->getNumParents() > 0)
                 {
-                    osg::Group* const parent = mFalloutVrSyntheticWeaponRayNode->getParent(0);
-                    if (!parent->removeChild(mFalloutVrSyntheticWeaponRayNode))
+                    osg::Group* const parent = ray->getParent(0);
+                    if (!parent->removeChild(ray))
                         break;
                 }
-                mFalloutVrSyntheticWeaponRayNode = nullptr;
             }
+            mFalloutVrSyntheticWeaponRayNodes.clear();
+            mFalloutVrSyntheticWeaponRayNode = nullptr;
         };
         if (!showWeapon)
         {
@@ -5442,14 +5507,29 @@ namespace MWVR
                 setFalloutWeaponGeometryVisible(retainedPart, drawStateOwnsWeapon && !mRightPointerEnabled);
                 // A late hide callback must not sever gameplay from the still-current barrel.  The ray is an
                 // immutable child of the retained native part and remains valid for the whole bind generation.
-                if (drawStateOwnsWeapon && mFalloutVrSyntheticWeaponRayNode != nullptr
-                    && mFalloutVrSyntheticWeaponRayNode->getNumParents() == 1)
+                const bool retainedRaysValid = !mFalloutVrSyntheticWeaponRayNodes.empty()
+                    && std::all_of(mFalloutVrSyntheticWeaponRayNodes.begin(),
+                        mFalloutVrSyntheticWeaponRayNodes.end(), [](const auto& ray) {
+                            return ray != nullptr && ray->getNumParents() == 1;
+                        });
+                if (drawStateOwnsWeapon && retainedRaysValid)
+                {
+                    mFalloutVrSyntheticWeaponRayNode = mFalloutVrSyntheticWeaponRayNodes.front();
                     mFalloutVrWeaponRayNode = mFalloutVrSyntheticWeaponRayNode;
+                    updateFalloutVrWeaponRayWorld();
+                }
                 else if (drawStateOwnsWeapon)
                     Log(Debug::Error) << "OpenMW VR native weapon retained ray invariant: status=fail reason="
                                       << "missing-or-multiparent-production-ray";
                 else
+                {
                     mFalloutVrWeaponRayNode = nullptr;
+                    mFalloutVrWeaponRayPathFromRightHand.clear();
+                    mFalloutVrWeaponRaysInRightHand.clear();
+                    mFalloutVrWeaponRayWorldMatrices.clear();
+                    mFalloutVrWeaponRayInRightHandValid = false;
+                    mFalloutVrWeaponRayWorldValid = false;
+                }
                 auditNativeWeaponRender(retainedPart, retainedModel, retainedBindSerial,
                     drawStateOwnsWeapon && !mRightPointerEnabled, "retained-visibility-transition");
                 Log(Debug::Info) << "OpenMW VR Fallout weapon visibility: visible="
@@ -5560,17 +5640,16 @@ namespace MWVR
             return;
         }
 
-        SceneUtil::FindByNameVisitor projectileNode("ProjectileNode");
+        const ESM4::Weapon* const falloutWeapon = weapon->get<ESM4::Weapon>()->mBase;
+        SceneUtil::FindUniqueBestByNameVisitor projectileNode("ProjectileNode");
         // Pointer/Pip-Boy presentation temporarily masks the held part root to zero. ProjectileNode is structural
         // bind data, not visible-state data, so discovery must traverse hidden branches; otherwise a same-bind show
         // rehomes the production ray to the model-origin fallback until the next visible rebuild.
         projectileNode.setTraversalMask(~0u);
         projectileNode.setNodeMaskOverride(~0u);
         part->accept(projectileNode);
-        osg::Group* const projectileParent
-            = projectileNode.mFoundNode != nullptr ? projectileNode.mFoundNode->asGroup() : nullptr;
+        const std::vector<osg::Group*>& projectileParents = projectileNode.getBestNodes();
 
-        const ESM4::Weapon* const falloutWeapon = weapon->get<ESM4::Weapon>()->mBase;
         int bindSerial = 0;
         part->getUserValue("openmwBoundWeaponBindSerial", bindSerial);
         if (mNativeWeaponBoneController != nullptr)
@@ -5628,42 +5707,157 @@ namespace MWVR
             = MWMechanics::getFalloutWeaponType(falloutWeapon->mData.animationType);
         const bool melee = weaponType
             && MWMechanics::getWeaponType(*weaponType)->mWeaponClass == ESM::WeaponType::Melee;
-        osg::Group* const rayParent = projectileParent != nullptr ? projectileParent : socket;
-        if (mFalloutVrSyntheticWeaponRayNode == nullptr
-            || mFalloutVrSyntheticWeaponRayNode->getNumParents() != 1
-            || mFalloutVrSyntheticWeaponRayNode->getParent(0) != rayParent)
+        const bool firearmFamily = falloutWeapon->mData.animationType >= 3
+            && falloutWeapon->mData.animationType <= 9;
+        const bool projectileBacked = !projectileParents.empty();
+        const bool multiEmitterCountValid = projectileParents.size() <= 1
+            || projectileParents.size() == falloutWeapon->mData.numProjectiles;
+        if (firearmFamily && (!projectileBacked || !multiEmitterCountValid))
         {
-            if (mFalloutVrSyntheticWeaponRayNode != nullptr)
+            // Exporter decorations (notably retail "##ProjectileNode") are canonicalized above. A ranged model
+            // with no unique best authored helper must not guess model +X: that produces a plausible-looking but
+            // physically false shot. Multiple authored helpers are accepted only when their count exactly matches
+            // WEAP.DNAM.numProjectiles, so each projectile can originate at its own retail-authored emitter. Keep
+            // the stock native weapon visible and rigid, but fail the combat ray closed for an invalid bind.
+            if (mNativeWeaponBoneController != nullptr)
+                mNativeWeaponBoneController->clearAttachment();
+            clearNativeWeaponDebug();
+            clearNativeWeaponRay();
+            Log(Debug::Error) << "OpenMW VR production ray rejected: model="
+                              << weapon->getClass().getCorrectedModel(*weapon).value()
+                              << " record=" << weapon->getCellRef().getRefId().toDebugString()
+                              << " animationType="
+                              << static_cast<unsigned int>(falloutWeapon->mData.animationType)
+                              << " projectile=" << ESM::RefId::formIdRefId(falloutWeapon->mData.projectile)
+                              << " requested=ProjectileNode bestMatch="
+                              << SceneUtil::getNodeNameMatchKindName(projectileNode.getFoundMatch().mKind)
+                              << " bestMatchCount=" << projectileNode.getBestMatchCount()
+                              << " render=preserved combatRay=disabled";
+            return;
+        }
+
+        std::vector<osg::Group*> rayParents;
+        if (projectileBacked)
+            rayParents.assign(projectileParents.begin(), projectileParents.end());
+        else
+            rayParents.push_back(socket);
+        const bool rebuildRayChildren = mFalloutVrSyntheticWeaponRayNodes.size() != rayParents.size()
+            || !std::equal(mFalloutVrSyntheticWeaponRayNodes.begin(),
+                mFalloutVrSyntheticWeaponRayNodes.end(), rayParents.begin(),
+                [](const osg::ref_ptr<osg::MatrixTransform>& ray, const osg::Group* parent) {
+                    return ray != nullptr && ray->getNumParents() == 1 && ray->getParent(0) == parent;
+                });
+        if (rebuildRayChildren)
+        {
+            for (const osg::ref_ptr<osg::MatrixTransform>& ray : mFalloutVrSyntheticWeaponRayNodes)
             {
-                while (mFalloutVrSyntheticWeaponRayNode->getNumParents() > 0)
-                    mFalloutVrSyntheticWeaponRayNode->getParent(0)->removeChild(mFalloutVrSyntheticWeaponRayNode);
+                while (ray != nullptr && ray->getNumParents() > 0)
+                    ray->getParent(0)->removeChild(ray);
             }
-            mFalloutVrSyntheticWeaponRayNode = new osg::MatrixTransform;
-            mFalloutVrSyntheticWeaponRayNode->setName("FNV VR Native Weapon Production Ray");
-            rayParent->addChild(mFalloutVrSyntheticWeaponRayNode);
+            mFalloutVrSyntheticWeaponRayNodes.clear();
+            for (std::size_t index = 0; index < rayParents.size(); ++index)
+            {
+                osg::ref_ptr<osg::MatrixTransform> ray = new osg::MatrixTransform;
+                ray->setName("FNV VR Native Weapon Production Ray " + std::to_string(index));
+                rayParents[index]->addChild(ray);
+                mFalloutVrSyntheticWeaponRayNodes.push_back(std::move(ray));
+            }
         }
         // NifOsg transposes the NIF Matrix3 into OSG's row-vector form. ProjectileNode's authored barrel axis is
         // therefore local +Z, not +Y. Rx(+90deg) makes this child +Y equal Projectile +Z without touching the model.
-        const bool projectileBacked = projectileParent != nullptr;
-        mFalloutVrSyntheticWeaponRayNode->setMatrix(projectileBacked
-            ? osg::Matrix::rotate(osg::Quat(osg::PI_2, osg::Vec3f(1.f, 0.f, 0.f)))
-            : (melee ? osg::Matrix::identity()
-                     : osg::Matrix::rotate(osg::Quat(-osg::PI_2, osg::Vec3f(0.f, 0.f, 1.f)))));
-        mFalloutVrSyntheticWeaponRayNode->setUserValue(
-            "openmwFalloutVrProjectileBackedRay", projectileBacked ? 1 : 0);
+        for (const osg::ref_ptr<osg::MatrixTransform>& ray : mFalloutVrSyntheticWeaponRayNodes)
+        {
+            ray->setMatrix(projectileBacked
+                ? osg::Matrix::rotate(osg::Quat(osg::PI_2, osg::Vec3f(1.f, 0.f, 0.f)))
+                : (melee ? osg::Matrix::identity()
+                         : osg::Matrix::rotate(osg::Quat(-osg::PI_2, osg::Vec3f(0.f, 0.f, 1.f)))));
+            ray->setUserValue("openmwFalloutVrProjectileBackedRay", projectileBacked ? 1 : 0);
+        }
+        mFalloutVrSyntheticWeaponRayNode = mFalloutVrSyntheticWeaponRayNodes.front();
+        if (mFalloutVrWeaponRayWorldNode != nullptr)
+            mFalloutVrWeaponRayWorldNode->setUserValue(
+                "openmwFalloutVrProjectileBackedRay", projectileBacked ? 1 : 0);
         mFalloutVrWeaponRayNode = mFalloutVrSyntheticWeaponRayNode;
         Log(Debug::Info) << "OpenMW VR production ray ownership: origin="
-                         << (projectileBacked ? "ProjectileNode" : "native-model")
+                         << (projectileBacked ? projectileParents.front()->getName() : "native-model")
+                         << " match="
+                         << (projectileBacked
+                                 ? SceneUtil::getNodeNameMatchKindName(projectileNode.getFoundMatch().mKind)
+                                 : "native-family-axis")
                          << " direction=" << (projectileBacked ? "ProjectileNode+Z-via-child+Y"
                                  : (melee ? "model+Y" : "model+X-via-child+Y"))
+                         << " emitterCount=" << mFalloutVrSyntheticWeaponRayNodes.size()
+                         << " authoredProjectileCount="
+                         << static_cast<unsigned int>(falloutWeapon->mData.numProjectiles)
                          << " parentPaths=" << mFalloutVrWeaponRayNode->getNumParents();
         if (mNativeWeaponBoneController != nullptr)
             mNativeWeaponBoneController->setAttachment(rightHandBone->second.get(), part,
-                mFalloutVrWeaponRayNode.get(), projectileBacked ? projectileNode.mFoundNode : part,
+                mFalloutVrWeaponRayNode.get(), projectileBacked ? projectileParents.front() : part,
                 projectileBacked ? osg::Vec3f(0.f, 0.f, 1.f)
                                  : (melee ? osg::Vec3f(0.f, 1.f, 0.f) : osg::Vec3f(1.f, 0.f, 0.f)),
                 weapon->getClass().getCorrectedModel(*weapon).value(),
                 weapon->getCellRef().getRefId().toDebugString());
+
+        // Build the production ray in the tracked R-Hand coordinate system from an explicit descendant chain.
+        // Do not use getParentalNodePaths().front(): the actor can have multiple render-root routes and that choice
+        // previously made shots/crosshairs appear to originate from the other hand.  The R Hand itself is excluded
+        // so its transform is applied exactly once when the cached tracking-world matrix is composed below.
+        mFalloutVrWeaponRaysInRightHand.clear();
+        mFalloutVrWeaponRayInRightHandValid = true;
+        std::size_t primaryPathNodeCount = 0;
+        for (const osg::ref_ptr<osg::MatrixTransform>& ray : mFalloutVrSyntheticWeaponRayNodes)
+        {
+            osg::NodePath rayInRightHandPath;
+            std::set<const osg::Node*> visited;
+            const std::function<bool(osg::Node*)> findRightHandAncestor = [&](osg::Node* node) {
+                if (node == rightHandBone->second.get())
+                    return true;
+                if (node == nullptr || !visited.insert(node).second)
+                    return false;
+                for (unsigned int parentIndex = 0; parentIndex < node->getNumParents(); ++parentIndex)
+                {
+                    if (findRightHandAncestor(node->getParent(parentIndex)))
+                    {
+                        rayInRightHandPath.push_back(node);
+                        return true;
+                    }
+                }
+                return false;
+            };
+            if (!findRightHandAncestor(ray.get()) || rayInRightHandPath.empty())
+            {
+                mFalloutVrWeaponRayInRightHandValid = false;
+                break;
+            }
+            if (mFalloutVrWeaponRaysInRightHand.empty())
+            {
+                mFalloutVrWeaponRayPathFromRightHand = rayInRightHandPath;
+                primaryPathNodeCount = rayInRightHandPath.size();
+            }
+            mFalloutVrWeaponRaysInRightHand.push_back(osg::computeLocalToWorld(rayInRightHandPath));
+        }
+        mFalloutVrWeaponRayInRightHandValid = mFalloutVrWeaponRayInRightHandValid
+            && mFalloutVrWeaponRaysInRightHand.size() == mFalloutVrSyntheticWeaponRayNodes.size();
+        if (mFalloutVrWeaponRayInRightHandValid)
+        {
+            mFalloutVrWeaponRayInRightHand = mFalloutVrWeaponRaysInRightHand.front();
+            // The native Weapon bone owns the visible held pose. Gameplay follows the authored barrel frame below;
+            // no code in this path rotates the held model to chase an independently reported OpenXR Aim pose.
+            updateFalloutVrWeaponRayWorld();
+            Log(Debug::Info) << "OpenMW VR right-hand production ray bind: status=pass bindSerial="
+                             << bindSerial << " chainNodes=" << primaryPathNodeCount
+                             << " emitterCount=" << mFalloutVrWeaponRaysInRightHand.size()
+                             << " source=explicit-RHand-descendant-path";
+        }
+        else
+        {
+            mFalloutVrWeaponRayPathFromRightHand.clear();
+            mFalloutVrWeaponRaysInRightHand.clear();
+            mFalloutVrWeaponRayWorldMatrices.clear();
+            mFalloutVrWeaponRayWorldValid = false;
+            Log(Debug::Error) << "OpenMW VR right-hand production ray bind: status=fail bindSerial="
+                              << bindSerial << " reason=no-explicit-RHand-descendant-path";
+        }
         clearNativeWeaponDebug();
         if (getEnvFloat("OPENMW_FNV_VR_NATIVE_WEAPON_DEBUG_AXES", 0.f) != 0.f)
         {
@@ -7030,8 +7224,61 @@ namespace MWVR
         }
     }
 
+    void VRAnimation::updateFalloutVrWeaponRayWorld()
+    {
+        mFalloutVrWeaponRayWorldValid = false;
+        mFalloutVrWeaponRayWorldMatrices.clear();
+        if (!mFalloutVrWeaponRayInRightHandValid || mFalloutVrWeaponRayWorldNode == nullptr
+            || mFalloutVrWeaponRayNode == nullptr || mFalloutVrWeaponRaysInRightHand.empty())
+            return;
+
+        const auto rightHand = mVrControllers.find(mRightHandPath);
+        if (rightHand == mVrControllers.end() || rightHand->second.forearmController == nullptr)
+            return;
+
+        osg::Matrix rightHandWorld;
+        if (!rightHand->second.forearmController->getHandWorldMatrix(rightHandWorld))
+            return;
+
+        // OSG composes local-to-parent first: every immutable authored muzzle frame is relative to R Hand, then the
+        // exact tracked R-Hand world frame from this same update sample is applied.
+        mFalloutVrWeaponRayWorldMatrices.reserve(mFalloutVrWeaponRaysInRightHand.size());
+        for (const osg::Matrix& rayInHand : mFalloutVrWeaponRaysInRightHand)
+            mFalloutVrWeaponRayWorldMatrices.push_back(rayInHand * rightHandWorld);
+
+        osg::Matrix aggregate = mFalloutVrWeaponRayWorldMatrices.front();
+        if (mFalloutVrWeaponRayWorldMatrices.size() > 1)
+        {
+            // Multi-emitter retail weapons share one barrel direction but author one origin per simultaneous
+            // projectile. The crosshair/activation line uses their exact centroid; combat receives every authored
+            // frame below. Reject divergent axes instead of averaging rotations into a non-authored direction.
+            osg::Vec3f forward = osg::Matrix::transform3x3(osg::Vec3f(0.f, 1.f, 0.f), aggregate);
+            if (forward.normalize() == 0.f)
+                return;
+            osg::Vec3d centroid;
+            for (const osg::Matrix& frame : mFalloutVrWeaponRayWorldMatrices)
+            {
+                osg::Vec3f candidate
+                    = osg::Matrix::transform3x3(osg::Vec3f(0.f, 1.f, 0.f), frame);
+                if (candidate.normalize() == 0.f || candidate * forward < 0.999999f)
+                {
+                    mFalloutVrWeaponRayWorldMatrices.clear();
+                    return;
+                }
+                centroid += frame.getTrans();
+            }
+            centroid /= static_cast<double>(mFalloutVrWeaponRayWorldMatrices.size());
+            aggregate.setTrans(centroid);
+        }
+        mFalloutVrWeaponRayWorldNode->setMatrix(aggregate);
+        mFalloutVrWeaponRayWorldValid = true;
+    }
+
     void VRAnimation::updateSpace()
     {
+        if (!VR::getLocatingSpacesAllowed())
+            return;
+
         auto localRef = OpenXRInput::instance().getSpace(OpenXRInput::DefaultReferenceSpaceLocal);
         auto viewRef = OpenXRInput::instance().getSpace(OpenXRInput::DefaultReferenceSpaceView);
         auto viewPose = viewRef->locate(*localRef);
@@ -7076,6 +7323,7 @@ namespace MWVR
                 it.second.forearmController->update(*bone->asTransform()->asMatrixTransform());
             }
         }
+        updateFalloutVrWeaponRayWorld();
         if (mSkeleton)
         {
             mSkeleton->markBoneMatriceDirty();
@@ -7296,22 +7544,27 @@ namespace MWVR
                 if (!currentBoundIdentity)
                 {
                     mFalloutVrWeaponRayNode = nullptr;
+                    mFalloutVrWeaponRayPathFromRightHand.clear();
+                    mFalloutVrWeaponRayInRightHandValid = false;
+                    mFalloutVrWeaponRayWorldValid = false;
                     removeIndividualPart(ESM::PRT_Weapon);
                     if (mNativeWeaponBoneController != nullptr)
                     {
                         mNativeWeaponBoneController->setEnabled(false);
                         mNativeWeaponBoneController->clearAttachment();
                     }
-                    if (mFalloutVrSyntheticWeaponRayNode != nullptr)
+                    for (const osg::ref_ptr<osg::MatrixTransform>& ray
+                        : mFalloutVrSyntheticWeaponRayNodes)
                     {
-                        while (mFalloutVrSyntheticWeaponRayNode->getNumParents() > 0)
+                        while (ray != nullptr && ray->getNumParents() > 0)
                         {
-                            osg::Group* const parent = mFalloutVrSyntheticWeaponRayNode->getParent(0);
-                            if (!parent->removeChild(mFalloutVrSyntheticWeaponRayNode))
+                            osg::Group* const parent = ray->getParent(0);
+                            if (!parent->removeChild(ray))
                                 break;
                         }
-                        mFalloutVrSyntheticWeaponRayNode = nullptr;
                     }
+                    mFalloutVrSyntheticWeaponRayNodes.clear();
+                    mFalloutVrSyntheticWeaponRayNode = nullptr;
                 }
                 else
                     setFalloutWeaponGeometryVisible(part, mShowWeapons && !enable);

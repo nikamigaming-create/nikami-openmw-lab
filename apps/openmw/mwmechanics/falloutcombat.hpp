@@ -11,6 +11,7 @@
 
 #include <osg/Vec2f>
 #include <osg/Vec3f>
+#include <osg/Quat>
 
 #include <components/esm/formid.hpp>
 #include <components/esm4/actor.hpp>
@@ -489,6 +490,29 @@ namespace MWMechanics
         bool mWasDown = false;
         float mCooldown = 0.f;
     };
+
+    struct FalloutShellCasingTuning
+    {
+        float mEjectSpeed = 160.f;
+        float mDirectionRandomize = 0.45f;
+        float mRotateSpeedDegrees = 300.f;
+        float mRotateRandomize = 0.1f;
+        float mLifetime = 5.f;
+        float mCameraDistance = 512.f;
+    };
+
+    struct FalloutShellCasingMotion
+    {
+        osg::Vec3f mVelocity;
+        osg::Vec3f mRotationAxis;
+        float mRotationSpeedRadians = 0.f;
+    };
+
+    /// Build one casing's motion from the authored ShellCasingNode frame. Direction samples and the spin sample
+    /// are signed unit-range values supplied by the caller so runtime randomness remains testable.
+    std::optional<FalloutShellCasingMotion> buildFalloutShellCasingMotion(
+        const FalloutShellCasingTuning& tuning, const osg::Quat& ejectionWorldOrientation,
+        const osg::Vec2f& directionSample, const osg::Vec3f& rotationAxisSample, float rotationSpeedSample) noexcept;
 
     enum class FalloutAttackDeliveryEvent : std::uint8_t
     {

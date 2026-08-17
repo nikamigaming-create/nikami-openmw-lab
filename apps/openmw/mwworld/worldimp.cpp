@@ -4425,12 +4425,11 @@ namespace MWWorld
                     //  VR should aim from the HAND unless it's KBMouseMode
                     if (aimFromVRPointer)
                     {
-                        auto* node = MWVR::VRInputManager::instance().vrAimNode();
-                        if (node)
+                        if (const std::optional<osg::Matrix> worldMatrix
+                            = MWVR::VRInputManager::instance().vrAimWorldMatrix())
                         {
-                            auto worldMatrix = osg::computeLocalToWorld(node->getParentalNodePaths()[0]);
-                            origin = worldMatrix.getTrans();
-                            orient = worldMatrix.getRotate();
+                            origin = worldMatrix->getTrans();
+                            orient = worldMatrix->getRotate();
                         }
                     }
                     // ## VR_PATCH END
@@ -4537,6 +4536,13 @@ namespace MWWorld
         return mProjectileManager != nullptr
             && mProjectileManager->launchFalloutHitscanTracer(
                 projectile, origin, destination, impactNormal);
+    }
+
+    bool World::launchFalloutShellCasing(const MWWorld::Ptr& actor, VFS::Path::NormalizedView model,
+        const osg::Matrixf& ejectionFrame)
+    {
+        return mProjectileManager != nullptr
+            && mProjectileManager->launchFalloutShellCasing(actor, model, ejectionFrame);
     }
 
     std::size_t World::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)
@@ -5509,11 +5515,11 @@ namespace MWWorld
             * (!weapon.isEmpty() ? weapon.get<ESM::Weapon>()->mBase->mData.mReach
                                  : store.find("fHandToHandReach")->mValue.getFloat());
 
-        auto* node = MWVR::VRInputManager::instance().vrAimNode();
-        if (!node)
+        const std::optional<osg::Matrix> worldMatrix
+            = MWVR::VRInputManager::instance().vrAimWorldMatrix();
+        if (!worldMatrix)
             return std::nullopt;
-        auto worldMatrix = osg::computeLocalToWorld(node->getParentalNodePaths()[0]);
-        auto result = mPhysics->getHitContact(ptr, worldMatrix.getTrans(), worldMatrix.getRotate(), distance);
+        auto result = mPhysics->getHitContact(ptr, worldMatrix->getTrans(), worldMatrix->getRotate(), distance);
         if (result.first.isEmpty())
             return std::nullopt;
         Log(Debug::Verbose) << "Hit: " << result.first.getTypeDescription();

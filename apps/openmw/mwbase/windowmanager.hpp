@@ -454,7 +454,7 @@ namespace MWBase
         virtual bool handleFalloutPipBoyPointerClick(int x, int y) = 0;
         /// Activate one of the authored three-dimensional Pip-Boy controls hit
         /// by the VR controller ray. The value is the exact NIF node name.
-        virtual bool handleFalloutPipBoyPhysicalControl(std::string_view control) = 0;
+        virtual bool handleFalloutPipBoyPhysicalControl(std::string_view control, int direction) = 0;
         /// Text fed to the actual PipBoyArm screen material.  This is kept
         /// separate from the OpenMW desktop inventory presentation so the
         /// physical device can own its terminal layout and live player data.

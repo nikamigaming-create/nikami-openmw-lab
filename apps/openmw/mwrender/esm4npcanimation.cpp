@@ -39,6 +39,7 @@
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/attach.hpp>
+#include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/morphgeometry.hpp>
 #include <components/sceneutil/skeleton.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
@@ -2140,6 +2141,13 @@ namespace MWRender
                 else
                     stateSet.removeTextureAttribute(1, osg::StateAttribute::TEXTURE);
                 stateSet.setAttributeAndModes(getPipBoyTerminalProgram(), flags);
+                // The live terminal remains the authored physical screen, not an overlay. Reassert the retail
+                // opaque/default-bin depth contract after cloning the material so the screen cannot draw through a
+                // hand, weapon, or world surface. AutoDepth preserves the same LEQUAL intent under reverse-Z.
+                stateSet.setAttributeAndModes(
+                    new SceneUtil::AutoDepth(osg::Depth::LEQUAL, 0.0, 1.0, true), flags);
+                stateSet.setMode(GL_DEPTH_TEST, flags);
+                stateSet.setRenderBinToInherit();
                 stateSet.addUniform(new osg::Uniform("pipBoyTerminalMap", 0));
                 int terminalWidth = texture != nullptr ? texture->getTextureWidth() : 0;
                 int terminalHeight = texture != nullptr ? texture->getTextureHeight() : 0;

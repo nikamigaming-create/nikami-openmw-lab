@@ -2792,6 +2792,8 @@ namespace
 
     TEST_F(ESM4ContainerTest, FlatFalloutBarterFiltersCapsAndAcceptsSupportedInventory)
     {
+        mStore.overrideRecord(makeNpcRace());
+
         ESM4::MiscItem caps{};
         caps.mId = ESM::FormId::fromUint32(sCapsBase);
         caps.mEditorId = "Caps001";

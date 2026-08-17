@@ -62,6 +62,8 @@ namespace MWVR
         const MWRender::RayResult& getPointerRay() const;
         bool canPlaceObject() const;
         void setSource(std::shared_ptr<VR::Space> space);
+        /// Sample the active pointer space during Session::updateSpaces, the legal OpenXR locate phase.
+        void updateTrackingPose();
         // bool enabled() const { return !!mSource; };
         float distanceToPointerTarget() const { return mDistanceToPointerTarget; }
         void activate();
@@ -71,11 +73,22 @@ namespace MWVR
         bool tryProbePick(MWWorld::Ptr target);
 
         std::shared_ptr<VR::Space> mSpace = 0;
-        osg::ref_ptr<VR::SpaceTransform> mSpaceTransform;
+        osg::ref_ptr<osg::MatrixTransform> mSpaceTransform;
         osg::ref_ptr<osg::Group> mRoot;
 
+        Stereo::Pose mTrackingPose;
+        bool mTrackingPoseValid = false;
+        bool mTrackingStateInitialized = false;
+        bool mLastLoggedTrackingPoseValid = false;
+
         MWRender::RayResult mPointerRay = {};
+        MWRender::RayResult mLastPipBoyRay = {};
         osg::ref_ptr<osg::Node> mPointerTarget;
+        osg::ref_ptr<osg::Node> mLastPipBoyTarget;
+        osg::Vec3f mLastPipBoyDirection;
+        unsigned int mPipBoyMissFrames = 0;
+        bool mLastPipBoyRayValid = false;
+        unsigned int mTrackingPoseMissFrames = 0;
         float mDistanceToPointerTarget = -1.f;
         bool mCanPlaceObject = false;
         bool mVisualStateInitialized = false;

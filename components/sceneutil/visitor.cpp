@@ -208,6 +208,35 @@ namespace SceneUtil
 
     void FindByNameVisitor::apply(osg::Geometry&) {}
 
+    void FindUniqueBestByNameVisitor::consider(osg::Group& group)
+    {
+        const NodeNameMatch match = matchNodeName(mNameToFind, group.getName());
+        if (!match)
+            return;
+        if (match.mScore > mBestMatch.mScore)
+        {
+            mBestNodes.clear();
+            mBestNodes.push_back(&group);
+            mBestMatch = match;
+        }
+        else if (match.mScore == mBestMatch.mScore)
+            mBestNodes.push_back(&group);
+    }
+
+    void FindUniqueBestByNameVisitor::apply(osg::Group& group)
+    {
+        consider(group);
+        traverse(group);
+    }
+
+    void FindUniqueBestByNameVisitor::apply(osg::MatrixTransform& node)
+    {
+        consider(node);
+        traverse(node);
+    }
+
+    void FindUniqueBestByNameVisitor::apply(osg::Geometry&) {}
+
     void NodeMapVisitorBoneOnly::apply(osg::MatrixTransform& trans)
     {
         // Choose first found bone in file

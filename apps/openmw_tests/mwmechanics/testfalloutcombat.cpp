@@ -39,6 +39,38 @@ namespace
         EXPECT_TRUE(actors.getActorsSidingWith(MWWorld::Ptr{}).empty());
     }
 
+    TEST(FalloutCombatTest, ShellCasingUsesAuthoredLocalPositiveZAndRetailTuning)
+    {
+        const MWMechanics::FalloutShellCasingTuning tuning;
+        const osg::Quat orientation(osg::PI_2, osg::Vec3f(0.f, 1.f, 0.f));
+        const auto motion = MWMechanics::buildFalloutShellCasingMotion(
+            tuning, orientation, osg::Vec2f(0.f, 0.f), osg::Vec3f(1.f, 0.f, 0.f), 0.f);
+
+        ASSERT_TRUE(motion);
+        const osg::Vec3f expectedVelocity = orientation * osg::Vec3f(0.f, 0.f, 160.f);
+        EXPECT_NEAR((motion->mVelocity - expectedVelocity).length(), 0.f, 1e-5f);
+        EXPECT_NEAR(motion->mRotationSpeedRadians, osg::DegreesToRadians(300.f), 1e-5f);
+    }
+
+    TEST(FalloutCombatTest, ShellCasingHonorsWinningTuningAndRejectsMalformedSamples)
+    {
+        MWMechanics::FalloutShellCasingTuning tuning;
+        tuning.mEjectSpeed = 240.f;
+        tuning.mDirectionRandomize = 0.25f;
+        tuning.mRotateSpeedDegrees = 500.f;
+        tuning.mRotateRandomize = 0.2f;
+        const auto motion = MWMechanics::buildFalloutShellCasingMotion(tuning, osg::Quat(),
+            osg::Vec2f(1.f, -1.f), osg::Vec3f(0.f, 1.f, 0.f), -1.f);
+        ASSERT_TRUE(motion);
+        EXPECT_NEAR(motion->mVelocity.length(), 240.f, 1e-4f);
+        EXPECT_GT(motion->mVelocity.z(), 0.f);
+        EXPECT_NEAR(motion->mRotationSpeedRadians, osg::DegreesToRadians(400.f), 1e-5f);
+
+        tuning.mLifetime = -1.f;
+        EXPECT_FALSE(MWMechanics::buildFalloutShellCasingMotion(tuning, osg::Quat(),
+            osg::Vec2f(), osg::Vec3f(1.f, 0.f, 0.f), 0.f));
+    }
+
     TEST(FalloutCombatTest, DefendsSharedFactionAndAuthoredAlliesAfterAssault)
     {
         using Reaction = ESM4::Faction::GroupCombatReaction;

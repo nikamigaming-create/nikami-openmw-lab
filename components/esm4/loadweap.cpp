@@ -168,6 +168,9 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("MODL"):
                 reader.getZString(mModel);
                 break;
+            case ESM::fourCC("MOD2"):
+                reader.getZString(mShellCasingModel);
+                break;
             case ESM::fourCC("MOD4"):
                 reader.getZString(mFirstPersonModel);
                 break;
@@ -268,7 +271,6 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("VMAD"):
             case ESM::fourCC("VNAM"):
             case ESM::fourCC("NNAM"):
-            case ESM::fourCC("MOD2"): // FO3
             case ESM::fourCC("MO2T"): // FO3
             case ESM::fourCC("MO2S"): // FO3
             case ESM::fourCC("NAM6"): // FO3

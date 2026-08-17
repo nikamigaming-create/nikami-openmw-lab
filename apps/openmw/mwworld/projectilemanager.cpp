@@ -31,6 +31,7 @@
 #include <components/misc/constants.hpp>
 #include <components/misc/convert.hpp>
 #include <components/misc/resourcehelpers.hpp>
+#include <components/misc/rng.hpp>
 
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
@@ -61,6 +62,7 @@
 #include "../mwmechanics/weapontype.hpp"
 
 #include "../mwrender/animation.hpp"
+#include "../mwrender/camera.hpp"
 #include "../mwrender/renderingmanager.hpp"
 #include "../mwrender/util.hpp"
 #include "../mwrender/vismask.hpp"
@@ -467,7 +469,10 @@ namespace MWWorld
             = store != nullptr ? store->get<ESM4::Projectile>().search(projectileId) : nullptr;
         osg::Vec3f direction = destination - origin;
         const float distance = direction.length();
-        if (projectile == nullptr || !std::isfinite(distance) || distance <= 0.f || direction.normalize() == 0.f)
+        if (projectile == nullptr || projectile->mModel.empty()
+            || !std::isfinite(projectile->mData.speed) || projectile->mData.speed <= 0.f
+            || !std::isfinite(projectile->mData.fadeDuration) || projectile->mData.fadeDuration < 0.f
+            || !std::isfinite(distance) || distance <= 0.f || direction.normalize() == 0.f)
             return false;
 
         FalloutHitscanTracerState state;
@@ -476,92 +481,107 @@ namespace MWWorld
         state.mOrigin = origin;
         state.mDestination = destination;
         state.mElapsedTime = 0.f;
-        // Hitscan gameplay still resolves immediately. Keep its presentation alive long enough to read as a
-        // shot at ordinary frame rates, with longer outdoor traces receiving a few additional frames.
-        state.mLifetime = std::clamp(distance / 24000.f, 0.11f, 0.18f);
+        state.mTravelTime = distance / projectile->mData.speed;
+        state.mLifetime = state.mTravelTime + projectile->mData.fadeDuration;
         state.mToDelete = false;
 
         osg::Quat orientation;
         orientation.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), direction);
-        // Hitscan PROJ records are allowed to omit a world model: the impact is instantaneous and the visible
-        // streak is presentation owned by the firing weapon. Requiring MODL here silently suppressed the generated
-        // tracer for ordinary firearms even though the shot, damage, muzzle flash and impact had all succeeded.
-        state.mNode = new osg::PositionAttitudeTransform;
-        state.mNode->setNodeMask(MWRender::Mask_Effect);
-        state.mNode->setPosition(origin);
-        state.mNode->setAttitude(orientation);
-        state.mNode->addCullCallback(new SceneUtil::LightListCallback);
-        mParent->addChild(state.mNode);
-        state.mEffectAnimationTime = std::make_shared<MWRender::EffectAnimationTime>();
-
-        osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
-        const float visibleLength = std::min(distance, 120.f);
-        // The line begins at ProjectileNode and extends only forward. The prior negative tail visibly crossed back
-        // through the center of the screen before the tracer moved away from the camera.
-        vertices->push_back(osg::Vec3f(0.f, 0.f, 0.f));
-        vertices->push_back(osg::Vec3f(0.f, visibleLength, 0.f));
-        const auto createAdditiveLine = [](osg::Vec3Array* lineVertices,
-                                            const osg::Vec4f& color, float width) {
-            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
-            colors->push_back(color);
-            osg::ref_ptr<osg::Geometry> geometry = new osg::Geometry;
-            geometry->setVertexArray(lineVertices);
-            geometry->setColorArray(colors, osg::Array::BIND_OVERALL);
-            geometry->addPrimitiveSet(new osg::DrawArrays(GL_LINES, 0, lineVertices->size()));
-            osg::StateSet* stateSet = geometry->getOrCreateStateSet();
-            stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
-            stateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
-            stateSet->setAttributeAndModes(
-                new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE), osg::StateAttribute::ON);
-            stateSet->setAttributeAndModes(new osg::LineWidth(width), osg::StateAttribute::ON);
-            stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
-            return geometry;
-        };
-        osg::ref_ptr<osg::Geode> geode = new osg::Geode;
-        geode->addDrawable(createAdditiveLine(vertices, osg::Vec4f(1.6f, 0.55f, 0.08f, 0.55f), 7.f));
-        geode->addDrawable(createAdditiveLine(vertices, osg::Vec4f(3.4f, 1.85f, 0.55f, 1.f), 2.5f));
-        state.mNode->addChild(geode);
-
-        osg::Vec3f normalizedImpact = impactNormal;
-        const bool impactBurstSpawned = normalizedImpact.normalize() != 0.f;
-        if (impactBurstSpawned)
-        {
-            osg::Vec3f tangent = std::abs(normalizedImpact.z()) < 0.9f
-                ? normalizedImpact ^ osg::Vec3f(0.f, 0.f, 1.f)
-                : normalizedImpact ^ osg::Vec3f(0.f, 1.f, 0.f);
-            tangent.normalize();
-            osg::Vec3f bitangent = normalizedImpact ^ tangent;
-            bitangent.normalize();
-            constexpr float impactRadius = 8.f;
-            osg::ref_ptr<osg::Vec3Array> impactVertices = new osg::Vec3Array;
-            impactVertices->push_back(-tangent * impactRadius);
-            impactVertices->push_back(tangent * impactRadius);
-            impactVertices->push_back(-bitangent * impactRadius);
-            impactVertices->push_back(bitangent * impactRadius);
-            impactVertices->push_back(-normalizedImpact * 2.f);
-            impactVertices->push_back(normalizedImpact * 10.f);
-
-            osg::ref_ptr<osg::Geode> impactGeode = new osg::Geode;
-            impactGeode->addDrawable(
-                createAdditiveLine(impactVertices, osg::Vec4f(1.7f, 0.48f, 0.05f, 0.65f), 8.f));
-            impactGeode->addDrawable(
-                createAdditiveLine(impactVertices, osg::Vec4f(3.6f, 2.1f, 0.75f, 1.f), 3.f));
-            state.mImpactNode = new osg::PositionAttitudeTransform;
-            state.mImpactNode->setNodeMask(MWRender::Mask_Effect);
-            state.mImpactNode->setPosition(destination + normalizedImpact * 1.5f);
-            state.mImpactNode->addCullCallback(new SceneUtil::LightListCallback);
-            state.mImpactNode->addChild(impactGeode);
-            mParent->addChild(state.mImpactNode);
-        }
+        const VFS::Path::Normalized model
+            = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(projectile->mModel));
+        createModel(state, model, origin, orientation, false, false, osg::Vec4f(0.f, 0.f, 0.f, 0.f));
+        static_cast<void>(impactNormal);
 
         mFalloutHitscanTracers.push_back(std::move(state));
         Log(Debug::Info) << "FNV hitscan tracer launched: projectile="
                          << ESM::RefId::formIdRefId(projectileId) << " origin=" << origin
                          << " destination=" << destination << " distance=" << distance
-                         << " visibleLength=" << visibleLength
+                         << " speed=" << projectile->mData.speed
+                         << " travelTime=" << mFalloutHitscanTracers.back().mTravelTime
+                         << " fadeDuration=" << projectile->mData.fadeDuration
                          << " lifetime=" << mFalloutHitscanTracers.back().mLifetime
-                         << " impactNormal=" << impactNormal << " impactBurst=" << impactBurstSpawned
-                         << " authoredModel=" << projectile->mModel;
+                         << " authoredModel=" << projectile->mModel
+                         << " presentation=retail-PROJ-MODL";
+        return true;
+    }
+
+    bool ProjectileManager::launchFalloutShellCasing(const Ptr& actor, VFS::Path::NormalizedView authoredModel,
+        const osg::Matrixf& ejectionFrame)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (store == nullptr || world == nullptr || actor.isEmpty() || authoredModel.empty())
+            return false;
+
+        const auto settingOrDefault = [&](std::string_view id, float retailDefault) -> std::optional<float> {
+            const ESM::GameSetting* setting = store->get<ESM::GameSetting>().search(id);
+            if (setting == nullptr)
+                return retailDefault;
+            if (setting->mValue.getType() != ESM::VT_Float)
+                return std::nullopt;
+            const float value = setting->mValue.getFloat();
+            return std::isfinite(value) ? std::optional<float>(value) : std::nullopt;
+        };
+        const std::optional<float> ejectSpeed = settingOrDefault("fGunShellEjectSpeed", 160.f);
+        const std::optional<float> directionRandomize
+            = settingOrDefault("fGunShellDirectionRandomize", 0.45f);
+        const std::optional<float> rotateSpeed = settingOrDefault("fGunShellRotateSpeed", 300.f);
+        const std::optional<float> rotateRandomize
+            = settingOrDefault("fGunShellRotateRandomize", 0.1f);
+        const std::optional<float> lifetime = settingOrDefault("fGunShellLifetime", 5.f);
+        const std::optional<float> cameraDistance
+            = settingOrDefault("fGunShellCameraDistance", 512.f);
+        if (!ejectSpeed || !directionRandomize || !rotateSpeed || !rotateRandomize || !lifetime
+            || !cameraDistance)
+            return false;
+
+        const MWMechanics::FalloutShellCasingTuning tuning{ *ejectSpeed, *directionRandomize,
+            *rotateSpeed, *rotateRandomize, *lifetime, *cameraDistance };
+        Misc::Rng::Generator& prng = world->getPrng();
+        const auto signedSample = [&]() { return 2.f * Misc::Rng::rollProbability(prng) - 1.f; };
+        osg::Vec3f rotationAxisSample(signedSample(), signedSample(), signedSample());
+        if (rotationAxisSample.length2() <= std::numeric_limits<float>::epsilon())
+            rotationAxisSample.set(1.f, 0.f, 0.f);
+        const std::optional<MWMechanics::FalloutShellCasingMotion> motion
+            = MWMechanics::buildFalloutShellCasingMotion(tuning, ejectionFrame.getRotate(),
+                osg::Vec2f(signedSample(), signedSample()), rotationAxisSample, signedSample());
+        if (!motion)
+            return false;
+
+        const osg::Vec3f position = ejectionFrame.getTrans();
+        const MWRender::Camera* camera = world->getCamera();
+        if (camera == nullptr
+            || (position - osg::Vec3f(camera->getPosition())).length2()
+                > tuning.mCameraDistance * tuning.mCameraDistance)
+            return false;
+
+        const VFS::Path::Normalized model
+            = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(authoredModel));
+        const VFS::Manager* vfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
+        if (vfs == nullptr || !vfs->exists(model))
+            return false;
+
+        FalloutShellCasingState state;
+        state.mActorId = actor.getClass().getCreatureStats(actor).getActorId();
+        state.mCasterHandle = actor;
+        state.mVelocity = motion->mVelocity;
+        state.mRotationAxis = motion->mRotationAxis;
+        state.mRotationSpeedRadians = motion->mRotationSpeedRadians;
+        state.mElapsedTime = 0.f;
+        state.mLifetime = tuning.mLifetime;
+        state.mCameraDistance = tuning.mCameraDistance;
+        state.mSettled = false;
+        state.mToDelete = false;
+        createModel(state, model, position, ejectionFrame.getRotate(), false, false,
+            osg::Vec4f(0.f, 0.f, 0.f, 0.f));
+        state.mProjectileId = mPhysics->addProjectile(actor, position, model, true);
+        mPhysics->getProjectile(state.mProjectileId)->setVelocity(state.mVelocity);
+        mFalloutShellCasings.push_back(std::move(state));
+        Log(Debug::Info) << "FNV shell casing launched: actor=" << actor.toString()
+                         << " model=" << authoredModel.value() << " position=" << position
+                         << " axis=ShellCasingNode+Z speed=" << tuning.mEjectSpeed
+                         << " lifetime=" << tuning.mLifetime
+                         << " cameraDistance=" << tuning.mCameraDistance;
         return true;
     }
 
@@ -624,6 +644,11 @@ namespace MWWorld
             mPhysics->setCaster(state.mProjectileId, state.getCaster());
         for (auto& state : mFalloutProjectiles)
             mPhysics->setCaster(state.mProjectileId, state.getCaster());
+        for (auto& state : mFalloutShellCasings)
+        {
+            if (!state.mSettled && state.mProjectileId >= 0)
+                mPhysics->setCaster(state.mProjectileId, state.getCaster());
+        }
 
         for (auto& state : mMagicBolts)
         {
@@ -650,7 +675,39 @@ namespace MWWorld
         moveProjectiles(dt);
         moveFalloutProjectiles(dt);
         moveFalloutHitscanTracers(dt);
+        moveFalloutShellCasings(dt);
         moveMagicBolts(dt);
+    }
+
+    void ProjectileManager::moveFalloutShellCasings(float duration)
+    {
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        const MWRender::Camera* camera = world != nullptr ? world->getCamera() : nullptr;
+        for (FalloutShellCasingState& state : mFalloutShellCasings)
+        {
+            if (state.mToDelete)
+                continue;
+            state.mElapsedTime += duration;
+            if (state.mElapsedTime >= state.mLifetime || camera == nullptr
+                || (state.mNode->getPosition() - osg::Vec3f(camera->getPosition())).length2()
+                    > state.mCameraDistance * state.mCameraDistance)
+            {
+                state.mToDelete = true;
+                continue;
+            }
+            if (!state.mSettled)
+            {
+                MWPhysics::Projectile* projectile = mPhysics->getProjectile(state.mProjectileId);
+                if (projectile == nullptr || !projectile->isActive())
+                    continue;
+                state.mVelocity -= osg::Vec3f(0.f, 0.f,
+                    Constants::GravityConst * Constants::UnitsPerMeter * 0.1f * duration);
+                projectile->setVelocity(state.mVelocity);
+                state.mNode->setAttitude(state.mNode->getAttitude()
+                    * osg::Quat(state.mRotationSpeedRadians * duration, state.mRotationAxis));
+            }
+            update(state, duration);
+        }
     }
 
     void ProjectileManager::moveFalloutHitscanTracers(float duration)
@@ -665,16 +722,15 @@ namespace MWWorld
                 state.mToDelete = true;
                 continue;
             }
-            const float progress = std::clamp(state.mElapsedTime / state.mLifetime, 0.f, 1.f);
+            const float progress = state.mTravelTime > 0.f
+                ? std::clamp(state.mElapsedTime / state.mTravelTime, 0.f, 1.f) : 1.f;
             osg::Vec3f direction = state.mDestination - state.mOrigin;
-            const float distance = direction.length();
             if (direction.normalize() == 0.f)
             {
                 state.mToDelete = true;
                 continue;
             }
-            const float travelDistance = std::max(distance - std::min(distance, 120.f), 0.f);
-            state.mNode->setPosition(state.mOrigin + direction * travelDistance * progress);
+            state.mNode->setPosition(state.mOrigin + (state.mDestination - state.mOrigin) * progress);
             update(state, duration);
         }
     }
@@ -701,6 +757,11 @@ namespace MWWorld
             {
                 if (isCleanable(projectileState))
                     projectileState.mToDelete = true;
+            }
+            for (auto& casingState : mFalloutShellCasings)
+            {
+                if (isCleanable(casingState))
+                    casingState.mToDelete = true;
             }
 
             for (auto& magicBoltState : mMagicBolts)
@@ -1268,6 +1329,24 @@ namespace MWWorld
             // dismemberment/limb-attachment path rather than spawning or retaining the projectile here.
             projectileState.mToDelete = true;
         }
+        for (FalloutShellCasingState& casing : mFalloutShellCasings)
+        {
+            if (casing.mToDelete || casing.mSettled || casing.mProjectileId < 0)
+                continue;
+            MWPhysics::Projectile* projectile = mPhysics->getProjectile(casing.mProjectileId);
+            if (projectile == nullptr)
+            {
+                casing.mToDelete = true;
+                continue;
+            }
+            casing.mNode->setPosition(projectile->getSimulationPosition());
+            if (projectile->isActive())
+                continue;
+            casing.mNode->setPosition(Misc::Convert::toOsg(projectile->getHitPosition()));
+            mPhysics->removeProjectile(casing.mProjectileId);
+            casing.mProjectileId = -1;
+            casing.mSettled = true;
+        }
         const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
         for (auto& magicBoltState : mMagicBolts)
         {
@@ -1327,6 +1406,11 @@ namespace MWWorld
             if (tracer.mToDelete)
                 cleanupFalloutHitscanTracer(tracer);
         }
+        for (FalloutShellCasingState& casing : mFalloutShellCasings)
+        {
+            if (casing.mToDelete)
+                cleanupFalloutShellCasing(casing);
+        }
 
         for (auto& magicBoltState : mMagicBolts)
         {
@@ -1343,6 +1427,10 @@ namespace MWWorld
             std::remove_if(mFalloutHitscanTracers.begin(), mFalloutHitscanTracers.end(),
                 [](const State& state) { return state.mToDelete; }),
             mFalloutHitscanTracers.end());
+        mFalloutShellCasings.erase(
+            std::remove_if(mFalloutShellCasings.begin(), mFalloutShellCasings.end(),
+                [](const State& state) { return state.mToDelete; }),
+            mFalloutShellCasings.end());
         mMagicBolts.erase(
             std::remove_if(mMagicBolts.begin(), mMagicBolts.end(), [](const State& state) { return state.mToDelete; }),
             mMagicBolts.end());
@@ -1365,8 +1453,17 @@ namespace MWWorld
     void ProjectileManager::cleanupFalloutHitscanTracer(FalloutHitscanTracerState& state)
     {
         mParent->removeChild(state.mNode);
-        if (state.mImpactNode)
-            mParent->removeChild(state.mImpactNode);
+        state.mToDelete = true;
+    }
+
+    void ProjectileManager::cleanupFalloutShellCasing(FalloutShellCasingState& state)
+    {
+        mParent->removeChild(state.mNode);
+        if (state.mProjectileId >= 0)
+        {
+            mPhysics->removeProjectile(state.mProjectileId);
+            state.mProjectileId = -1;
+        }
         state.mToDelete = true;
     }
 
@@ -1394,6 +1491,10 @@ namespace MWWorld
         for (FalloutHitscanTracerState& tracer : mFalloutHitscanTracers)
             cleanupFalloutHitscanTracer(tracer);
         mFalloutHitscanTracers.clear();
+
+        for (FalloutShellCasingState& casing : mFalloutShellCasings)
+            cleanupFalloutShellCasing(casing);
+        mFalloutShellCasings.clear();
 
         for (auto& mMagicBolt : mMagicBolts)
             cleanupMagicBolt(mMagicBolt);

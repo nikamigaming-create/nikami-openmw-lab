@@ -2546,11 +2546,12 @@ namespace MWGui
         return false;
     }
 
-    bool WindowManager::handleFalloutPipBoyPhysicalControl(std::string_view control)
+    bool WindowManager::handleFalloutPipBoyPhysicalControl(std::string_view control, int direction)
     {
         if (!isFalloutContentLoaded() || !VR::getVR())
             return false;
 
+        direction = direction < 0 ? -1 : 1;
         int action = -1;
         if (Misc::StringUtils::ciEqual(control, "PipBoyButton01"))
             action = MWInput::A_QuickKey1; // STATUS
@@ -2559,16 +2560,34 @@ namespace MWGui
         else if (Misc::StringUtils::ciEqual(control, "PipBoyButton03"))
             action = MWInput::A_QuickKey3; // DATA
         else if (Misc::StringUtils::ciEqual(control, "TabKnob"))
-            action = MWInput::A_QuickKey4; // MAP
+        {
+            // The upper selector is a detented rotary control. Cycle through the four retail panes in their
+            // physical order, in either direction, and wrap at both ends.
+            static constexpr std::array<int, 4> paneOrder = { 3, 1, 2, 0 }; // STATUS, ITEMS, DATA, MAP
+            const int pane = getFalloutPipBoyActivePane();
+            const auto found = std::find(paneOrder.begin(), paneOrder.end(), pane);
+            const int current = found == paneOrder.end() ? 0 : static_cast<int>(found - paneOrder.begin());
+            const int next = (current + direction + static_cast<int>(paneOrder.size()))
+                % static_cast<int>(paneOrder.size());
+            static constexpr std::array<int, 4> paneActions = { MWInput::A_QuickKey1, MWInput::A_QuickKey2,
+                MWInput::A_QuickKey3, MWInput::A_QuickKey4 };
+            action = paneActions[next];
+        }
         else if (Misc::StringUtils::ciEqual(control, "ScrollKnob"))
-            action = MWInput::A_MoveBackward; // next visible row / map pan step
+        {
+            // The lower selector scrolls rows with wrap. On MAP it owns zoom, matching the visible rotary control
+            // instead of turning a click into a one-way pan step.
+            action = getFalloutPipBoyActivePane() == 0
+                ? (direction < 0 ? MWInput::A_ZoomIn : MWInput::A_ZoomOut)
+                : (direction < 0 ? MWInput::A_MoveForward : MWInput::A_MoveBackward);
+        }
         else
             return false;
 
         const bool handled = handleFalloutPipBoyAction(action);
         Log(handled ? Debug::Info : Debug::Error)
             << "FNV Pip-Boy physical ray click: control=" << control << " action=" << action
-            << " handled=" << handled << " pane=" << getFalloutPipBoyActivePane()
+            << " direction=" << direction << " handled=" << handled << " pane=" << getFalloutPipBoyActivePane()
             << " submenu=" << mFalloutPipBoySubmenu << " listOffset=" << mFalloutPipBoyListOffset;
         return handled;
     }
@@ -2675,7 +2694,8 @@ namespace MWGui
             }
             else if (pane == 2)
                 rowCount = dataRows[std::clamp(mFalloutPipBoySubmenu, 0, static_cast<int>(dataRows.size()) - 1)];
-            mFalloutPipBoyListOffset = std::clamp(mFalloutPipBoyListOffset + delta, 0, rowCount - 1);
+            mFalloutPipBoyListOffset
+                = (mFalloutPipBoyListOffset + delta + rowCount) % rowCount;
             changed = true;
         };
 

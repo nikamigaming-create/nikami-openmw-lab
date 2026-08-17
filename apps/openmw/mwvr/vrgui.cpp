@@ -1006,6 +1006,7 @@ namespace MWVR
     void VRGUIManager::updateFocus(osg::Node* focusNode, osg::Vec3f hitPoint)
     {
         mPipBoyPhysicalControl.clear();
+        mPipBoyPhysicalControlDirection = 0;
         if (FNVXRLiveFrameSurface::instance().visible())
         {
             setFocusLayer(nullptr);
@@ -1041,6 +1042,7 @@ namespace MWVR
     bool VRGUIManager::updatePipBoyFocus(const osg::Vec2f& rawTexCoord)
     {
         mPipBoyPhysicalControl.clear();
+        mPipBoyPhysicalControlDirection = 0;
         if (FNVXRLiveFrameSurface::instance().visible())
             return false;
 
@@ -1093,18 +1095,21 @@ namespace MWVR
         return true;
     }
 
-    bool VRGUIManager::updatePipBoyControlFocus(std::string_view control)
+    bool VRGUIManager::updatePipBoyControlFocus(std::string_view control, int direction)
     {
         if (FNVXRLiveFrameSurface::instance().visible() || control.empty())
             return false;
 
         setFocusLayer(nullptr);
         computeGuiCursor(osg::Vec3(0, 0, 0));
-        const bool changed = mPipBoyPhysicalControl != control;
+        direction = std::clamp(direction, -1, 1);
+        const bool changed = mPipBoyPhysicalControl != control || mPipBoyPhysicalControlDirection != direction;
         mPipBoyPhysicalControl = control;
+        mPipBoyPhysicalControlDirection = direction;
         MWBase::Environment::get().getWindowManager()->setCursorActive(true);
         if (changed)
-            Log(Debug::Info) << "FNV Pip-Boy physical ray focus: control=" << mPipBoyPhysicalControl;
+            Log(Debug::Info) << "FNV Pip-Boy physical ray focus: control=" << mPipBoyPhysicalControl
+                             << " direction=" << mPipBoyPhysicalControlDirection;
         return true;
     }
 
@@ -1169,7 +1174,7 @@ namespace MWVR
         // TODO: This relies on a MyGUI internal functions and may break un any future version.
         if (!mPipBoyPhysicalControl.empty())
             return MWBase::Environment::get().getWindowManager()->handleFalloutPipBoyPhysicalControl(
-                mPipBoyPhysicalControl);
+                mPipBoyPhysicalControl, mPipBoyPhysicalControlDirection);
         if (mFocusLayer && mFocusLayer->mLayerName == "PipBoyScreen")
         {
             MWBase::Environment::get().getWindowManager()->handleFalloutPipBoyPointerClick(

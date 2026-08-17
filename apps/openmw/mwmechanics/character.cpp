@@ -110,13 +110,70 @@
 #include <components/vr/session.hpp>
 //#include "../mwvr/vrutil.hpp"
 #include "../mwrender/npcanimation.hpp"
-#include "../mwvr/openxrinput.hpp"
 #include "../mwvr/vranimation.hpp"
 #include "../mwvr/vrinputmanager.hpp"
 //## VR_PATCH END
 
 namespace
 {
+    bool findExactDescendantPath(osg::Node* root, const osg::Node* target, osg::NodePath& path)
+    {
+        if (root == nullptr)
+            return false;
+        path.push_back(root);
+        if (root == target)
+            return true;
+        if (osg::Group* group = root->asGroup())
+        {
+            for (unsigned int index = 0; index < group->getNumChildren(); ++index)
+            {
+                if (findExactDescendantPath(group->getChild(index), target, path))
+                    return true;
+            }
+        }
+        path.pop_back();
+        return false;
+    }
+
+    std::optional<osg::Matrixf> resolveFalloutShellCasingFrame(
+        MWRender::Animation* visibleAnimation, bool vrPlayer)
+    {
+        osg::Node* const weaponPart
+            = visibleAnimation != nullptr ? visibleAnimation->getEquippedWeaponNode() : nullptr;
+        if (weaponPart == nullptr)
+            return std::nullopt;
+        SceneUtil::FindByNameVisitor shellNode("ShellCasingNode");
+        shellNode.setTraversalMask(~0u);
+        shellNode.setNodeMaskOverride(~0u);
+        weaponPart->accept(shellNode);
+        if (shellNode.mFoundNode == nullptr)
+            return std::nullopt;
+
+        if (vrPlayer)
+        {
+            const auto* const vrAnimation = dynamic_cast<const MWVR::VRAnimation*>(visibleAnimation);
+            const std::optional<MWVR::VRAnimation::FalloutVrNativeWeaponFrame> snapshot
+                = vrAnimation != nullptr ? vrAnimation->getFalloutVrNativeWeaponFrame() : std::nullopt;
+            if (!snapshot || snapshot->mWeaponPart != weaponPart || snapshot->mProductionRay == nullptr)
+                return std::nullopt;
+            osg::NodePath shellPath;
+            osg::NodePath rayPath;
+            if (!findExactDescendantPath(weaponPart, shellNode.mFoundNode, shellPath)
+                || !findExactDescendantPath(weaponPart, snapshot->mProductionRay, rayPath))
+                return std::nullopt;
+            osg::Matrixf rayToPartInverse;
+            if (!rayToPartInverse.invert(osg::computeLocalToWorld(rayPath)))
+                return std::nullopt;
+            return osg::Matrixf(osg::computeLocalToWorld(shellPath) * rayToPartInverse
+                * snapshot->mProductionRayWorld);
+        }
+
+        const osg::NodePathList paths = shellNode.mFoundNode->getParentalNodePaths();
+        if (paths.size() != 1)
+            return std::nullopt;
+        return osg::Matrixf(osg::computeLocalToWorld(paths.front()));
+    }
+
     float getFNVEnvFloat(std::string_view name, float fallback)
     {
         if (const char* value = std::getenv(std::string(name).c_str()))
@@ -2206,6 +2263,7 @@ namespace MWMechanics
     void CharacterController::detachAnimation()
     {
         mFalloutAttackDelivery = {};
+        mFalloutPendingShellCasings.clear();
         detachFalloutWeaponTextKeys();
         mFalloutWeaponAnimation = nullptr;
         if (mAnimation)
@@ -2299,6 +2357,26 @@ namespace MWMechanics
                 {
                     sndMgr->playSound3D(mPtr, sound, volume, pitch);
                 }
+            }
+            return;
+        }
+
+        if (evt == "eject")
+        {
+            const ESM::FormId equippedFalloutWeapon
+                = mFalloutWeapon != nullptr ? mFalloutWeapon->mId : ESM::FormId{};
+            const auto pending = std::find_if(mFalloutPendingShellCasings.begin(),
+                mFalloutPendingShellCasings.end(), [&](const FalloutPendingShellCasing& casing) {
+                    return casing.mWeapon == equippedFalloutWeapon && casing.mAnimationGroup == groupname;
+                });
+            if (pending != mFalloutPendingShellCasings.end())
+            {
+                const bool spawned = spawnFalloutShellCasing();
+                mFalloutPendingShellCasings.erase(pending);
+                Log(spawned ? Debug::Info : Debug::Warning)
+                    << "FNV shell casing authored eject: actor=" << mPtr.toString()
+                    << " weapon=" << ESM::RefId::formIdRefId(equippedFalloutWeapon)
+                    << " group=" << groupname << " spawned=" << spawned;
             }
             return;
         }
@@ -2562,6 +2640,7 @@ namespace MWMechanics
         MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
         const auto failVisualClosed = [&]() {
             mFalloutAttackDelivery = {};
+            mFalloutPendingShellCasings.clear();
             showFalloutWeapons(false);
             mUpperBodyState = UpperBodyState::None;
             mWeaponType = ESM::Weapon::None;
@@ -2707,6 +2786,7 @@ namespace MWMechanics
             }
             if (actionProgress == MWRender::FonvWeaponActionProgress::Interrupted)
             {
+                mFalloutPendingShellCasings.clear();
                 Log(Debug::Error) << "FNV mechanics exact weapon action was interrupted: actor=" << mPtr.toString()
                                   << " group=" << mCurrentWeapon;
                 const bool serviceQueuedReload
@@ -2730,6 +2810,7 @@ namespace MWMechanics
                 return true;
             }
             disableFalloutWeaponGroup(mCurrentWeapon);
+            mFalloutPendingShellCasings.clear();
             detachFalloutWeaponTextKeys();
             switch (mUpperBodyState)
             {
@@ -2841,6 +2922,7 @@ namespace MWMechanics
         if (triggerAttack && mUpperBodyState == UpperBodyState::WeaponEquipped && hitAllowsAttack)
         {
             mFalloutAttackDelivery = {};
+            mFalloutPendingShellCasings.clear();
             mAttackStrength = -1.f;
             mReadyToHit = false;
             mAttackSuccess = false;
@@ -2999,6 +3081,50 @@ namespace MWMechanics
             Log(Debug::Warning) << "FNV reload used gameplay fallback because the authored reload animation "
                                 << "could not be played: actor=" << mPtr.toString() << " weapon=" << weaponId;
         return true;
+    }
+
+    bool CharacterController::spawnFalloutShellCasing()
+    {
+        if (mFalloutWeapon == nullptr || mFalloutWeapon->mShellCasingModel.empty())
+            return false;
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return false;
+        const bool vrPlayer = mPtr == getPlayer() && VR::getVR();
+        const bool useFirstPerson = mPtr == getPlayer() && !vrPlayer && world->isFirstPerson();
+        MWRender::Animation* visibleAnimation
+            = vrPlayer ? world->getAnimation(mPtr) : getFalloutWeaponAnimation(useFirstPerson);
+        if (visibleAnimation == nullptr && !useFirstPerson)
+            visibleAnimation = getFalloutWeaponAnimation();
+        const std::optional<osg::Matrixf> frame
+            = resolveFalloutShellCasingFrame(visibleAnimation, vrPlayer);
+        if (!frame)
+        {
+            Log(Debug::Warning) << "FNV shell casing rejected: actor=" << mPtr.toString()
+                                << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                                << " reason=missing-exact-visible-ShellCasingNode-frame";
+            return false;
+        }
+        const VFS::Path::Normalized model = Misc::ResourceHelpers::correctMeshPath(
+            VFS::Path::Normalized(mFalloutWeapon->mShellCasingModel));
+        return world->launchFalloutShellCasing(mPtr, model, *frame);
+    }
+
+    bool CharacterController::queueOrSpawnFalloutShellCasing()
+    {
+        if (mFalloutWeapon == nullptr || mFalloutWeapon->mShellCasingModel.empty())
+            return false;
+        MWRender::Animation* actionAnimation = getFalloutWeaponAnimation();
+        if (actionAnimation != nullptr && !mCurrentWeapon.empty()
+            && actionAnimation->hasFutureTextKey(mCurrentWeapon, "eject"))
+        {
+            mFalloutPendingShellCasings.push_back({ mFalloutWeapon->mId, mCurrentWeapon });
+            Log(Debug::Info) << "FNV shell casing queued: actor=" << mPtr.toString()
+                             << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                             << " group=" << mCurrentWeapon << " timing=authored-eject";
+            return true;
+        }
+        return spawnFalloutShellCasing();
     }
 
     bool CharacterController::fireFalloutWeapon(const MWWorld::Ptr& vatsTarget,
@@ -3231,57 +3357,40 @@ namespace MWMechanics
         osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
         std::string_view shotOriginSource = "actor-head";
         std::optional<osg::Vec3f> vrWeaponRayDirection;
+        std::vector<osg::Matrix> vrWeaponEmissionFrames;
         if (mPtr == getPlayer() && !vatsAttack && VR::getVR())
         {
-            // The visible weapon and the real shot must consume the same immutable frame. For firearms this is the
-            // authored ProjectileNode; assets without one expose a native model-axis child through getWeaponTransform.
+            // The visible weapon and the real shot consume the same immutable frame. Firearms require a unique
+            // authored ProjectileNode (including canonical exporter spellings such as ##ProjectileNode); only
+            // melee/thrown families may publish a data-backed native family axis.
             osg::Node* const rayNode = MWVR::VRInputManager::instance().vrAimNode();
             if (rayNode != nullptr && rayNode->getName() != "Weapon Direction")
             {
-                const osg::NodePathList paths = rayNode->getParentalNodePaths();
-                if (!paths.empty())
+                if (const std::optional<osg::Matrix> rayWorld
+                    = MWVR::VRInputManager::instance().vrAimWorldMatrix())
                 {
-                    // Match the production VR pointer/world raycast, which consumes the first valid OSG render
-                    // path. Stereo/multi-root presentation can legitimately expose more than one root route to
-                    // the same rigid muzzle; that must not demote a valid ProjectileNode to the hand-aim fallback.
-                    const osg::Matrix rayWorld = osg::computeLocalToWorld(paths.front());
                     osg::Vec3f candidateDirection
-                        = osg::Matrix::transform3x3(osg::Vec3f(0.f, 1.f, 0.f), rayWorld);
+                        = osg::Matrix::transform3x3(osg::Vec3f(0.f, 1.f, 0.f), *rayWorld);
                     if (candidateDirection.normalize() != 0.f)
                     {
-                        origin = rayWorld.getTrans();
+                        origin = rayWorld->getTrans();
                         vrWeaponRayDirection = candidateDirection;
                         int projectileBacked = 0;
                         rayNode->getUserValue("openmwFalloutVrProjectileBackedRay", projectileBacked);
                         shotOriginSource = projectileBacked != 0
                             ? "vr-weapon-ProjectileNode" : "vr-weapon-native-axis";
+                        vrWeaponEmissionFrames
+                            = MWVR::VRInputManager::instance().vrAimWorldMatrices();
                     }
                 }
             }
             if (!vrWeaponRayDirection)
-            {
-                // Explicit degraded fallback only. Proof validation rejects this row for an equipped VR firearm.
-                const char* const aimSpaceName
-                    = VR::getLeftHandedMode() ? MWVR::OpenXRInput::LeftHandAim : MWVR::OpenXRInput::RightHandAim;
-                if (const std::shared_ptr<VR::Space> aimSpace
-                    = MWVR::OpenXRInput::instance().getSpace(aimSpaceName))
-                {
-                    const VR::TrackingPose tracked = aimSpace->locateInWorld();
-                    if (!!tracked.status)
-                    {
-                        osg::Vec3f candidateDirection
-                            = tracked.pose.orientation * osg::Vec3f(0.f, 1.f, 0.f);
-                        if (candidateDirection.normalize() != 0.f)
-                        {
-                            origin = tracked.pose.position.asMWUnits();
-                            vrWeaponRayDirection = candidateDirection;
-                            shotOriginSource = "vr-hand-aim-fallback";
-                            Log(Debug::Error) << "FNV VR weapon ray fallback: reason=missing-native-ray-node"
-                                              << " weapon=" << mFalloutWeapon->mEditorId;
-                        }
-                    }
-                }
-            }
+                return fail("missing-vr-weapon-production-ray");
+            if (vrWeaponEmissionFrames.empty())
+                return fail("missing-vr-weapon-emission-frame");
+            if (vrWeaponEmissionFrames.size() > 1
+                && vrWeaponEmissionFrames.size() != contract->mProjectileCount)
+                return fail("vr-weapon-emitter-projectile-count-mismatch");
         }
         if (mPtr == getPlayer() && !vatsAttack && !vrWeaponRayDirection && world->getCamera() != nullptr)
         {
@@ -3455,7 +3564,9 @@ namespace MWMechanics
         }
 
         std::vector<osg::Vec3f> rayDirections;
+        std::vector<osg::Vec3f> rayOrigins;
         rayDirections.reserve(contract->mProjectileCount);
+        rayOrigins.reserve(contract->mProjectileCount);
         const bool vatsCritical = vatsAttack && rangedDamage->mDamage > 0.f && critical->mChancePercent > 0.f
             && doesFalloutCriticalHit(critical->mChancePercent, Misc::Rng::rollProbability(prng));
         for (unsigned int ray = 0; ray < contract->mProjectileCount; ++ray)
@@ -3465,10 +3576,23 @@ namespace MWMechanics
             const float radius = Misc::Rng::rollProbability(prng);
             const float angle = 2.f * osg::PI * Misc::Rng::rollProbability(prng);
             const osg::Vec2f polarSample(radius * std::cos(angle), radius * std::sin(angle));
+            osg::Vec3f rayOrigin = origin;
+            osg::Vec3f rayBaseDirection = direction;
+            if (!vrWeaponEmissionFrames.empty())
+            {
+                const osg::Matrix& emission = vrWeaponEmissionFrames[
+                    vrWeaponEmissionFrames.size() == 1 ? 0 : ray];
+                rayOrigin = emission.getTrans();
+                rayBaseDirection
+                    = osg::Matrix::transform3x3(osg::Vec3f(0.f, 1.f, 0.f), emission);
+                if (rayBaseDirection.normalize() == 0.f)
+                    return fail("invalid-vr-weapon-emission-direction");
+            }
             const std::optional<osg::Vec3f> rayDirection
-                = buildFalloutRayDirection(direction, medianShotSpread, polarSample);
+                = buildFalloutRayDirection(rayBaseDirection, medianShotSpread, polarSample);
             if (!rayDirection)
                 return fail("invalid-ray-direction");
+            rayOrigins.push_back(rayOrigin);
             rayDirections.push_back(*rayDirection);
         }
 
@@ -3573,11 +3697,24 @@ namespace MWMechanics
         osg::Vec3f muzzlePosition = origin;
         osg::Quat muzzleOrientation;
         std::string muzzleNode = "actor-head";
+        const bool vrProductionMuzzle = mPtr == getPlayer() && !vatsAttack && VR::getVR()
+            && vrWeaponRayDirection.has_value();
         const bool firstPersonMuzzle = mPtr == getPlayer() && world->isFirstPerson();
         MWRender::Animation* muzzleAnimation
-            = firstPersonMuzzle ? getFalloutWeaponAnimation(true) : getFalloutWeaponAnimation();
+            = vrProductionMuzzle ? nullptr
+                                 : (firstPersonMuzzle ? getFalloutWeaponAnimation(true)
+                                                      : getFalloutWeaponAnimation());
         bool muzzleAnimationFallback = false;
-        if (muzzleAnimation == nullptr && firstPersonMuzzle)
+        if (vrProductionMuzzle)
+        {
+            // The real shot, visible muzzle flash, and any retail-authored tracer share one immutable VR emission
+            // frame.  Re-resolving ProjectileNode through a separate first-person render graph can select a
+            // different stereo/root route and visibly detach the flash from the barrel.
+            muzzlePosition = origin;
+            muzzleOrientation.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), *vrWeaponRayDirection);
+            muzzleNode = std::string(shotOriginSource);
+        }
+        else if (muzzleAnimation == nullptr && firstPersonMuzzle)
         {
             muzzleAnimation = getFalloutWeaponAnimation();
             muzzleAnimationFallback = muzzleAnimation != nullptr;
@@ -3586,11 +3723,15 @@ namespace MWMechanics
         {
             // Flat Fallout renders a dedicated first-person gun rig. Resolve the authored emission helper from
             // the rig the player can actually see; the hidden third-person weapon is in a different world pose.
-            SceneUtil::FindByNameVisitor projectileNode("ProjectileNode");
+            SceneUtil::FindUniqueBestByNameVisitor projectileNode("ProjectileNode");
             osg::Node* weaponRoot = muzzleAnimation->getEquippedWeaponNode();
             if (weaponRoot != nullptr)
+            {
+                projectileNode.setTraversalMask(~0u);
+                projectileNode.setNodeMaskOverride(~0u);
                 weaponRoot->accept(projectileNode);
-            const osg::Node* resolvedNode = projectileNode.mFoundNode;
+            }
+            const osg::Node* resolvedNode = projectileNode.getFoundNode();
             if (resolvedNode != nullptr)
                 muzzleNode = resolvedNode->getName();
             else
@@ -3613,11 +3754,23 @@ namespace MWMechanics
         if ((projectile->mData.flags & ESM4::Projectile::MuzzleFlash) != 0
             && !projectile->mMuzzleFlashModel.empty())
         {
-            world->spawnEffect(Misc::ResourceHelpers::correctMeshPath(
-                                   VFS::Path::Normalized(projectile->mMuzzleFlashModel)),
-                "", muzzlePosition, 1.f, false, false,
-                ESM::RefId(projectile->mData.muzzleFlashLight), muzzleOrientation,
-                projectile->mData.muzzleFlashDuration);
+            const VFS::Path::Normalized flashModel = Misc::ResourceHelpers::correctMeshPath(
+                VFS::Path::Normalized(projectile->mMuzzleFlashModel));
+            if (vrProductionMuzzle && vrWeaponEmissionFrames.size() > 1)
+            {
+                for (const osg::Matrix& emission : vrWeaponEmissionFrames)
+                {
+                    world->spawnEffect(flashModel, "", emission.getTrans(), 1.f, false, false,
+                        ESM::RefId(projectile->mData.muzzleFlashLight), emission.getRotate(),
+                        projectile->mData.muzzleFlashDuration);
+                }
+            }
+            else
+            {
+                world->spawnEffect(flashModel, "", muzzlePosition, 1.f, false, false,
+                    ESM::RefId(projectile->mData.muzzleFlashLight), muzzleOrientation,
+                    projectile->mData.muzzleFlashDuration);
+            }
             muzzleFlashSpawned = true;
         }
         Log(muzzleFlashSpawned ? Debug::Info : Debug::Warning)
@@ -3628,6 +3781,8 @@ namespace MWMechanics
             << " duration=" << projectile->mData.muzzleFlashDuration
             << " light=" << ESM::RefId::formIdRefId(projectile->mData.muzzleFlashLight)
             << " node=" << muzzleNode << " position=" << muzzlePosition
+            << " emitterCount=" << (vrProductionMuzzle ? vrWeaponEmissionFrames.size() : 1)
+            << " productionFrame=" << vrProductionMuzzle
             << " firstPersonRig=" << firstPersonMuzzle
             << " rigFallback=" << muzzleAnimationFallback << " spawned=" << muzzleFlashSpawned;
         if (contract->mConsumesWeapon && consumableAfter == 0 && mPtr.getType() == ESM::REC_NPC_4)
@@ -3666,8 +3821,10 @@ namespace MWMechanics
         unsigned int movingProjectiles = 0;
         unsigned int hitscanTracers = 0;
         std::vector<osg::Vec3f> impactExplosionPositions;
-        for (const osg::Vec3f& rayDirection : rayDirections)
+        for (std::size_t rayIndex = 0; rayIndex < rayDirections.size(); ++rayIndex)
         {
+            const osg::Vec3f& rayOrigin = rayOrigins[rayIndex];
+            const osg::Vec3f& rayDirection = rayDirections[rayIndex];
             bool criticalHit = false;
             if (rangedDamage->mDamage > 0.f && critical->mChancePercent > 0.f)
             {
@@ -3706,13 +3863,13 @@ namespace MWMechanics
                     impact.mVatsTargetHit = vatsTargetHit;
                 }
                 if (!world->launchFalloutProjectile(
-                        mPtr, contract->mProjectile, origin, rayDirection, impact))
+                        mPtr, contract->mProjectile, rayOrigin, rayDirection, impact))
                     return fail("moving-projectile-launch-failed");
                 ++movingProjectiles;
                 continue;
             }
 
-            const osg::Vec3f destination = origin + rayDirection * contract->mProjectileRange;
+            const osg::Vec3f destination = rayOrigin + rayDirection * contract->mProjectileRange;
             MWPhysics::RayCastingResult result;
             if (vatsAttack && vatsTargetHit)
             {
@@ -3731,16 +3888,17 @@ namespace MWMechanics
                 // non-solid to the shot, so a bystander between an NPC and its target could not intercept a pellet.
                 // V.A.T.S. successful rolls take the explicit authoritative branch above; all other rays must stop
                 // at the first world or actor contact.
-                result = rayCasting->castRay(origin, destination, { mPtr }, {},
+                result = rayCasting->castRay(rayOrigin, destination, { mPtr }, {},
                     MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
                 MWPhysics::RayCastingResult renderedHit;
                 if (world->castRenderingRay(
-                        renderedHit, origin, destination, false, false, renderingRayIgnore)
+                        renderedHit, rayOrigin, destination, false, false, renderingRayIgnore)
                     && !renderedHit.mHitObject.isEmpty() && renderedHit.mHitObject.getClass().isActor())
                 {
-                    const float renderedDistance = (renderedHit.mHitPos - origin).length2();
+                    const float renderedDistance = (renderedHit.mHitPos - rayOrigin).length2();
                     const float physicalDistance
-                        = result.mHit ? (result.mHitPos - origin).length2() : std::numeric_limits<float>::infinity();
+                        = result.mHit ? (result.mHitPos - rayOrigin).length2()
+                                      : std::numeric_limits<float>::infinity();
                     // Imported Fallout actors can have visible skinned geometry outside their coarse Bullet
                     // capsule. Accept the visible actor only when no nearer physical world/door collision blocks
                     // the ray; this preserves cover while making ordinary crosshair shots hit what is rendered.
@@ -3753,13 +3911,13 @@ namespace MWMechanics
             }
             const osg::Vec3f tracerDestination = result.mHit
                 ? result.mHitPos
-                : origin + rayDirection * std::min(contract->mProjectileRange, 5000.f);
+                : rayOrigin + rayDirection * std::min(contract->mProjectileRange, 5000.f);
             const osg::Vec3f impactNormal = result.mHit ? result.mHitNormal : osg::Vec3f();
             if (contract->mTracerChance > 0.f
                 && doesFalloutHitscanSpawnTracer(
                     contract->mTracerChance, Misc::Rng::rollProbability(prng))
                 && world->launchFalloutHitscanTracer(
-                    contract->mProjectile, muzzlePosition, tracerDestination, impactNormal))
+                    contract->mProjectile, rayOrigin, tracerDestination, impactNormal))
                 ++hitscanTracers;
             if (!result.mHit)
                 continue;
@@ -3785,7 +3943,8 @@ namespace MWMechanics
             {
                 MWPhysics::RayCastingResult renderedHit;
                 std::span<const std::string> renderedNodePath;
-                if (world->castRenderingRay(renderedHit, origin, destination, false, false, renderingRayIgnore)
+                if (world->castRenderingRay(
+                        renderedHit, rayOrigin, destination, false, false, renderingRayIgnore)
                     && renderedHit.mHitObject == result.mHitObject)
                     renderedNodePath = renderedHit.mHitNodePath;
                 bodyPart = resolveFalloutRayBodyPart(result.mHitObject, result.mHitPos, renderedNodePath);
@@ -3922,6 +4081,7 @@ namespace MWMechanics
                 MWClass::ESM4Npc::setEquippedWeapon(mPtr, nullptr);
         }
 
+        const bool shellCasingAccepted = queueOrSpawnFalloutShellCasing();
         Log(Debug::Info) << "FNV combat shot: actor=" << mPtr.toString()
                          << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
                          << " origin=" << origin
@@ -3969,6 +4129,7 @@ namespace MWMechanics
                          << " actorRayHits=" << actorRayHits
                          << " renderedActorFallbackHits=" << renderedActorFallbackHits
                          << " actorsHit=" << actorImpacts.size()
+                         << " shellCasingAccepted=" << shellCasingAccepted
                          << " vatsTarget=" << (vatsTarget.isEmpty() ? std::string("none") : vatsTarget.toString())
                          << " vatsHealthDamageMultiplier="
                          << (vatsAction != nullptr ? vatsAction->mHealthDamageMultiplier : 1.f)

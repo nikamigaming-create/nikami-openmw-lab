@@ -622,6 +622,8 @@ namespace MWWorld
         bool launchFalloutHitscanTracer(
             ESM::FormId projectile, const osg::Vec3f& origin, const osg::Vec3f& destination,
             const osg::Vec3f& impactNormal) override;
+        bool launchFalloutShellCasing(const MWWorld::Ptr& actor, VFS::Path::NormalizedView model,
+            const osg::Matrixf& ejectionFrame) override;
         std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor) override;
         unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) override;
         bool playFalloutImageSpaceModifier(ESM::FormId modifier, float strength) override;

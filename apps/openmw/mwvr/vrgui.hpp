@@ -165,7 +165,7 @@ namespace MWVR
         bool updatePipBoyFocus(const osg::Vec2f& rawTexCoord);
 
         /// Focus an authored Pip-Boy button/knob selected by the 3D ray.
-        bool updatePipBoyControlFocus(std::string_view control);
+        bool updatePipBoyControlFocus(std::string_view control, int direction);
 
         /// True if user is currently pointing at something
         bool hasFocus() const;
@@ -227,6 +227,7 @@ namespace MWVR
         osg::Vec2i mGuiCursor;
         osg::ref_ptr<VRGUILayer> mFocusLayer = nullptr;
         std::string mPipBoyPhysicalControl;
+        int mPipBoyPhysicalControlDirection = 0;
         bool mPipBoyInteractionActive = false;
         std::map<std::string, LayerConfig> mDefaultLayerConfigs;
 

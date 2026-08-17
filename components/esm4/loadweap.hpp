@@ -175,6 +175,8 @@ namespace ESM4
         std::string mEditorId;
         std::string mFullName;
         std::string mModel;
+        // FO3/FNV WEAP.MOD2 is the authored shell casing model.
+        std::string mShellCasingModel;
         // FO3/FNV WEAP.MOD4 is the camera-space weapon mesh used with the
         // _1stperson skeleton.  It is distinct from MODL, which remains the
         // third-person/world actor model.
