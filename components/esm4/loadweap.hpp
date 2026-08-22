@@ -80,9 +80,12 @@ namespace ESM4
         std::string mEditorId;
         std::string mFullName;
         ESM::Path mModel;
+        ESM::Path mWorldModel; // FO3/FNV dropped-world model (MOD4)
         std::string mText;
         std::string mIcon;
         std::string mMiniIcon;
+
+        ESM::FormId mFirstPersonModel; // First-person model object (WNAM)
 
         ESM::FormId mPickUpSound;
         ESM::FormId mDropSound;

@@ -82,6 +82,9 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("MODL"):
                 reader.getZString(mModel);
                 break;
+            case ESM::fourCC("MOD4"):
+                reader.getZString(mWorldModel);
+                break;
             case ESM::fourCC("ICON"):
                 reader.getZString(mIcon);
                 break;
@@ -109,6 +112,9 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("ZNAM"):
                 reader.getFormId(mDropSound);
                 break;
+            case ESM::fourCC("WNAM"):
+                reader.getFormId(mFirstPersonModel);
+                break;
             case ESM::fourCC("MODT"): // Model data
             case ESM::fourCC("MODC"):
             case ESM::fourCC("MODS"):
@@ -132,7 +138,6 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("UNAM"):
             case ESM::fourCC("VMAD"):
             case ESM::fourCC("VNAM"):
-            case ESM::fourCC("WNAM"):
             case ESM::fourCC("XNAM"): // Dawnguard only?
             case ESM::fourCC("NNAM"):
             case ESM::fourCC("NAM0"): // FO3
@@ -141,11 +146,10 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("MO2T"): // FO3
             case ESM::fourCC("MO2S"): // FO3
             case ESM::fourCC("NAM6"): // FO3
-            case ESM::fourCC("MOD4"): // First person model data
-            case ESM::fourCC("MO4T"):
+            case ESM::fourCC("MO4T"): // World model data
             case ESM::fourCC("MO4S"):
             case ESM::fourCC("MO4C"):
-            case ESM::fourCC("MO4F"): // First person model data end
+            case ESM::fourCC("MO4F"): // World model data end
             case ESM::fourCC("BIPL"): // FO3
             case ESM::fourCC("NAM7"): // FO3
             case ESM::fourCC("MOD3"): // FO3

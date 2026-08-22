@@ -70,6 +70,8 @@ file(GLOB UNITTEST_SRC_FILES
 
     esm4/includes.cpp
     esm4/testloadammo.cpp
+    esm4/testloadweap.cpp
+    esm4/testutil.hpp
 
     fx/lexer.cpp
     fx/technique.cpp
