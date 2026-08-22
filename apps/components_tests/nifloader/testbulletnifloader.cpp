@@ -408,6 +408,28 @@ namespace
             mBody.mRecordType = bodyType;
             mBody.mInfo.mRotation = osg::Quat();
             mBody.mInfo.mTranslation = osg::Vec4f();
+            mBody.mHavokFilter = { 1, 0, 0 };
+            mBody.mWorldObjectInfo.mPhaseType = Nif::BroadPhaseType::BroadPhase_Entity;
+            mBody.mWorldObjectInfo.mProperty = { 0, 0, 0 };
+            static_cast<Nif::bhkEntity&>(mBody).mInfo.mResponseType = Nif::HkResponseType::Response_SimpleContact;
+            static_cast<Nif::bhkEntity&>(mBody).mInfo.mProcessContactDelay = 0;
+            mBody.mInfo.mHavokFilter = { 1, 0, 0 };
+            mBody.mInfo.mResponseType = Nif::HkResponseType::Response_SimpleContact;
+            mBody.mInfo.mProcessContactDelay = 0;
+            mBody.mInfo.mFriction = 0.5f;
+            mBody.mInfo.mRollingFrictionMult = 0.f;
+            mBody.mInfo.mRestitution = 0.f;
+            mBody.mInfo.mPenetrationDepth = 0.f;
+            mBody.mInfo.mMotionType = Nif::HkMotionType::Motion_Fixed;
+            mBody.mInfo.mDeactivatorType = Nif::HkDeactivatorType::Deactivator_Never;
+            mBody.mInfo.mEnableDeactivation = false;
+            mBody.mInfo.mSolverDeactivation = Nif::HkSolverDeactivation::SolverDeactivation_Off;
+            mBody.mInfo.mQualityType = Nif::HkQualityType::Quality_Fixed;
+            mBody.mInfo.mAutoRemoveLevel = 0;
+            mBody.mInfo.mResponseModifierFlags = 0;
+            mBody.mInfo.mNumContactPointShapeKeys = 0;
+            mBody.mInfo.mForceCollidedOntoPPU = false;
+            mBody.mBodyFlags = 0;
             mShape.mRecordType = shapeType;
             mBody.mShape = Nif::bhkShapePtr(&mShape);
             mCollision.mBody = Nif::bhkWorldObjectPtr(&mBody);
@@ -749,6 +771,86 @@ namespace
         EXPECT_EQ(callback.mTriangleIndex, 1);
         EXPECT_EQ(result->getHavokMaterial(callback.mShapePart, callback.mTriangleIndex), 9u);
         EXPECT_NO_THROW(Resource::makeInstance(result));
+    }
+
+    TEST_F(TestBulletNifLoader, mergesEquivalentFixedPrimitiveCollisionBodies)
+    {
+        Nif::NiNode firstNode;
+        Nif::NiNode secondNode;
+        init(firstNode);
+        init(secondNode);
+        PrimitiveCollisionRecords<Nif::bhkBoxShape> first(Nif::RC_bhkBoxShape);
+        PrimitiveCollisionRecords<Nif::bhkBoxShape> second(Nif::RC_bhkBoxShape);
+        first.mShape.mHavokMaterial.mMaterial = 5;
+        first.mShape.mRadius = 0.1f;
+        first.mShape.mExtents = osg::Vec3f(1.f, 1.f, 1.f);
+        second.mShape.mHavokMaterial.mMaterial = 9;
+        second.mShape.mRadius = 0.1f;
+        second.mShape.mExtents = osg::Vec3f(1.f, 1.f, 1.f);
+        secondNode.mTransform.mTranslation = osg::Vec3f(10.f, 0.f, 0.f);
+        first.attach(firstNode);
+        second.attach(secondNode);
+
+        enableBethesdaCollision(mNiNode);
+        firstNode.mParents.push_back(&mNiNode);
+        secondNode.mParents.push_back(&mNiNode);
+        mNiNode.mChildren = { Nif::NiAVObjectPtr(&firstNode), Nif::NiAVObjectPtr(&secondNode) };
+
+        const auto result = loadFallout(mNiNode);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        const auto& compound = static_cast<const btCompoundShape&>(*result->mCollisionShape);
+        ASSERT_EQ(compound.getNumChildShapes(), 2);
+        EXPECT_EQ(result->getHavokMaterial(-1, 0), 5u);
+        EXPECT_EQ(result->getHavokMaterial(-1, 1), 9u);
+        EXPECT_FALSE(result->getHavokMaterial(-1, -1).has_value());
+
+        btCollisionObject object;
+        object.setCollisionShape(result->mCollisionShape.get());
+        const btVector3 rayFrom(10.f, 0.f, 10.f);
+        const btVector3 rayTo(10.f, 0.f, -10.f);
+        ClosestRayResultWithIdentity callback(rayFrom, rayTo);
+        btTransform fromTransform = btTransform::getIdentity();
+        btTransform toTransform = btTransform::getIdentity();
+        fromTransform.setOrigin(rayFrom);
+        toTransform.setOrigin(rayTo);
+        btCollisionWorld::rayTestSingle(
+            fromTransform, toTransform, &object, result->mCollisionShape.get(), btTransform::getIdentity(), callback);
+        ASSERT_TRUE(callback.hasHit());
+        EXPECT_EQ(callback.mShapePart, -1);
+        EXPECT_EQ(callback.mTriangleIndex, 1);
+        EXPECT_EQ(result->getHavokMaterial(callback.mShapePart, callback.mTriangleIndex), 9u);
+    }
+
+    TEST_F(TestBulletNifLoader, fallsBackForHeterogeneousPrimitiveCollisionBodies)
+    {
+        Nif::NiNode firstNode;
+        Nif::NiNode secondNode;
+        init(firstNode);
+        init(secondNode);
+        PrimitiveCollisionRecords<Nif::bhkBoxShape> first(Nif::RC_bhkBoxShape);
+        PrimitiveCollisionRecords<Nif::bhkBoxShape> second(Nif::RC_bhkBoxShape);
+        first.mShape.mRadius = 0.1f;
+        first.mShape.mExtents = osg::Vec3f(1.f, 1.f, 1.f);
+        second.mShape.mRadius = 0.1f;
+        second.mShape.mExtents = osg::Vec3f(1.f, 1.f, 1.f);
+        second.mBody.mHavokFilter.mLayer = 3;
+        second.mBody.mInfo.mHavokFilter.mLayer = 3;
+        first.attach(firstNode);
+        second.attach(secondNode);
+
+        enableBethesdaCollision(mNiNode);
+        firstNode.mParents.push_back(&mNiNode);
+        secondNode.mParents.push_back(&mNiNode);
+        mNiTriShape.mParents.push_back(&mNiNode);
+        mNiNode.mChildren
+            = { Nif::NiAVObjectPtr(&firstNode), Nif::NiAVObjectPtr(&secondNode), Nif::NiAVObjectPtr(&mNiTriShape) };
+
+        const auto result = loadFallout(mNiNode);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        EXPECT_TRUE(result->mCollisionShape->isCompound());
+        EXPECT_TRUE(result->mCollisionShapeMaterials.empty());
     }
 
     TEST_F(TestBulletNifLoader, loadsFalloutPackedCollisionWithSubshapeMaterials)

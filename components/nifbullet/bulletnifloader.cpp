@@ -83,7 +83,7 @@ namespace
         return { filter.mLayer, filter.mFlags, filter.mGroup };
     }
 
-    struct PackedCollisionSemantics
+    struct CollisionSemantics
     {
         Nif::HkMotionType mMotionType = Nif::HkMotionType::Motion_Invalid;
         std::uint16_t mCollisionFlags = 0;
@@ -112,13 +112,13 @@ namespace
         std::uint32_t mBodyFlags = 0;
         std::set<HavokFilterKey> mSubshapeFilters;
 
-        bool operator==(const PackedCollisionSemantics&) const = default;
+        bool operator==(const CollisionSemantics&) const = default;
     };
 
     struct PackedCollisionData
     {
         std::vector<TriangleMeshPart> mParts;
-        PackedCollisionSemantics mSemantics;
+        CollisionSemantics mSemantics;
         bool mAnimated = false;
         int mRecordIndex = -1;
         osg::Matrixf mNodeTransform = osg::Matrixf::identity();
@@ -130,9 +130,44 @@ namespace
         osg::Matrixf mLocalTransform = osg::Matrixf::identity();
         osg::Matrixf mNodeTransform = osg::Matrixf::identity();
         Resource::CollisionShapeMaterialTable mMaterials;
+        CollisionSemantics mSemantics;
         bool mAnimated = false;
         int mRecordIndex = -1;
     };
+
+    CollisionSemantics getCollisionSemantics(const Nif::bhkRigidBody& body, const Nif::bhkCollisionObject& collision,
+        std::set<HavokFilterKey> subshapeFilters)
+    {
+        const Nif::bhkEntity& entity = body;
+        return {
+            .mMotionType = body.mInfo.mMotionType,
+            .mCollisionFlags = collision.mFlags,
+            .mWorldFilter = getFilterKey(body.mHavokFilter),
+            .mBroadPhaseType = body.mWorldObjectInfo.mPhaseType,
+            .mWorldPropertyData = body.mWorldObjectInfo.mProperty.mData,
+            .mWorldPropertySize = body.mWorldObjectInfo.mProperty.mSize,
+            .mWorldPropertyCapacityAndFlags = body.mWorldObjectInfo.mProperty.mCapacityAndFlags,
+            .mEntityResponseType = entity.mInfo.mResponseType,
+            .mEntityProcessContactDelay = entity.mInfo.mProcessContactDelay,
+            .mBodyFilter = getFilterKey(body.mInfo.mHavokFilter),
+            .mBodyResponseType = body.mInfo.mResponseType,
+            .mBodyProcessContactDelay = body.mInfo.mProcessContactDelay,
+            .mFriction = body.mInfo.mFriction,
+            .mRollingFrictionMultiplier = body.mInfo.mRollingFrictionMult,
+            .mRestitution = body.mInfo.mRestitution,
+            .mPenetrationDepth = body.mInfo.mPenetrationDepth,
+            .mDeactivatorType = body.mInfo.mDeactivatorType,
+            .mEnableDeactivation = body.mInfo.mEnableDeactivation,
+            .mSolverDeactivation = body.mInfo.mSolverDeactivation,
+            .mQualityType = body.mInfo.mQualityType,
+            .mAutoRemoveLevel = body.mInfo.mAutoRemoveLevel,
+            .mResponseModifierFlags = body.mInfo.mResponseModifierFlags,
+            .mNumContactPointShapeKeys = body.mInfo.mNumContactPointShapeKeys,
+            .mForceCollidedOntoPPU = body.mInfo.mForceCollidedOntoPPU,
+            .mBodyFlags = body.mBodyFlags,
+            .mSubshapeFilters = std::move(subshapeFilters),
+        };
+    }
 
     struct SubshapeRange
     {
@@ -232,35 +267,7 @@ namespace
             subshapeFilters.emplace(
                 subshape.mHavokFilter.mLayer, subshape.mHavokFilter.mFlags, subshape.mHavokFilter.mGroup);
 
-        const Nif::bhkEntity& entity = body;
-        PackedCollisionSemantics semantics{
-            .mMotionType = body.mInfo.mMotionType,
-            .mCollisionFlags = collision.mFlags,
-            .mWorldFilter = getFilterKey(body.mHavokFilter),
-            .mBroadPhaseType = body.mWorldObjectInfo.mPhaseType,
-            .mWorldPropertyData = body.mWorldObjectInfo.mProperty.mData,
-            .mWorldPropertySize = body.mWorldObjectInfo.mProperty.mSize,
-            .mWorldPropertyCapacityAndFlags = body.mWorldObjectInfo.mProperty.mCapacityAndFlags,
-            .mEntityResponseType = entity.mInfo.mResponseType,
-            .mEntityProcessContactDelay = entity.mInfo.mProcessContactDelay,
-            .mBodyFilter = getFilterKey(body.mInfo.mHavokFilter),
-            .mBodyResponseType = body.mInfo.mResponseType,
-            .mBodyProcessContactDelay = body.mInfo.mProcessContactDelay,
-            .mFriction = body.mInfo.mFriction,
-            .mRollingFrictionMultiplier = body.mInfo.mRollingFrictionMult,
-            .mRestitution = body.mInfo.mRestitution,
-            .mPenetrationDepth = body.mInfo.mPenetrationDepth,
-            .mDeactivatorType = body.mInfo.mDeactivatorType,
-            .mEnableDeactivation = body.mInfo.mEnableDeactivation,
-            .mSolverDeactivation = body.mInfo.mSolverDeactivation,
-            .mQualityType = body.mInfo.mQualityType,
-            .mAutoRemoveLevel = body.mInfo.mAutoRemoveLevel,
-            .mResponseModifierFlags = body.mInfo.mResponseModifierFlags,
-            .mNumContactPointShapeKeys = body.mInfo.mNumContactPointShapeKeys,
-            .mForceCollidedOntoPPU = body.mInfo.mForceCollidedOntoPPU,
-            .mBodyFlags = body.mBodyFlags,
-            .mSubshapeFilters = std::move(subshapeFilters),
-        };
+        CollisionSemantics semantics = getCollisionSemantics(body, collision, std::move(subshapeFilters));
         return PackedCollisionData{ std::move(parts), std::move(semantics) };
     }
 
@@ -396,6 +403,7 @@ namespace
         Resource::CollisionShapePtr mShape;
         osg::Matrixf mTransform = osg::Matrixf::identity();
         Resource::CollisionShapeMaterialTable mMaterials;
+        std::set<HavokFilterKey> mChildFilters;
     };
 
     struct ShapeStackGuard
@@ -443,9 +451,12 @@ namespace
             if (list->mSubshapes.empty()
                 || list->mSubshapes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
                 return std::nullopt;
+            if (!list->mHavokFilters.empty() && list->mHavokFilters.size() != list->mSubshapes.size())
+                return std::nullopt;
 
             auto compound = std::make_unique<btCompoundShape>();
             Resource::CollisionShapeMaterialTable materials;
+            std::set<HavokFilterKey> childFilters;
             std::optional<std::uint32_t> uniformMaterial;
             bool hasUniformMaterial = true;
             for (const Nif::bhkShapePtr& subshape : list->mSubshapes)
@@ -455,6 +466,7 @@ namespace
                 auto child = makePrimitiveShape(subshape.get(), stack);
                 if (!child)
                     return std::nullopt;
+                childFilters.insert(child->mChildFilters.begin(), child->mChildFilters.end());
                 const std::optional<std::uint32_t> material = child->mMaterials.getMaterial(-1, -1);
                 if (!material)
                     return std::nullopt;
@@ -470,12 +482,17 @@ namespace
                 else if (*uniformMaterial != *material)
                     hasUniformMaterial = false;
             }
+            for (const Nif::HavokFilter& filter : list->mHavokFilters)
+                childFilters.insert(getFilterKey(filter));
+            if (childFilters.size() > 1)
+                return std::nullopt;
             if (uniformMaterial && hasUniformMaterial && !materials.addUniformMaterial(*uniformMaterial))
                 return std::nullopt;
 
             PrimitiveShapeData result;
             result.mShape.reset(compound.release());
             result.mMaterials = std::move(materials);
+            result.mChildFilters = std::move(childFilters);
             return result;
         }
 
@@ -592,6 +609,7 @@ namespace
         result.mLocalTransform = primitive->mTransform;
         result.mNodeTransform = getNodeTransform(node, parent);
         result.mMaterials = std::move(primitive->mMaterials);
+        result.mSemantics = getCollisionSemantics(*body, *collision, std::move(primitive->mChildFilters));
         result.mAnimated = animated;
         if (animated)
         {
@@ -600,6 +618,51 @@ namespace
             result.mRecordIndex = static_cast<int>(node.mRecordIndex);
         }
         return result;
+    }
+
+    bool canMergePrimitiveCollisions(const std::vector<PrimitiveCollisionData>& collisions)
+    {
+        if (collisions.size() < 2 || collisions.front().mAnimated
+            || collisions.front().mSemantics.mMotionType != Nif::HkMotionType::Motion_Fixed
+            || collisions.front().mSemantics.mSubshapeFilters.size() > 1)
+            return false;
+        return std::ranges::all_of(collisions, [&](const PrimitiveCollisionData& collision) {
+            return !collision.mAnimated && !collision.mShape->isCompound()
+                && collision.mSemantics == collisions.front().mSemantics
+                && collision.mMaterials.getMaterial(-1, -1).has_value();
+        });
+    }
+
+    std::optional<PackedCollision> makeMergedPrimitiveCollision(std::vector<PrimitiveCollisionData> collisions)
+    {
+        if (!canMergePrimitiveCollisions(collisions)
+            || collisions.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+            return std::nullopt;
+
+        auto compound = std::make_unique<btCompoundShape>();
+        Resource::CollisionShapeMaterialTable materials;
+        std::optional<std::uint32_t> uniformMaterial;
+        bool hasUniformMaterial = true;
+        for (PrimitiveCollisionData& collision : collisions)
+        {
+            collision.mLocalTransform *= collision.mNodeTransform;
+            const BulletTransform transform = decomposeTransform(collision.mLocalTransform);
+            collision.mShape->setLocalScaling(transform.mScale);
+            const int childIndex = compound->getNumChildShapes();
+            compound->addChildShape(transform.mRigidTransform, collision.mShape.release());
+
+            const std::uint32_t material = *collision.mMaterials.getMaterial(-1, -1);
+            if (!materials.addCompoundChildMaterial(childIndex, material))
+                return std::nullopt;
+            if (!uniformMaterial)
+                uniformMaterial = material;
+            else if (*uniformMaterial != material)
+                hasUniformMaterial = false;
+        }
+        if (uniformMaterial && hasUniformMaterial && !materials.addUniformMaterial(*uniformMaterial))
+            return std::nullopt;
+
+        return PackedCollision{ Resource::CollisionShapePtr(compound.release()), std::move(materials) };
     }
 
     std::optional<PackedCollisionData> loadPackedCollisionData(
@@ -661,7 +724,7 @@ namespace
     struct PackedCollisionSearch
     {
         std::vector<PackedCollisionData> mCollisions;
-        std::optional<PrimitiveCollisionData> mPrimitive;
+        std::vector<PrimitiveCollisionData> mPrimitives;
         bool mRejected = false;
     };
 
@@ -683,7 +746,7 @@ namespace
             }
             if (auto collision = loadPackedCollisionData(node, parent, animated))
             {
-                if (result.mPrimitive)
+                if (!result.mPrimitives.empty())
                 {
                     result.mRejected = true;
                     return;
@@ -692,12 +755,12 @@ namespace
             }
             else if (auto primitive = loadPrimitiveCollisionData(node, parent, animated))
             {
-                if (result.mPrimitive || !result.mCollisions.empty())
+                if (!result.mCollisions.empty())
                 {
                     result.mRejected = true;
                     return;
                 }
-                result.mPrimitive = std::move(primitive);
+                result.mPrimitives.push_back(std::move(*primitive));
             }
             else
             {
@@ -789,9 +852,10 @@ namespace NifBullet
                 if (search.mRejected)
                     break;
             }
-            if (foundCollisionRoot && !search.mRejected && search.mPrimitive && search.mCollisions.empty())
+            if (foundCollisionRoot && !search.mRejected && search.mPrimitives.size() == 1
+                && search.mCollisions.empty())
             {
-                PrimitiveCollisionData primitive = std::move(*search.mPrimitive);
+                PrimitiveCollisionData primitive = std::move(search.mPrimitives.front());
                 if (!primitive.mMaterials.empty())
                 {
                     if (primitive.mAnimated)
@@ -833,6 +897,16 @@ namespace NifBullet
                         mShape->mCollisionShape.reset(compound.release());
                     }
                     mShape->mCollisionShapeMaterials = std::move(primitive.mMaterials);
+                    return mShape;
+                }
+            }
+            if (foundCollisionRoot && !search.mRejected && search.mCollisions.empty()
+                && canMergePrimitiveCollisions(search.mPrimitives))
+            {
+                if (auto collision = makeMergedPrimitiveCollision(std::move(search.mPrimitives)))
+                {
+                    mShape->mCollisionShape = std::move(collision->mShape);
+                    mShape->mCollisionShapeMaterials = std::move(collision->mMaterials);
                     return mShape;
                 }
             }
