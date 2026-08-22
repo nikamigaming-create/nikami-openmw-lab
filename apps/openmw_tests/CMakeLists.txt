@@ -17,6 +17,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwgui/tooltips.cpp
     mwgui/weightedsearch.cpp
 
+    mwphysics/testclosestconvexresultcallback.cpp
     mwphysics/testclosestnotmerayresultcallback.cpp
 
     mwscript/testscripts.cpp

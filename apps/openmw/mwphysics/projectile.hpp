@@ -37,6 +37,7 @@ namespace MWPhysics
         bool isActive() const { return mActive.load(std::memory_order_acquire); }
 
         MWWorld::Ptr getTarget() const;
+        std::optional<std::uint32_t> getHitHavokMaterial() const;
 
         MWWorld::Ptr getCaster() const;
         void setCaster(const MWWorld::Ptr& caster);
@@ -46,7 +47,8 @@ namespace MWPhysics
 
         bool getHitWater() const { return mHitWater; }
 
-        void hit(const btCollisionObject* target, btVector3 pos, btVector3 normal);
+        void hit(const btCollisionObject* target, btVector3 pos, btVector3 normal, int shapePart = -1,
+            int triangleIndex = -1);
 
         void setValidTargets(const std::vector<MWWorld::Ptr>& targets);
         bool isValidTarget(const btCollisionObject* target) const;
@@ -64,6 +66,8 @@ namespace MWPhysics
         const btCollisionObject* mHitTarget;
         btVector3 mHitPosition;
         btVector3 mHitNormal;
+        int mHitShapePart = -1;
+        int mHitTriangleIndex = -1;
 
         std::vector<const btCollisionObject*> mValidTargets;
 

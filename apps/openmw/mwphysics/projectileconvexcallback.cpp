@@ -41,7 +41,14 @@ namespace MWPhysics
                 break;
             }
         }
-        mProjectile.hit(hitObject, m_hitPointWorld, m_hitNormalWorld);
+        int shapePart = -1;
+        int triangleIndex = -1;
+        if (result.m_localShapeInfo != nullptr)
+        {
+            shapePart = result.m_localShapeInfo->m_shapePart;
+            triangleIndex = result.m_localShapeInfo->m_triangleIndex;
+        }
+        mProjectile.hit(hitObject, m_hitPointWorld, m_hitNormalWorld, shapePart, triangleIndex);
 
         return result.m_hitFraction;
     }

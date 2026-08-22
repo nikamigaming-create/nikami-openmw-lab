@@ -57,14 +57,18 @@ namespace MWPhysics
         mCollisionObject->setWorldTransform(trans);
     }
 
-    void Projectile::hit(const btCollisionObject* target, btVector3 pos, btVector3 normal)
+    void Projectile::hit(
+        const btCollisionObject* target, btVector3 pos, btVector3 normal, int shapePart, int triangleIndex)
     {
-        bool active = true;
-        if (!mActive.compare_exchange_strong(active, false, std::memory_order_relaxed) || !active)
+        std::scoped_lock lock(mMutex);
+        if (!mActive.load(std::memory_order_relaxed))
             return;
         mHitTarget = target;
         mHitPosition = pos;
         mHitNormal = normal;
+        mHitShapePart = shapePart;
+        mHitTriangleIndex = triangleIndex;
+        mActive.store(false, std::memory_order_release);
     }
 
     MWWorld::Ptr Projectile::getTarget() const
@@ -72,6 +76,13 @@ namespace MWPhysics
         assert(!mActive);
         auto* target = static_cast<PtrHolder*>(mHitTarget->getUserPointer());
         return target ? target->getPtr() : MWWorld::Ptr();
+    }
+
+    std::optional<std::uint32_t> Projectile::getHitHavokMaterial() const
+    {
+        assert(!mActive);
+        const auto* target = static_cast<const PtrHolder*>(mHitTarget->getUserPointer());
+        return target != nullptr ? target->getHavokMaterial(mHitShapePart, mHitTriangleIndex) : std::nullopt;
     }
 
     MWWorld::Ptr Projectile::getCaster() const

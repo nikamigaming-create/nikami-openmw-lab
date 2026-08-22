@@ -47,6 +47,7 @@
 #include "actor.hpp"
 #include "collisiontype.hpp"
 
+#include "closestconvexresultcallback.hpp"
 #include "closestnotmerayresultcallback.hpp"
 #include "contacttestresultcallback.hpp"
 #include "hasspherecollisioncallback.hpp"
@@ -260,8 +261,7 @@ namespace MWPhysics
     RayCastingResult PhysicsSystem::castSphere(
         const osg::Vec3f& from, const osg::Vec3f& to, float radius, int mask, int group) const
     {
-        btCollisionWorld::ClosestConvexResultCallback callback(
-            Misc::Convert::toBullet(from), Misc::Convert::toBullet(to));
+        ClosestConvexResultCallback callback(Misc::Convert::toBullet(from), Misc::Convert::toBullet(to));
         callback.m_collisionFilterGroup = group;
         callback.m_collisionFilterMask = mask;
 
@@ -277,8 +277,14 @@ namespace MWPhysics
         {
             result.mHitPos = Misc::Convert::toOsg(callback.m_hitPointWorld);
             result.mHitNormal = Misc::Convert::toOsg(callback.m_hitNormalWorld);
+            result.mHitShapePart = callback.getHitShapePart();
+            result.mHitTriangleIndex = callback.getHitTriangleIndex();
             if (auto* ptrHolder = static_cast<PtrHolder*>(callback.m_hitCollisionObject->getUserPointer()))
+            {
                 result.mHitObject = ptrHolder->getPtr();
+                result.mHitHavokMaterial
+                    = ptrHolder->getHavokMaterial(result.mHitShapePart, result.mHitTriangleIndex);
+            }
         }
         return result;
     }
