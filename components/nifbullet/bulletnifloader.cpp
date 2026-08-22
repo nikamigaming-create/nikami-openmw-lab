@@ -18,6 +18,7 @@
 #include <components/files/conversion.hpp>
 #include <components/misc/convert.hpp>
 #include <components/misc/strings/algorithm.hpp>
+#include <components/nif/data.hpp>
 #include <components/nif/extra.hpp>
 #include <components/nif/nifstream.hpp>
 #include <components/nif/node.hpp>
@@ -28,6 +29,7 @@
 #include <BulletCollision/CollisionShapes/btCapsuleShape.h>
 #include <BulletCollision/CollisionShapes/btConvexHullShape.h>
 #include <BulletCollision/CollisionShapes/btSphereShape.h>
+#include <BulletCollision/CollisionShapes/btTriangleMesh.h>
 #include <BulletCollision/CollisionShapes/btTriangleIndexVertexArray.h>
 
 namespace
@@ -493,6 +495,68 @@ namespace
             result.mShape.reset(compound.release());
             result.mMaterials = std::move(materials);
             result.mChildFilters = std::move(childFilters);
+            return result;
+        }
+
+        if (const auto* stripsShape = dynamic_cast<const Nif::bhkNiTriStripsShape*>(&source))
+        {
+            if (stripsShape->mData.empty()
+                || !std::ranges::equal(stripsShape->mScale._v, std::array{ 1.f, 1.f, 1.f, 0.f }))
+                return std::nullopt;
+
+            std::size_t totalVertices = 0;
+            for (const auto& data : stripsShape->mData)
+            {
+                if (data.empty() || data->mVertices.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())
+                    || data->mVertices.size()
+                        > static_cast<std::size_t>(std::numeric_limits<int>::max()) - totalVertices)
+                    return std::nullopt;
+                totalVertices += data->mVertices.size();
+            }
+            if (totalVertices == 0)
+                return std::nullopt;
+            auto mesh = std::make_unique<btTriangleMesh>();
+            mesh->preallocateVertices(static_cast<int>(totalVertices));
+            int baseVertex = 0;
+            for (const auto& dataPtr : stripsShape->mData)
+            {
+                const Nif::NiTriStripsData& data = dataPtr.get();
+                for (const osg::Vec3f& vertex : data.mVertices)
+                {
+                    if (!isFinite(vertex))
+                        return std::nullopt;
+                    mesh->findOrAddVertex(Misc::Convert::toBullet(vertex), false);
+                }
+                for (const std::vector<unsigned short>& strip : data.mStrips)
+                {
+                    if (strip.size() < 3 || std::ranges::any_of(strip, [&](unsigned short index) {
+                            return index >= data.mVertices.size();
+                        }))
+                        continue;
+                    unsigned short second = strip[0];
+                    unsigned short third = strip[1];
+                    for (std::size_t index = 2; index < strip.size(); ++index)
+                    {
+                        const unsigned short first = second;
+                        second = third;
+                        third = strip[index];
+                        if (first == second || second == third || first == third)
+                            continue;
+                        if (index % 2 == 0)
+                            mesh->addTriangleIndices(baseVertex + first, baseVertex + second, baseVertex + third);
+                        else
+                            mesh->addTriangleIndices(baseVertex + first, baseVertex + third, baseVertex + second);
+                    }
+                }
+                baseVertex += static_cast<int>(data.mVertices.size());
+            }
+            if (mesh->getNumTriangles() == 0)
+                return std::nullopt;
+
+            PrimitiveShapeData result;
+            result.mShape.reset(new Resource::TriangleMeshShape(mesh.release(), true));
+            if (!result.mMaterials.addUniformMaterial(stripsShape->mHavokMaterial.mMaterial & 0x1f))
+                return std::nullopt;
             return result;
         }
 

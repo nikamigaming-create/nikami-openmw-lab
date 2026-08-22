@@ -717,6 +717,45 @@ namespace
         EXPECT_NO_THROW(Resource::makeInstance(result));
     }
 
+    TEST_F(TestBulletNifLoader, loadsAnimatedFalloutNiTriStripsCollisionInSceneUnits)
+    {
+        PrimitiveCollisionRecords<Nif::bhkNiTriStripsShape> collision(Nif::RC_bhkNiTriStripsShape);
+        Nif::bhkMoppBvTreeShape mopp;
+        Nif::NiTriStripsData secondData;
+        mopp.mRecordType = Nif::RC_bhkMoppBvTreeShape;
+        mopp.mShape = Nif::bhkShapePtr(&collision.mShape);
+        collision.mBody.mShape = Nif::bhkShapePtr(&mopp);
+        collision.mShape.mHavokMaterial.mMaterial = 7;
+        collision.mShape.mScale = osg::Vec4f(1.f, 1.f, 1.f, 0.f);
+        secondData.mRecordType = Nif::RC_NiTriStripsData;
+        secondData.mVertices = { osg::Vec3f(0.f, 0.f, 1.f), osg::Vec3f(1.f, 0.f, 1.f), osg::Vec3f(1.f, 1.f, 1.f) };
+        secondData.mNumTriangles = 1;
+        secondData.mStrips = { { 0, 1, 2 } };
+        collision.mShape.mData = { Nif::RecordPtrT<Nif::NiTriStripsData>(&mNiTriStripsData),
+            Nif::RecordPtrT<Nif::NiTriStripsData>(&secondData) };
+        collision.attach(mNiNode);
+        mNiNode.mRecordIndex = 45;
+        mController.mRecordType = Nif::RC_NiKeyframeController;
+        mController.mFlags = Nif::NiTimeController::Flag_Active;
+        mNiNode.mController = Nif::NiTimeControllerPtr(&mController);
+        enableBethesdaCollision(mNiNode);
+
+        const auto result = loadFallout(mNiNode);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        const auto& compound = static_cast<const btCompoundShape&>(*result->mCollisionShape);
+        ASSERT_EQ(compound.getNumChildShapes(), 1);
+        const auto& local = static_cast<const btCompoundShape&>(*compound.getChildShape(0));
+        ASSERT_EQ(local.getNumChildShapes(), 1);
+        ASSERT_EQ(local.getChildShape(0)->getShapeType(), TRIANGLE_MESH_SHAPE_PROXYTYPE);
+        const auto& triangles = static_cast<const btBvhTriangleMeshShape&>(*local.getChildShape(0));
+        EXPECT_THAT(getTriangles(triangles), Contains(btVector3(1.f, 1.f, 0.f)));
+        EXPECT_THAT(getTriangles(triangles), Contains(btVector3(1.f, 1.f, 1.f)));
+        EXPECT_THAT(getTriangles(triangles), Not(Contains(btVector3(7.f, 7.f, 0.f))));
+        EXPECT_EQ(result->mAnimatedShapes, (std::map<int, int>{ { 45, 0 } }));
+        EXPECT_EQ(result->getHavokMaterial(-1, -1), 7u);
+    }
+
     TEST_F(TestBulletNifLoader, loadsFalloutListCollisionWithChildMaterials)
     {
         PrimitiveCollisionRecords<Nif::bhkListShape> collision(Nif::RC_bhkListShape);
