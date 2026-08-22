@@ -352,6 +352,28 @@ namespace
             mData.mRecordType = Nif::RC_hkPackedNiTriStripsData;
             mBody.mInfo.mRotation = osg::Quat();
             mBody.mInfo.mTranslation = osg::Vec4f();
+            mBody.mHavokFilter = { 1, 0, 0 };
+            mBody.mWorldObjectInfo.mPhaseType = Nif::BroadPhaseType::BroadPhase_Entity;
+            mBody.mWorldObjectInfo.mProperty = { 0, 0, 0 };
+            static_cast<Nif::bhkEntity&>(mBody).mInfo.mResponseType = Nif::HkResponseType::Response_SimpleContact;
+            static_cast<Nif::bhkEntity&>(mBody).mInfo.mProcessContactDelay = 0;
+            mBody.mInfo.mHavokFilter = { 1, 0, 0 };
+            mBody.mInfo.mResponseType = Nif::HkResponseType::Response_SimpleContact;
+            mBody.mInfo.mProcessContactDelay = 0;
+            mBody.mInfo.mFriction = 0.5f;
+            mBody.mInfo.mRollingFrictionMult = 0.f;
+            mBody.mInfo.mRestitution = 0.f;
+            mBody.mInfo.mPenetrationDepth = 0.f;
+            mBody.mInfo.mMotionType = Nif::HkMotionType::Motion_Fixed;
+            mBody.mInfo.mDeactivatorType = Nif::HkDeactivatorType::Deactivator_Never;
+            mBody.mInfo.mEnableDeactivation = false;
+            mBody.mInfo.mSolverDeactivation = Nif::HkSolverDeactivation::SolverDeactivation_Off;
+            mBody.mInfo.mQualityType = Nif::HkQualityType::Quality_Fixed;
+            mBody.mInfo.mAutoRemoveLevel = 0;
+            mBody.mInfo.mResponseModifierFlags = 0;
+            mBody.mInfo.mNumContactPointShapeKeys = 0;
+            mBody.mInfo.mForceCollidedOntoPPU = false;
+            mBody.mBodyFlags = 0;
             mPacked.mScale = osg::Vec4f(1.f, 1.f, 1.f, 0.f);
             mData.mVertices = { osg::Vec3f(0.f, 0.f, 0.f), osg::Vec3f(1.f, 0.f, 0.f), osg::Vec3f(0.f, 1.f, 0.f) };
             mData.mTriangles.resize(1);
@@ -359,6 +381,7 @@ namespace
             mData.mSubshapes.resize(1);
             mData.mSubshapes.front().mNumVertices = 3;
             mData.mSubshapes.front().mHavokMaterial.mMaterial = 5;
+            mData.mSubshapes.front().mHavokFilter = { 1, 0, 0 };
             mPacked.mData = Nif::hkPackedNiTriStripsDataPtr(&mData);
             mMopp.mShape = Nif::bhkShapePtr(&mPacked);
             mBody.mShape = Nif::bhkShapePtr(&mMopp);
@@ -502,8 +525,10 @@ namespace
         collision.mData.mSubshapes.resize(2);
         collision.mData.mSubshapes[0].mNumVertices = 3;
         collision.mData.mSubshapes[0].mHavokMaterial.mMaterial = 0x45;
+        collision.mData.mSubshapes[0].mHavokFilter = { 1, 0, 0 };
         collision.mData.mSubshapes[1].mNumVertices = 3;
         collision.mData.mSubshapes[1].mHavokMaterial.mMaterial = 0x69;
+        collision.mData.mSubshapes[1].mHavokFilter = { 1, 0, 0 };
         collision.attach(mNode);
         mNode.mTransform.mTranslation = osg::Vec3f(2.f, 0.f, 0.f);
         enableBethesdaCollision(mNode);
@@ -617,12 +642,73 @@ namespace
         EXPECT_TRUE(result->mCollisionShapeMaterials.empty());
     }
 
-    TEST_F(TestBulletNifLoader, fallsBackAtomicallyForRootAndDescendantCollisionObjects)
+    TEST_F(TestBulletNifLoader, mergesEquivalentFixedRootAndDescendantCollisionObjects)
     {
         Nif::NiNode collisionNode;
         init(collisionNode);
         PackedCollisionRecords rootCollision;
         PackedCollisionRecords descendantCollision;
+        rootCollision.attach(mNiNode);
+        descendantCollision.attach(collisionNode);
+        collisionNode.mTransform.mTranslation = osg::Vec3f(10.f, 0.f, 0.f);
+
+        enableBethesdaCollision(mNiNode);
+        collisionNode.mParents.push_back(&mNiNode);
+        mNiTriShape.mParents.push_back(&mNiNode);
+        mNiNode.mChildren = { Nif::NiAVObjectPtr(&collisionNode), Nif::NiAVObjectPtr(&mNiTriShape) };
+
+        Nif::NIFFile file(testNif);
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&mNiNode);
+
+        const auto result = mLoader.load(file);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        ASSERT_EQ(result->mCollisionShape->getShapeType(), TRIANGLE_MESH_SHAPE_PROXYTYPE);
+        const auto& shape = static_cast<const btBvhTriangleMeshShape&>(*result->mCollisionShape);
+        EXPECT_THAT(getTriangleIdentities(shape), UnorderedElementsAre(Pair(0, 0), Pair(1, 0)));
+        EXPECT_THAT(getTriangles(shape), Contains(btVector3(10.f, 0.f, 0.f)));
+        EXPECT_EQ(result->getHavokMaterial(0, 0), 5u);
+        EXPECT_EQ(result->getHavokMaterial(1, 0), 5u);
+    }
+
+    TEST_F(TestBulletNifLoader, fallsBackAtomicallyForHeterogeneousFixedCollisionObjects)
+    {
+        Nif::NiNode collisionNode;
+        init(collisionNode);
+        PackedCollisionRecords rootCollision;
+        PackedCollisionRecords descendantCollision;
+        descendantCollision.mBody.mHavokFilter.mLayer = 3;
+        descendantCollision.mBody.mInfo.mHavokFilter.mLayer = 3;
+        descendantCollision.mData.mSubshapes.front().mHavokFilter.mLayer = 3;
+        rootCollision.attach(mNiNode);
+        descendantCollision.attach(collisionNode);
+
+        enableBethesdaCollision(mNiNode);
+        collisionNode.mParents.push_back(&mNiNode);
+        mNiTriShape.mParents.push_back(&mNiNode);
+        mNiNode.mChildren = { Nif::NiAVObjectPtr(&collisionNode), Nif::NiAVObjectPtr(&mNiTriShape) };
+
+        Nif::NIFFile file(testNif);
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&mNiNode);
+
+        const auto result = mLoader.load(file);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        EXPECT_TRUE(result->mCollisionShape->isCompound());
+        EXPECT_TRUE(result->mCollisionShapeMaterials.empty());
+    }
+
+    TEST_F(TestBulletNifLoader, fallsBackAtomicallyForNonFixedMultiBodyCollision)
+    {
+        Nif::NiNode collisionNode;
+        init(collisionNode);
+        PackedCollisionRecords rootCollision;
+        PackedCollisionRecords descendantCollision;
+        descendantCollision.mBody.mInfo.mMotionType = Nif::HkMotionType::Motion_Keyframed;
         rootCollision.attach(mNiNode);
         descendantCollision.attach(collisionNode);
 
