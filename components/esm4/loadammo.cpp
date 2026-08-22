@@ -87,13 +87,18 @@ void ESM4::Ammunition::load(ESM4::Reader& reader)
                 }
                 break;
             case ESM::fourCC("DAT2"):
-                if (subHdr.dataSize == 20)
+                if (subHdr.dataSize == 12 || subHdr.dataSize == 20)
                 {
                     reader.get(mData.mProjPerShot);
                     reader.getFormId(mData.mProjectile);
                     reader.get(mData.mWeight);
-                    reader.getFormId(mData.mConsumedAmmo);
-                    reader.get(mData.mConsumedPercentage);
+                    mData.mConsumedAmmo = {};
+                    mData.mConsumedPercentage = 0.f;
+                    if (subHdr.dataSize == 20)
+                    {
+                        reader.getFormId(mData.mConsumedAmmo);
+                        reader.get(mData.mConsumedPercentage);
+                    }
                 }
                 else
                 {
