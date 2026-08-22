@@ -230,6 +230,7 @@ add_component_dir (esm4
     loaddobj
     loaddoor
     loadeyes
+    loadexpl
     loadflor
     loadflst
     loadfurn

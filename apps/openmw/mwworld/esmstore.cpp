@@ -364,6 +364,7 @@ namespace MWWorld
             case ESM::REC_CONT4:
             case ESM::REC_CREA4:
             case ESM::REC_DOOR4:
+            case ESM::REC_EXPL4:
             case ESM::REC_FLOR4:
             case ESM::REC_FURN4:
             case ESM::REC_IMOD4:

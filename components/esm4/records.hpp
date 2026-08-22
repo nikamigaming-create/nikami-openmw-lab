@@ -23,6 +23,7 @@
 #include <components/esm4/loaddobj.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadeyes.hpp>
+#include <components/esm4/loadexpl.hpp>
 #include <components/esm4/loadflor.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadfurn.hpp>

@@ -1250,6 +1250,7 @@ template class MWWorld::TypedDynamicStore<ESM4::Clothing>;
 template class MWWorld::TypedDynamicStore<ESM4::Container>;
 template class MWWorld::TypedDynamicStore<ESM4::Creature>;
 template class MWWorld::TypedDynamicStore<ESM4::Door>;
+template class MWWorld::TypedDynamicStore<ESM4::Explosion>;
 template class MWWorld::TypedDynamicStore<ESM4::Flora>;
 template class MWWorld::TypedDynamicStore<ESM4::Furniture>;
 template class MWWorld::TypedDynamicStore<ESM4::Hair>;

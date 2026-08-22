@@ -71,6 +71,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     esm4/includes.cpp
     esm4/testloadammo.cpp
+    esm4/testloadexpl.cpp
     esm4/testloadproj.cpp
     esm4/testloadweap.cpp
     esm4/testutil.hpp
