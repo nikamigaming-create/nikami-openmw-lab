@@ -1,8 +1,12 @@
 #ifndef OPENMW_COMPONENTS_RESOURCE_BULLETSHAPE_H
 #define OPENMW_COMPONENTS_RESOURCE_BULLETSHAPE_H
 
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
+#include <utility>
 
 #include <osg/Object>
 #include <osg/Vec3f>
@@ -42,6 +46,29 @@ namespace Resource
         Camera
     };
 
+    class CollisionShapeMaterialTable
+    {
+    public:
+        bool addUniformMaterial(std::uint32_t material);
+        bool addShapePartMaterial(int shapePart, std::uint32_t material);
+        bool addTriangleMaterial(int shapePart, int triangleIndex, std::uint32_t material);
+
+        std::optional<std::uint32_t> getMaterial(int shapePart, int triangleIndex) const;
+
+        bool empty() const { return mEntries.empty(); }
+        std::size_t size() const { return mEntries.size(); }
+
+        bool operator==(const CollisionShapeMaterialTable&) const = default;
+
+    private:
+        static constexpr int sWildcard = -1;
+
+        bool addMaterial(int shapePart, int triangleIndex, std::uint32_t material);
+        std::optional<std::uint32_t> findMaterial(int shapePart, int triangleIndex) const;
+
+        std::map<std::pair<int, int>, std::uint32_t> mEntries;
+    };
+
     struct BulletShape : public osg::Object
     {
         CollisionShapePtr mCollisionShape;
@@ -60,6 +87,10 @@ namespace Resource
         VFS::Path::Normalized mFileName;
         std::string mFileHash;
 
+        // Bethesda Havok materials resolved from Bullet's LocalShapeInfo. The table owns exact-hit, shape-part,
+        // and explicit uniform-fallback semantics.
+        CollisionShapeMaterialTable mCollisionShapeMaterials;
+
         VisualCollisionType mVisualCollisionType = VisualCollisionType::None;
 
         BulletShape() = default;
@@ -69,6 +100,8 @@ namespace Resource
         META_Object(Resource, BulletShape)
 
         void setLocalScaling(const btVector3& scale);
+
+        std::optional<std::uint32_t> getHavokMaterial(int shapePart, int triangleIndex) const;
 
         bool isAnimated() const { return !mAnimatedShapes.empty(); }
     };

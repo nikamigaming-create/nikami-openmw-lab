@@ -78,6 +78,47 @@ namespace Resource
         deleteShape(shape);
     }
 
+    bool CollisionShapeMaterialTable::addMaterial(int shapePart, int triangleIndex, std::uint32_t material)
+    {
+        const auto [it, inserted] = mEntries.emplace(std::pair{ shapePart, triangleIndex }, material);
+        return inserted || it->second == material;
+    }
+
+    bool CollisionShapeMaterialTable::addUniformMaterial(std::uint32_t material)
+    {
+        return addMaterial(sWildcard, sWildcard, material);
+    }
+
+    bool CollisionShapeMaterialTable::addShapePartMaterial(int shapePart, std::uint32_t material)
+    {
+        return shapePart >= 0 && addMaterial(shapePart, sWildcard, material);
+    }
+
+    bool CollisionShapeMaterialTable::addTriangleMaterial(
+        int shapePart, int triangleIndex, std::uint32_t material)
+    {
+        return shapePart >= 0 && triangleIndex >= 0 && addMaterial(shapePart, triangleIndex, material);
+    }
+
+    std::optional<std::uint32_t> CollisionShapeMaterialTable::findMaterial(
+        int shapePart, int triangleIndex) const
+    {
+        const auto found = mEntries.find({ shapePart, triangleIndex });
+        return found != mEntries.end() ? std::optional(found->second) : std::nullopt;
+    }
+
+    std::optional<std::uint32_t> CollisionShapeMaterialTable::getMaterial(int shapePart, int triangleIndex) const
+    {
+        if (const auto exact = findMaterial(shapePart, triangleIndex))
+            return exact;
+        if (shapePart >= 0 && triangleIndex >= 0)
+            if (const auto shapePartDefault = findMaterial(shapePart, sWildcard))
+                return shapePartDefault;
+        if (shapePart >= 0 || triangleIndex >= 0)
+            return findMaterial(sWildcard, sWildcard);
+        return std::nullopt;
+    }
+
     BulletShape::BulletShape(const BulletShape& other, const osg::CopyOp& copyOp)
         : Object(other, copyOp)
         , mCollisionShape(duplicateCollisionShape(other.mCollisionShape.get()))
@@ -86,6 +127,7 @@ namespace Resource
         , mAnimatedShapes(other.mAnimatedShapes)
         , mFileName(other.mFileName)
         , mFileHash(other.mFileHash)
+        , mCollisionShapeMaterials(other.mCollisionShapeMaterials)
         , mVisualCollisionType(other.mVisualCollisionType)
     {
     }
@@ -95,6 +137,11 @@ namespace Resource
         mCollisionShape->setLocalScaling(scale);
         if (mAvoidCollisionShape)
             mAvoidCollisionShape->setLocalScaling(scale);
+    }
+
+    std::optional<std::uint32_t> BulletShape::getHavokMaterial(int shapePart, int triangleIndex) const
+    {
+        return mCollisionShapeMaterials.getMaterial(shapePart, triangleIndex);
     }
 
     osg::ref_ptr<BulletShapeInstance> makeInstance(osg::ref_ptr<const BulletShape> source)

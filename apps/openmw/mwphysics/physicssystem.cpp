@@ -248,7 +248,11 @@ namespace MWPhysics
             result.mHitShapePart = resultCallback.getHitShapePart();
             result.mHitTriangleIndex = resultCallback.getHitTriangleIndex();
             if (PtrHolder* ptrHolder = static_cast<PtrHolder*>(resultCallback.m_collisionObject->getUserPointer()))
+            {
                 result.mHitObject = ptrHolder->getPtr();
+                result.mHitHavokMaterial
+                    = ptrHolder->getHavokMaterial(result.mHitShapePart, result.mHitTriangleIndex);
+            }
         }
         return result;
     }

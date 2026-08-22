@@ -34,6 +34,7 @@ namespace MWPhysics
         ~Object() override;
 
         const Resource::BulletShapeInstance* getShapeInstance() const;
+        std::optional<std::uint32_t> getHavokMaterial(int shapePart = -1, int triangleIndex = -1) const override;
         void setScale(float scale);
         void setRotation(osg::Quat quat);
         void updatePosition();

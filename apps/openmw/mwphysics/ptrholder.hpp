@@ -1,8 +1,10 @@
 #ifndef OPENMW_MWPHYSICS_PTRHOLDER_H
 #define OPENMW_MWPHYSICS_PTRHOLDER_H
 
+#include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <utility>
 
 #include <osg/Vec3d>
@@ -31,6 +33,8 @@ namespace MWPhysics
         MWWorld::Ptr getPtr() const { return mPtr; }
 
         btCollisionObject* getCollisionObject() const { return mCollisionObject.get(); }
+
+        virtual std::optional<std::uint32_t> getHavokMaterial(int = -1, int = -1) const { return std::nullopt; }
 
         void setVelocity(osg::Vec3f velocity) { mVelocity = velocity; }
 

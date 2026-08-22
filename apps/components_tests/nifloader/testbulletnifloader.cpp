@@ -207,7 +207,8 @@ namespace Resource
         return compareObjects(lhs.mCollisionShape.get(), rhs.mCollisionShape.get())
             && compareObjects(lhs.mAvoidCollisionShape.get(), rhs.mAvoidCollisionShape.get())
             && lhs.mCollisionBox == rhs.mCollisionBox && lhs.mVisualCollisionType == rhs.mVisualCollisionType
-            && lhs.mAnimatedShapes == rhs.mAnimatedShapes;
+            && lhs.mAnimatedShapes == rhs.mAnimatedShapes
+            && lhs.mCollisionShapeMaterials == rhs.mCollisionShapeMaterials;
     }
 
     static std::ostream& operator<<(std::ostream& stream, Resource::VisualCollisionType value)
@@ -228,7 +229,8 @@ namespace Resource
     {
         return stream << "Resource::BulletShape {" << value.mCollisionShape.get() << ", "
                       << value.mAvoidCollisionShape.get() << ", " << value.mCollisionBox << ", "
-                      << value.mAnimatedShapes << ", " << value.mVisualCollisionType << "}";
+                      << value.mAnimatedShapes << ", " << value.mVisualCollisionType
+                      << ", havokMaterials=" << value.mCollisionShapeMaterials.size() << "}";
     }
 }
 
@@ -380,6 +382,37 @@ namespace
         EXPECT_EQ(*result, expected);
         EXPECT_EQ(result->mFileName, "test.nif");
         EXPECT_EQ(result->mFileHash, mHash);
+    }
+
+    TEST(BulletShapeMaterialTest, resolvesExactPartAndUniformMaterialsInPrecedenceOrder)
+    {
+        Resource::BulletShape shape;
+        ASSERT_TRUE(shape.mCollisionShapeMaterials.addUniformMaterial(1));
+        ASSERT_TRUE(shape.mCollisionShapeMaterials.addShapePartMaterial(2, 3));
+        ASSERT_TRUE(shape.mCollisionShapeMaterials.addTriangleMaterial(2, 4, 5));
+
+        EXPECT_EQ(shape.getHavokMaterial(2, 4), 5u);
+        EXPECT_EQ(shape.getHavokMaterial(2, 8), 3u);
+        EXPECT_EQ(shape.getHavokMaterial(7, 8), 1u);
+        EXPECT_EQ(shape.getHavokMaterial(-1, -1), 1u);
+    }
+
+    TEST(BulletShapeMaterialTest, rejectsInvalidAndConflictingMaterialKeys)
+    {
+        Resource::CollisionShapeMaterialTable materials;
+
+        EXPECT_FALSE(materials.addShapePartMaterial(-1, 1));
+        EXPECT_FALSE(materials.addTriangleMaterial(2, -1, 1));
+        EXPECT_TRUE(materials.addShapePartMaterial(2, 3));
+        EXPECT_TRUE(materials.addShapePartMaterial(2, 3));
+        EXPECT_FALSE(materials.addShapePartMaterial(2, 4));
+    }
+
+    TEST(BulletShapeMaterialTest, leavesUnmappedHitsUnresolved)
+    {
+        const Resource::BulletShape shape;
+
+        EXPECT_FALSE(shape.getHavokMaterial(0, 0).has_value());
     }
 
     TEST_F(TestBulletNifLoader, should_ignore_nullptr_root)

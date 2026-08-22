@@ -43,6 +43,11 @@ namespace MWPhysics
         return mShapeInstance.get();
     }
 
+    std::optional<std::uint32_t> Object::getHavokMaterial(int shapePart, int triangleIndex) const
+    {
+        return mShapeInstance != nullptr ? mShapeInstance->getHavokMaterial(shapePart, triangleIndex) : std::nullopt;
+    }
+
     void Object::setScale(float scale)
     {
         std::unique_lock<std::mutex> lock(mPositionMutex);
