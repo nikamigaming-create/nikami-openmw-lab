@@ -1279,3 +1279,4 @@ template class MWWorld::TypedDynamicStore<ESM4::TextureSet>;
 template class MWWorld::TypedDynamicStore<ESM4::Tree>;
 template class MWWorld::TypedDynamicStore<ESM4::Weapon>;
 template class MWWorld::TypedDynamicStore<ESM4::World>;
+template class MWWorld::TypedDynamicStore<ESM4::ImpactDataSet>;
