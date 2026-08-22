@@ -729,17 +729,102 @@ namespace
         EXPECT_TRUE(result->mCollisionShapeMaterials.empty());
     }
 
-    TEST_F(TestBulletNifLoader, fallsBackWhenPackedCollisionIsAnimated)
+    TEST_F(TestBulletNifLoader, loadsSingleAnimatedDescendantPackedCollision)
     {
+        Nif::NiNode collisionNode;
+        init(collisionNode);
+        collisionNode.mRecordIndex = 42;
+        collisionNode.mTransform.mTranslation = osg::Vec3f(10.f, 0.f, 0.f);
+        collisionNode.mTransform.mScale = 2.f;
         PackedCollisionRecords collision;
-        collision.attach(mNiNode);
+        collision.mPacked.mScale = osg::Vec4f(2.f, 2.f, 2.f, 0.f);
+        collision.attach(collisionNode);
         mController.mRecordType = Nif::RC_NiKeyframeController;
         mController.mFlags = Nif::NiTimeController::Flag_Active;
-        mNiNode.mController = Nif::NiTimeControllerPtr(&mController);
+        collisionNode.mController = Nif::NiTimeControllerPtr(&mController);
 
         enableBethesdaCollision(mNiNode);
+        collisionNode.mParents.push_back(&mNiNode);
+        mNiNode.mChildren = { Nif::NiAVObjectPtr(&collisionNode) };
+
+        Nif::NIFFile file(testNif);
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&mNiNode);
+
+        const auto result = mLoader.load(file);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        ASSERT_TRUE(result->mCollisionShape->isCompound());
+        const auto& compound = static_cast<const btCompoundShape&>(*result->mCollisionShape);
+        ASSERT_EQ(compound.getNumChildShapes(), 1);
+        EXPECT_TRUE(isNear(compound.getChildTransform(0).getOrigin(), btVector3(10.f, 0.f, 0.f)));
+        EXPECT_TRUE(isNear(compound.getChildShape(0)->getLocalScaling(), btVector3(2.f, 2.f, 2.f)));
+        EXPECT_EQ(result->mAnimatedShapes, (std::map<int, int>{ { 42, 0 } }));
+
+        btCollisionObject object;
+        object.setCollisionShape(result->mCollisionShape.get());
+        const btVector3 rayFrom(12.f, 2.f, 10.f);
+        const btVector3 rayTo(12.f, 2.f, -10.f);
+        ClosestRayResultWithIdentity callback(rayFrom, rayTo);
+        btTransform fromTransform = btTransform::getIdentity();
+        btTransform toTransform = btTransform::getIdentity();
+        fromTransform.setOrigin(rayFrom);
+        toTransform.setOrigin(rayTo);
+        btCollisionWorld::rayTestSingle(
+            fromTransform, toTransform, &object, result->mCollisionShape.get(), btTransform::getIdentity(), callback);
+
+        ASSERT_TRUE(callback.hasHit());
+        EXPECT_EQ(callback.mShapePart, 0);
+        EXPECT_EQ(callback.mTriangleIndex, 0);
+        EXPECT_EQ(result->getHavokMaterial(callback.mShapePart, callback.mTriangleIndex), 5u);
+    }
+
+    TEST_F(TestBulletNifLoader, loadsSingleExternalKfAnimatedPackedCollision)
+    {
+        Nif::NiNode collisionNode;
+        init(collisionNode);
+        collisionNode.mRecordIndex = 43;
+        PackedCollisionRecords collision;
+        collision.attach(collisionNode);
+
+        enableBethesdaCollision(mNiNode);
+        collisionNode.mParents.push_back(&mNiNode);
+        mNiNode.mChildren = { Nif::NiAVObjectPtr(&collisionNode) };
+
+        Nif::NIFFile file(xtestNif);
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&mNiNode);
+
+        const auto result = mLoader.load(file);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        EXPECT_TRUE(result->mCollisionShape->isCompound());
+        EXPECT_EQ(result->mAnimatedShapes, (std::map<int, int>{ { 43, 0 } }));
+        EXPECT_EQ(result->getHavokMaterial(0, 0), 5u);
+    }
+
+    TEST_F(TestBulletNifLoader, fallsBackAtomicallyForAnimatedMultiBodyCollision)
+    {
+        Nif::NiNode animatedNode;
+        Nif::NiNode staticNode;
+        init(animatedNode);
+        init(staticNode);
+        PackedCollisionRecords animatedCollision;
+        PackedCollisionRecords staticCollision;
+        animatedCollision.attach(animatedNode);
+        staticCollision.attach(staticNode);
+        mController.mRecordType = Nif::RC_NiKeyframeController;
+        mController.mFlags = Nif::NiTimeController::Flag_Active;
+        animatedNode.mController = Nif::NiTimeControllerPtr(&mController);
+
+        enableBethesdaCollision(mNiNode);
+        animatedNode.mParents.push_back(&mNiNode);
+        staticNode.mParents.push_back(&mNiNode);
         mNiTriShape.mParents.push_back(&mNiNode);
-        mNiNode.mChildren = { Nif::NiAVObjectPtr(&mNiTriShape) };
+        mNiNode.mChildren
+            = { Nif::NiAVObjectPtr(&animatedNode), Nif::NiAVObjectPtr(&staticNode), Nif::NiAVObjectPtr(&mNiTriShape) };
 
         Nif::NIFFile file(testNif);
         file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;

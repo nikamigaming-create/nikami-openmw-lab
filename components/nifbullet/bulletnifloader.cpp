@@ -115,6 +115,9 @@ namespace
     {
         std::vector<TriangleMeshPart> mParts;
         PackedCollisionSemantics mSemantics;
+        bool mAnimated = false;
+        int mRecordIndex = -1;
+        osg::Matrixf mNodeTransform = osg::Matrixf::identity();
     };
 
     struct SubshapeRange
@@ -251,11 +254,11 @@ namespace
     {
         if (collisions.size() < 2)
             return false;
-        if (collisions.front().mSemantics.mMotionType != Nif::HkMotionType::Motion_Fixed
+        if (collisions.front().mAnimated || collisions.front().mSemantics.mMotionType != Nif::HkMotionType::Motion_Fixed
             || collisions.front().mSemantics.mSubshapeFilters.size() > 1)
             return false;
         return std::ranges::all_of(collisions.begin() + 1, collisions.end(), [&](const PackedCollisionData& collision) {
-            return collision.mSemantics == collisions.front().mSemantics;
+            return !collision.mAnimated && collision.mSemantics == collisions.front().mSemantics;
         });
     }
 
@@ -328,7 +331,27 @@ namespace
         return transform;
     }
 
-    std::optional<PackedCollisionData> loadPackedCollisionData(const Nif::NiAVObject& node, const Nif::Parent* parent)
+    struct BulletTransform
+    {
+        btTransform mRigidTransform;
+        btVector3 mScale;
+    };
+
+    BulletTransform decomposeTransform(osg::Matrixf transform)
+    {
+        const btVector3 scale = Misc::Convert::toBullet(transform.getScale());
+        transform.orthoNormalize(transform);
+
+        btTransform rigidTransform;
+        rigidTransform.setOrigin(Misc::Convert::toBullet(transform.getTrans()));
+        for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column)
+                rigidTransform.getBasis()[row][column] = transform(column, row);
+        return { rigidTransform, scale };
+    }
+
+    std::optional<PackedCollisionData> loadPackedCollisionData(
+        const Nif::NiAVObject& node, const Nif::Parent* parent, bool animated)
     {
         if (node.mCollision.empty())
             return std::nullopt;
@@ -351,7 +374,21 @@ namespace
         // applies it; reject independent/non-uniform scale rather than double-scaling it.
         if (packed == nullptr || !packedScaleMirrorsNode(*packed, node))
             return std::nullopt;
-        return makePackedCollisionData(*packed, *body, *collision, getNodeTransform(node, parent));
+
+        const osg::Matrixf nodeTransform = getNodeTransform(node, parent);
+        auto result
+            = makePackedCollisionData(*packed, *body, *collision, animated ? osg::Matrixf::identity() : nodeTransform);
+        if (!result)
+            return std::nullopt;
+        if (animated)
+        {
+            if (node.mRecordIndex > static_cast<unsigned int>(std::numeric_limits<int>::max()))
+                return std::nullopt;
+            result->mAnimated = true;
+            result->mRecordIndex = static_cast<int>(node.mRecordIndex);
+            result->mNodeTransform = nodeTransform;
+        }
+        return result;
     }
 
     bool hasActiveTransformController(const Nif::NiAVObject& node)
@@ -385,13 +422,13 @@ namespace
         const bool avoid = inheritedAvoid || node.mRecordType == Nif::RC_AvoidNode;
         if (!node.mCollision.empty())
         {
-            // Animated and avoid bodies need distinct runtime ownership.
-            if (animated || avoid)
+            // Avoid bodies need a separate collision channel.
+            if (avoid)
             {
                 result.mRejected = true;
                 return;
             }
-            auto collision = loadPackedCollisionData(node, parent);
+            auto collision = loadPackedCollisionData(node, parent, animated);
             if (!collision)
             {
                 result.mRejected = true;
@@ -487,10 +524,25 @@ namespace NifBullet
                 = search.mCollisions.size() == 1 || canMergePackedCollisions(search.mCollisions);
             if (foundCollisionRoot && !search.mRejected && supportedBodyCount)
             {
+                const bool animated = search.mCollisions.size() == 1 && search.mCollisions.front().mAnimated;
+                const int animatedRecordIndex = animated ? search.mCollisions.front().mRecordIndex : -1;
+                const osg::Matrixf animatedTransform
+                    = animated ? search.mCollisions.front().mNodeTransform : osg::Matrixf::identity();
                 if (auto collision = makePackedCollision(std::move(search.mCollisions)))
                 {
-                    mShape->mCollisionShape = std::move(collision->mShape);
                     mShape->mCollisionShapeMaterials = std::move(collision->mMaterials);
+                    if (animated)
+                    {
+                        const BulletTransform transform = decomposeTransform(animatedTransform);
+                        auto child = std::make_unique<Resource::ScaledTriangleMeshShape>(
+                            static_cast<btBvhTriangleMeshShape*>(collision->mShape.release()), transform.mScale);
+                        auto compound = std::make_unique<btCompoundShape>();
+                        compound->addChildShape(transform.mRigidTransform, child.release());
+                        mShape->mCollisionShape.reset(compound.release());
+                        mShape->mAnimatedShapes.emplace(animatedRecordIndex, 0);
+                    }
+                    else
+                        mShape->mCollisionShape = std::move(collision->mShape);
                     return mShape;
                 }
             }
