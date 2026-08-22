@@ -90,9 +90,21 @@ namespace Resource
         std::map<std::pair<int, int>, std::uint32_t> mEntries;
     };
 
-    struct BulletShape : public osg::Object
+    struct CollisionBody
     {
         CollisionShapePtr mCollisionShape;
+        CollisionShapeMaterialTable mCollisionShapeMaterials;
+        std::optional<BethesdaCollisionFilter> mBethesdaCollisionFilter;
+
+        CollisionBody() = default;
+        CollisionBody(CollisionShapePtr shape, CollisionShapeMaterialTable materials,
+            std::optional<BethesdaCollisionFilter> filter);
+        CollisionBody(CollisionBody&&) = default;
+        CollisionBody& operator=(CollisionBody&&) = default;
+    };
+
+    struct BulletShape : public osg::Object, CollisionBody
+    {
         CollisionShapePtr mAvoidCollisionShape;
 
         // Used for actors and projectiles. mCollisionShape is used for actors only when we need to autogenerate
@@ -108,13 +120,9 @@ namespace Resource
         VFS::Path::Normalized mFileName;
         std::string mFileHash;
 
-        // Bethesda Havok materials resolved from Bullet's LocalShapeInfo. The table owns exact-hit, shape-part,
-        // and explicit uniform-fallback semantics.
-        CollisionShapeMaterialTable mCollisionShapeMaterials;
-
-        // Raw world/body filter tuples and distinct subshape tuples for the accepted Bethesda collision body. Runtime
-        // collision policy must derive from these values without collapsing the layer into Bullet's 16-bit masks.
-        std::optional<BethesdaCollisionFilter> mBethesdaCollisionFilter;
+        // Bodies after the compatibility primary body inherited above, in deterministic active-tree traversal order.
+        // The current loader does not populate this collection until runtime multi-body ownership is available.
+        std::vector<CollisionBody> mAdditionalCollisionBodies;
 
         VisualCollisionType mVisualCollisionType = VisualCollisionType::None;
 
@@ -127,6 +135,11 @@ namespace Resource
         void setLocalScaling(const btVector3& scale);
 
         std::optional<std::uint32_t> getHavokMaterial(int shapePart, int triangleIndex) const;
+        std::optional<std::uint32_t> getHavokMaterial(std::size_t bodyIndex, int shapePart, int triangleIndex) const;
+
+        std::size_t getCollisionBodyCount() const;
+        CollisionBody* getCollisionBody(std::size_t index);
+        const CollisionBody* getCollisionBody(std::size_t index) const;
 
         bool isAnimated() const { return !mAnimatedShapes.empty(); }
     };

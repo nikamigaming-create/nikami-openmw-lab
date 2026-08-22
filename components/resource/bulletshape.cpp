@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <BulletCollision/CollisionShapes/btBoxShape.h>
 #include <BulletCollision/CollisionShapes/btCapsuleShape.h>
@@ -80,6 +81,12 @@ namespace Resource
             throw std::logic_error(std::string("Unhandled Bullet shape duplication: ") + shape->getName());
         }
 
+        CollisionBody duplicateCollisionBody(const CollisionBody& body)
+        {
+            return { duplicateCollisionShape(body.mCollisionShape.get()), body.mCollisionShapeMaterials,
+                body.mBethesdaCollisionFilter };
+        }
+
         void deleteShape(btCollisionShape* shape)
         {
             if (shape->isCompound())
@@ -97,6 +104,14 @@ namespace Resource
     void DeleteCollisionShape::operator()(btCollisionShape* shape) const
     {
         deleteShape(shape);
+    }
+
+    CollisionBody::CollisionBody(
+        CollisionShapePtr shape, CollisionShapeMaterialTable materials, std::optional<BethesdaCollisionFilter> filter)
+        : mCollisionShape(std::move(shape))
+        , mCollisionShapeMaterials(std::move(materials))
+        , mBethesdaCollisionFilter(std::move(filter))
+    {
     }
 
     bool CollisionShapeMaterialTable::addMaterial(int shapePart, int triangleIndex, std::uint32_t material)
@@ -145,28 +160,61 @@ namespace Resource
 
     BulletShape::BulletShape(const BulletShape& other, const osg::CopyOp& copyOp)
         : Object(other, copyOp)
-        , mCollisionShape(duplicateCollisionShape(other.mCollisionShape.get()))
+        , CollisionBody(duplicateCollisionBody(other))
         , mAvoidCollisionShape(duplicateCollisionShape(other.mAvoidCollisionShape.get()))
         , mCollisionBox(other.mCollisionBox)
         , mAnimatedShapes(other.mAnimatedShapes)
         , mFileName(other.mFileName)
         , mFileHash(other.mFileHash)
-        , mCollisionShapeMaterials(other.mCollisionShapeMaterials)
-        , mBethesdaCollisionFilter(other.mBethesdaCollisionFilter)
         , mVisualCollisionType(other.mVisualCollisionType)
     {
+        mAdditionalCollisionBodies.reserve(other.mAdditionalCollisionBodies.size());
+        for (const CollisionBody& body : other.mAdditionalCollisionBodies)
+            mAdditionalCollisionBodies.emplace_back(duplicateCollisionBody(body));
     }
 
     void BulletShape::setLocalScaling(const btVector3& scale)
     {
-        mCollisionShape->setLocalScaling(scale);
+        if (mCollisionShape)
+            mCollisionShape->setLocalScaling(scale);
         if (mAvoidCollisionShape)
             mAvoidCollisionShape->setLocalScaling(scale);
+        for (CollisionBody& body : mAdditionalCollisionBodies)
+            if (body.mCollisionShape)
+                body.mCollisionShape->setLocalScaling(scale);
     }
 
     std::optional<std::uint32_t> BulletShape::getHavokMaterial(int shapePart, int triangleIndex) const
     {
         return mCollisionShapeMaterials.getMaterial(shapePart, triangleIndex);
+    }
+
+    std::optional<std::uint32_t> BulletShape::getHavokMaterial(
+        std::size_t bodyIndex, int shapePart, int triangleIndex) const
+    {
+        const CollisionBody* body = getCollisionBody(bodyIndex);
+        return body != nullptr ? body->mCollisionShapeMaterials.getMaterial(shapePart, triangleIndex) : std::nullopt;
+    }
+
+    std::size_t BulletShape::getCollisionBodyCount() const
+    {
+        return (mCollisionShape != nullptr ? 1 : 0) + mAdditionalCollisionBodies.size();
+    }
+
+    CollisionBody* BulletShape::getCollisionBody(std::size_t index)
+    {
+        return const_cast<CollisionBody*>(std::as_const(*this).getCollisionBody(index));
+    }
+
+    const CollisionBody* BulletShape::getCollisionBody(std::size_t index) const
+    {
+        if (mCollisionShape != nullptr)
+        {
+            if (index == 0)
+                return this;
+            --index;
+        }
+        return index < mAdditionalCollisionBodies.size() ? &mAdditionalCollisionBodies[index] : nullptr;
     }
 
     osg::ref_ptr<BulletShapeInstance> makeInstance(osg::ref_ptr<const BulletShape> source)

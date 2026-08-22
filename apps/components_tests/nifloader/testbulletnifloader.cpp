@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <span>
 #include <type_traits>
+#include <utility>
 
 namespace
 {
@@ -238,14 +239,20 @@ namespace std
 
 namespace Resource
 {
-    static bool operator==(const Resource::BulletShape& lhs, const Resource::BulletShape& rhs)
+    static bool operator==(const Resource::CollisionBody& lhs, const Resource::CollisionBody& rhs)
     {
         return compareObjects(lhs.mCollisionShape.get(), rhs.mCollisionShape.get())
+            && lhs.mCollisionShapeMaterials == rhs.mCollisionShapeMaterials
+            && lhs.mBethesdaCollisionFilter == rhs.mBethesdaCollisionFilter;
+    }
+
+    static bool operator==(const Resource::BulletShape& lhs, const Resource::BulletShape& rhs)
+    {
+        return static_cast<const Resource::CollisionBody&>(lhs) == static_cast<const Resource::CollisionBody&>(rhs)
             && compareObjects(lhs.mAvoidCollisionShape.get(), rhs.mAvoidCollisionShape.get())
             && lhs.mCollisionBox == rhs.mCollisionBox && lhs.mVisualCollisionType == rhs.mVisualCollisionType
             && lhs.mAnimatedShapes == rhs.mAnimatedShapes
-            && lhs.mCollisionShapeMaterials == rhs.mCollisionShapeMaterials
-            && lhs.mBethesdaCollisionFilter == rhs.mBethesdaCollisionFilter;
+            && lhs.mAdditionalCollisionBodies == rhs.mAdditionalCollisionBodies;
     }
 
     static std::ostream& operator<<(std::ostream& stream, Resource::VisualCollisionType value)
@@ -618,6 +625,39 @@ namespace
         const auto instance = Resource::makeInstance(shape);
 
         EXPECT_EQ(instance->mBethesdaCollisionFilter, shape->mBethesdaCollisionFilter);
+    }
+
+    TEST(BulletShapeTest, preservesOrderedAdditionalCollisionBodiesWhenClonedAndScaled)
+    {
+        osg::ref_ptr<Resource::BulletShape> shape = new Resource::BulletShape;
+        shape->mCollisionShape.reset(new btBoxShape(btVector3(1.f, 2.f, 3.f)));
+        ASSERT_TRUE(shape->mCollisionShapeMaterials.addUniformMaterial(4));
+
+        Resource::CollisionShapeMaterialTable materials;
+        ASSERT_TRUE(materials.addUniformMaterial(9));
+        Resource::BethesdaCollisionFilter filter{
+            .mWorldObjectFilter = { .mLayer = 1, .mFlags = 2, .mGroup = 3 },
+            .mRigidBodyFilter = { .mLayer = 4, .mFlags = 5, .mGroup = 6 },
+        };
+        shape->mAdditionalCollisionBodies.emplace_back(
+            Resource::CollisionShapePtr(new btSphereShape(2.f)), std::move(materials), filter);
+
+        const auto instance = Resource::makeInstance(shape);
+        instance->setLocalScaling(btVector3(2.f, 3.f, 4.f));
+
+        ASSERT_EQ(instance->getCollisionBodyCount(), 2u);
+        ASSERT_NE(instance->getCollisionBody(0), nullptr);
+        ASSERT_NE(instance->getCollisionBody(1), nullptr);
+        EXPECT_NE(
+            instance->getCollisionBody(0)->mCollisionShape.get(), shape->getCollisionBody(0)->mCollisionShape.get());
+        EXPECT_NE(
+            instance->getCollisionBody(1)->mCollisionShape.get(), shape->getCollisionBody(1)->mCollisionShape.get());
+        EXPECT_EQ(instance->getCollisionBody(0)->mCollisionShape->getLocalScaling(), btVector3(2.f, 3.f, 4.f));
+        EXPECT_EQ(instance->getCollisionBody(1)->mCollisionShape->getLocalScaling(), btVector3(2.f, 3.f, 4.f));
+        EXPECT_EQ(instance->getHavokMaterial(0, -1, -1), 4u);
+        EXPECT_EQ(instance->getHavokMaterial(1, -1, -1), 9u);
+        EXPECT_EQ(instance->getCollisionBody(1)->mBethesdaCollisionFilter, filter);
+        EXPECT_EQ(instance->getCollisionBody(2), nullptr);
     }
 
     TEST_F(TestBulletNifLoader, loadsFalloutBoxCollisionWithBodyAndNodeTransforms)
