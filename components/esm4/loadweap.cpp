@@ -31,12 +31,62 @@
 #include "reader.hpp"
 //#include "writer.hpp"
 
+namespace
+{
+    void loadFalloutDnam(ESM4::Reader& reader, ESM4::Weapon::FalloutData& data, std::uint32_t size)
+    {
+        if (size < 16)
+        {
+            reader.skipSubRecordData();
+            return;
+        }
+
+        data = {};
+        reader.get(data.mAnimationType);
+        reader.get(data.mAnimationMultiplier);
+        reader.get(data.mReach);
+        reader.get(data.mFlags);
+        reader.get(data.mGripAnimation);
+        reader.get(data.mAmmoUse);
+        reader.get(data.mReloadAnimation);
+        data.mPresent = true;
+
+        if (size < 68)
+        {
+            if (size > 16)
+                reader.skipSubRecordData(size - 16);
+            return;
+        }
+
+        reader.get(data.mMinSpread);
+        reader.get(data.mSpread);
+        reader.skipSubRecordData(4);
+        reader.get(data.mSightFov);
+        reader.skipSubRecordData(4);
+        reader.getFormId(data.mProjectile);
+        reader.get(data.mBaseVatsChance);
+        reader.get(data.mAttackAnimation);
+        reader.get(data.mProjectileCount);
+        reader.get(data.mEmbeddedWeaponActorValue);
+        reader.get(data.mMinRange);
+        reader.get(data.mMaxRange);
+        reader.get(data.mOnHit);
+        reader.get(data.mFlags2);
+        reader.get(data.mAnimationAttackMultiplier);
+        reader.get(data.mFireRate);
+        data.mBallisticsPresent = true;
+
+        if (size > 68)
+            reader.skipSubRecordData(size - 68);
+    }
+}
+
 void ESM4::Weapon::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
-    std::uint32_t esmVer = reader.esmVersion();
-    bool isFONV = esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
+    const std::uint32_t esmVer = reader.esmVersion();
+    const bool isFONV = esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
 
     while (reader.getSubRecordHeader())
     {
@@ -115,6 +165,12 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("WNAM"):
                 reader.getFormId(mFirstPersonModel);
                 break;
+            case ESM::fourCC("DNAM"):
+                if (isFONV)
+                    loadFalloutDnam(reader, mFalloutData, subHdr.dataSize);
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("MODT"): // Model data
             case ESM::fourCC("MODC"):
             case ESM::fourCC("MODS"):
@@ -124,7 +180,6 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("INAM"):
             case ESM::fourCC("CNAM"):
             case ESM::fourCC("CRDT"):
-            case ESM::fourCC("DNAM"):
             case ESM::fourCC("EAMT"):
             case ESM::fourCC("EITM"):
             case ESM::fourCC("ETYP"):

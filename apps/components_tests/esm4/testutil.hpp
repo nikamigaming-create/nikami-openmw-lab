@@ -45,10 +45,10 @@ namespace ESM4Test
     }
 
     inline std::unique_ptr<ESM4::Reader> makeReader(
-        std::string_view recordType, std::string recordData, std::uint32_t modIndex = 2)
+        std::string_view recordType, std::string recordData, std::uint32_t modIndex = 2, float version = 1.34f)
     {
         std::string hedr;
-        appendPod(hedr, 1.34f);
+        appendPod(hedr, version);
         appendPod(hedr, std::int32_t{ 2 });
         appendPod(hedr, std::uint32_t{ 0x800 });
         std::string headerData;

@@ -41,6 +41,33 @@ namespace ESM4
 
     struct Weapon
     {
+        struct FalloutData
+        {
+            std::uint32_t mAnimationType = 0;
+            float mAnimationMultiplier = 0.f;
+            float mReach = 0.f;
+            std::uint8_t mFlags = 0;
+            std::uint8_t mGripAnimation = 0xff;
+            std::uint8_t mAmmoUse = 0;
+            std::uint8_t mReloadAnimation = 0;
+            float mMinSpread = 0.f;
+            float mSpread = 0.f;
+            float mSightFov = 0.f;
+            ESM::FormId mProjectile;
+            std::uint8_t mBaseVatsChance = 0;
+            std::uint8_t mAttackAnimation = 0;
+            std::uint8_t mProjectileCount = 0;
+            std::uint8_t mEmbeddedWeaponActorValue = 0;
+            float mMinRange = 0.f;
+            float mMaxRange = 0.f;
+            std::uint32_t mOnHit = 0;
+            std::uint32_t mFlags2 = 0;
+            float mAnimationAttackMultiplier = 0.f;
+            float mFireRate = 0.f;
+            bool mPresent = false;
+            bool mBallisticsPresent = false;
+        };
+
         struct Data
         {
             // type
@@ -97,6 +124,7 @@ namespace ESM4
         ESM::FormId mEnchantment;
 
         Data mData;
+        FalloutData mFalloutData;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;
