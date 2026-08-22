@@ -152,6 +152,7 @@ namespace Resource
         , mFileName(other.mFileName)
         , mFileHash(other.mFileHash)
         , mCollisionShapeMaterials(other.mCollisionShapeMaterials)
+        , mBethesdaCollisionFilter(other.mBethesdaCollisionFilter)
         , mVisualCollisionType(other.mVisualCollisionType)
     {
     }

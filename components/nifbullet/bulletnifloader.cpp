@@ -9,7 +9,6 @@
 #include <optional>
 #include <set>
 #include <sstream>
-#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -76,13 +75,14 @@ namespace
     {
         Resource::CollisionShapePtr mShape;
         Resource::CollisionShapeMaterialTable mMaterials;
+        Resource::BethesdaCollisionFilter mFilter;
     };
 
-    using HavokFilterKey = std::tuple<std::uint8_t, std::uint8_t, std::uint16_t>;
+    using HavokFilterKey = Resource::BethesdaHavokFilter;
 
     HavokFilterKey getFilterKey(const Nif::HavokFilter& filter)
     {
-        return { filter.mLayer, filter.mFlags, filter.mGroup };
+        return { .mLayer = filter.mLayer, .mFlags = filter.mFlags, .mGroup = filter.mGroup };
     }
 
     struct CollisionSemantics
@@ -116,6 +116,15 @@ namespace
 
         bool operator==(const CollisionSemantics&) const = default;
     };
+
+    Resource::BethesdaCollisionFilter getCollisionFilter(const CollisionSemantics& semantics)
+    {
+        return {
+            .mWorldObjectFilter = semantics.mWorldFilter,
+            .mRigidBodyFilter = semantics.mBodyFilter,
+            .mSubshapeFilters = { semantics.mSubshapeFilters.begin(), semantics.mSubshapeFilters.end() },
+        };
+    }
 
     struct PackedCollisionData
     {
@@ -266,8 +275,7 @@ namespace
 
         std::set<HavokFilterKey> subshapeFilters;
         for (const Nif::hkSubPartData& subshape : subshapes)
-            subshapeFilters.emplace(
-                subshape.mHavokFilter.mLayer, subshape.mHavokFilter.mFlags, subshape.mHavokFilter.mGroup);
+            subshapeFilters.emplace(getFilterKey(subshape.mHavokFilter));
 
         CollisionSemantics semantics = getCollisionSemantics(body, collision, std::move(subshapeFilters));
         return PackedCollisionData{ std::move(parts), std::move(semantics) };
@@ -296,6 +304,8 @@ namespace
         }
         if (partCount == 0 || partCount > static_cast<std::size_t>(std::numeric_limits<int>::max()))
             return std::nullopt;
+
+        const Resource::BethesdaCollisionFilter filter = getCollisionFilter(collisions.front().mSemantics);
 
         std::vector<TriangleMeshPart> parts;
         parts.reserve(partCount);
@@ -327,7 +337,7 @@ namespace
 
         auto mesh = std::make_unique<OwnedTriangleIndexVertexArray>(std::move(parts));
         Resource::CollisionShapePtr shape(new Resource::TriangleMeshShape(mesh.release(), true));
-        return PackedCollision{ std::move(shape), std::move(materials) };
+        return PackedCollision{ std::move(shape), std::move(materials), filter };
     }
 
     bool packedScaleMirrorsNode(const Nif::bhkPackedNiTriStripsShape& packed, const Nif::NiAVObject& node)
@@ -703,6 +713,8 @@ namespace
             || collisions.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
             return std::nullopt;
 
+        const Resource::BethesdaCollisionFilter filter = getCollisionFilter(collisions.front().mSemantics);
+
         auto compound = std::make_unique<btCompoundShape>();
         Resource::CollisionShapeMaterialTable materials;
         std::optional<std::uint32_t> uniformMaterial;
@@ -726,7 +738,7 @@ namespace
         if (uniformMaterial && hasUniformMaterial && !materials.addUniformMaterial(*uniformMaterial))
             return std::nullopt;
 
-        return PackedCollision{ Resource::CollisionShapePtr(compound.release()), std::move(materials) };
+        return PackedCollision{ Resource::CollisionShapePtr(compound.release()), std::move(materials), filter };
     }
 
     std::optional<PackedCollisionData> loadPackedCollisionData(
@@ -922,6 +934,7 @@ namespace NifBullet
                 PrimitiveCollisionData primitive = std::move(search.mPrimitives.front());
                 if (!primitive.mMaterials.empty())
                 {
+                    mShape->mBethesdaCollisionFilter = getCollisionFilter(primitive.mSemantics);
                     if (primitive.mAnimated)
                     {
                         auto compound = std::make_unique<btCompoundShape>();
@@ -971,6 +984,7 @@ namespace NifBullet
                 {
                     mShape->mCollisionShape = std::move(collision->mShape);
                     mShape->mCollisionShapeMaterials = std::move(collision->mMaterials);
+                    mShape->mBethesdaCollisionFilter = std::move(collision->mFilter);
                     return mShape;
                 }
             }
@@ -985,6 +999,7 @@ namespace NifBullet
                 if (auto collision = makePackedCollision(std::move(search.mCollisions)))
                 {
                     mShape->mCollisionShapeMaterials = std::move(collision->mMaterials);
+                    mShape->mBethesdaCollisionFilter = std::move(collision->mFilter);
                     if (animated)
                     {
                         const BulletTransform transform = decomposeTransform(animatedTransform);

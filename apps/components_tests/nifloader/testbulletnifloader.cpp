@@ -244,7 +244,8 @@ namespace Resource
             && compareObjects(lhs.mAvoidCollisionShape.get(), rhs.mAvoidCollisionShape.get())
             && lhs.mCollisionBox == rhs.mCollisionBox && lhs.mVisualCollisionType == rhs.mVisualCollisionType
             && lhs.mAnimatedShapes == rhs.mAnimatedShapes
-            && lhs.mCollisionShapeMaterials == rhs.mCollisionShapeMaterials;
+            && lhs.mCollisionShapeMaterials == rhs.mCollisionShapeMaterials
+            && lhs.mBethesdaCollisionFilter == rhs.mBethesdaCollisionFilter;
     }
 
     static std::ostream& operator<<(std::ostream& stream, Resource::VisualCollisionType value)
@@ -266,7 +267,8 @@ namespace Resource
         return stream << "Resource::BulletShape {" << value.mCollisionShape.get() << ", "
                       << value.mAvoidCollisionShape.get() << ", " << value.mCollisionBox << ", "
                       << value.mAnimatedShapes << ", " << value.mVisualCollisionType
-                      << ", havokMaterials=" << value.mCollisionShapeMaterials.size() << "}";
+                      << ", havokMaterials=" << value.mCollisionShapeMaterials.size()
+                      << ", bethesdaFilter=" << value.mBethesdaCollisionFilter.has_value() << "}";
     }
 }
 
@@ -604,9 +606,25 @@ namespace
         EXPECT_EQ(materials.getMaterial(callback.mShapePart, callback.mTriangleIndex), 9u);
     }
 
+    TEST(BulletShapeTest, preservesBethesdaCollisionFilterWhenCloned)
+    {
+        osg::ref_ptr<Resource::BulletShape> shape = new Resource::BulletShape;
+        shape->mBethesdaCollisionFilter = Resource::BethesdaCollisionFilter{
+            .mWorldObjectFilter = { .mLayer = 1, .mFlags = 2, .mGroup = 3 },
+            .mRigidBodyFilter = { .mLayer = 4, .mFlags = 5, .mGroup = 6 },
+            .mSubshapeFilters = { { .mLayer = 7, .mFlags = 8, .mGroup = 9 } },
+        };
+
+        const auto instance = Resource::makeInstance(shape);
+
+        EXPECT_EQ(instance->mBethesdaCollisionFilter, shape->mBethesdaCollisionFilter);
+    }
+
     TEST_F(TestBulletNifLoader, loadsFalloutBoxCollisionWithBodyAndNodeTransforms)
     {
         PrimitiveCollisionRecords<Nif::bhkBoxShape> collision(Nif::RC_bhkBoxShape, Nif::RC_bhkRigidBodyT);
+        collision.mBody.mHavokFilter = { 3, 0x40, 0x1234 };
+        collision.mBody.mInfo.mHavokFilter = { 4, 0x80, 0x5678 };
         collision.mShape.mHavokMaterial.mMaterial = 0x45;
         collision.mShape.mRadius = 0.1f;
         collision.mShape.mExtents = osg::Vec3f(1.f, 2.f, 3.f);
@@ -627,6 +645,12 @@ namespace
         const auto& box = static_cast<const btBoxShape&>(*compound.getChildShape(0));
         EXPECT_TRUE(isNear(box.getHalfExtentsWithMargin(), btVector3(15.4f, 29.4f, 43.4f)));
         EXPECT_EQ(result->getHavokMaterial(-1, -1), 5u);
+        ASSERT_TRUE(result->mBethesdaCollisionFilter.has_value());
+        EXPECT_EQ(result->mBethesdaCollisionFilter->mWorldObjectFilter,
+            (Resource::BethesdaHavokFilter{ .mLayer = 3, .mFlags = 0x40, .mGroup = 0x1234 }));
+        EXPECT_EQ(result->mBethesdaCollisionFilter->mRigidBodyFilter,
+            (Resource::BethesdaHavokFilter{ .mLayer = 4, .mFlags = 0x80, .mGroup = 0x5678 }));
+        EXPECT_TRUE(result->mBethesdaCollisionFilter->mSubshapeFilters.empty());
 
         btCollisionObject object;
         object.setCollisionShape(result->mCollisionShape.get());
@@ -793,6 +817,8 @@ namespace
         EXPECT_EQ(result->getHavokMaterial(-1, 0), 5u);
         EXPECT_EQ(result->getHavokMaterial(-1, 1), 9u);
         EXPECT_FALSE(result->getHavokMaterial(-1, -1).has_value());
+        ASSERT_TRUE(result->mBethesdaCollisionFilter.has_value());
+        EXPECT_EQ(result->mBethesdaCollisionFilter->mRigidBodyFilter.mLayer, 1);
 
         btCollisionObject object;
         object.setCollisionShape(result->mCollisionShape.get());
@@ -843,6 +869,8 @@ namespace
         EXPECT_EQ(result->getHavokMaterial(-1, 0), 5u);
         EXPECT_EQ(result->getHavokMaterial(-1, 1), 9u);
         EXPECT_FALSE(result->getHavokMaterial(-1, -1).has_value());
+        ASSERT_TRUE(result->mBethesdaCollisionFilter.has_value());
+        EXPECT_EQ(result->mBethesdaCollisionFilter->mRigidBodyFilter.mLayer, 1);
 
         btCollisionObject object;
         object.setCollisionShape(result->mCollisionShape.get());
@@ -889,6 +917,7 @@ namespace
 
         ASSERT_NE(result->mCollisionShape, nullptr);
         EXPECT_TRUE(result->mCollisionShape->isCompound());
+        EXPECT_FALSE(result->mBethesdaCollisionFilter.has_value());
         EXPECT_TRUE(result->mCollisionShapeMaterials.empty());
     }
 
@@ -904,10 +933,10 @@ namespace
         collision.mData.mSubshapes.resize(2);
         collision.mData.mSubshapes[0].mNumVertices = 3;
         collision.mData.mSubshapes[0].mHavokMaterial.mMaterial = 0x45;
-        collision.mData.mSubshapes[0].mHavokFilter = { 1, 0, 0 };
+        collision.mData.mSubshapes[0].mHavokFilter = { 6, 7, 8 };
         collision.mData.mSubshapes[1].mNumVertices = 3;
         collision.mData.mSubshapes[1].mHavokMaterial.mMaterial = 0x69;
-        collision.mData.mSubshapes[1].mHavokFilter = { 1, 0, 0 };
+        collision.mData.mSubshapes[1].mHavokFilter = { 6, 7, 8 };
         collision.attach(mNode);
         mNode.mTransform.mTranslation = osg::Vec3f(2.f, 0.f, 0.f);
         enableBethesdaCollision(mNode);
@@ -934,6 +963,11 @@ namespace
         EXPECT_EQ(result->getHavokMaterial(0, 0), 5u);
         EXPECT_EQ(result->getHavokMaterial(1, 0), 9u);
         EXPECT_FALSE(result->getHavokMaterial(-1, -1).has_value());
+        ASSERT_TRUE(result->mBethesdaCollisionFilter.has_value());
+        const std::vector<Resource::BethesdaHavokFilter> expectedFilters{
+            { .mLayer = 6, .mFlags = 7, .mGroup = 8 },
+        };
+        EXPECT_EQ(result->mBethesdaCollisionFilter->mSubshapeFilters, expectedFilters);
 
         btCollisionObject object;
         object.setCollisionShape(result->mCollisionShape.get());
@@ -1050,6 +1084,8 @@ namespace
         EXPECT_THAT(getTriangles(shape), Contains(btVector3(10.f, 0.f, 0.f)));
         EXPECT_EQ(result->getHavokMaterial(0, 0), 5u);
         EXPECT_EQ(result->getHavokMaterial(1, 0), 5u);
+        ASSERT_TRUE(result->mBethesdaCollisionFilter.has_value());
+        EXPECT_EQ(result->mBethesdaCollisionFilter->mRigidBodyFilter.mLayer, 1);
     }
 
     TEST_F(TestBulletNifLoader, fallsBackAtomicallyForHeterogeneousFixedCollisionObjects)
@@ -1079,6 +1115,7 @@ namespace
         ASSERT_NE(result->mCollisionShape, nullptr);
         EXPECT_TRUE(result->mCollisionShape->isCompound());
         EXPECT_TRUE(result->mCollisionShapeMaterials.empty());
+        EXPECT_FALSE(result->mBethesdaCollisionFilter.has_value());
     }
 
     TEST_F(TestBulletNifLoader, fallsBackAtomicallyForNonFixedMultiBodyCollision)

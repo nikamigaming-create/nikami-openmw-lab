@@ -1,12 +1,14 @@
 #ifndef OPENMW_COMPONENTS_RESOURCE_BULLETSHAPE_H
 #define OPENMW_COMPONENTS_RESOURCE_BULLETSHAPE_H
 
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include <osg/Object>
 #include <osg/Vec3f>
@@ -44,6 +46,24 @@ namespace Resource
         None,
         Default,
         Camera
+    };
+
+    struct BethesdaHavokFilter
+    {
+        std::uint8_t mLayer = 0;
+        std::uint8_t mFlags = 0;
+        std::uint16_t mGroup = 0;
+
+        auto operator<=>(const BethesdaHavokFilter&) const = default;
+    };
+
+    struct BethesdaCollisionFilter
+    {
+        BethesdaHavokFilter mWorldObjectFilter;
+        BethesdaHavokFilter mRigidBodyFilter;
+        std::vector<BethesdaHavokFilter> mSubshapeFilters;
+
+        bool operator==(const BethesdaCollisionFilter&) const = default;
     };
 
     class CollisionShapeMaterialTable
@@ -91,6 +111,10 @@ namespace Resource
         // Bethesda Havok materials resolved from Bullet's LocalShapeInfo. The table owns exact-hit, shape-part,
         // and explicit uniform-fallback semantics.
         CollisionShapeMaterialTable mCollisionShapeMaterials;
+
+        // Raw world/body filter tuples and distinct subshape tuples for the accepted Bethesda collision body. Runtime
+        // collision policy must derive from these values without collapsing the layer into Bullet's 16-bit masks.
+        std::optional<BethesdaCollisionFilter> mBethesdaCollisionFilter;
 
         VisualCollisionType mVisualCollisionType = VisualCollisionType::None;
 
