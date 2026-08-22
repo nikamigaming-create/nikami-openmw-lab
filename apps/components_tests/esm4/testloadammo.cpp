@@ -1,84 +1,28 @@
 #include <components/esm4/loadammo.hpp>
-#include <components/esm4/reader.hpp>
 
 #include <gtest/gtest.h>
 
 #include <bit>
 #include <cstdint>
-#include <limits>
-#include <memory>
-#include <sstream>
-#include <stdexcept>
 #include <string>
-#include <string_view>
-#include <type_traits>
+
+#include "testutil.hpp"
 
 namespace
 {
     using namespace std::literals;
 
-    template <class T>
-    void appendPod(std::string& output, const T& value)
-    {
-        static_assert(std::is_trivially_copyable_v<T>);
-        output.append(reinterpret_cast<const char*>(&value), sizeof(value));
-    }
-
-    void appendSubRecord(std::string& output, std::string_view type, std::string_view data)
-    {
-        if (type.size() != 4 || data.size() > std::numeric_limits<std::uint16_t>::max())
-            throw std::logic_error("invalid synthetic ESM4 subrecord");
-        output.append(type);
-        appendPod(output, static_cast<std::uint16_t>(data.size()));
-        output.append(data);
-    }
-
-    void appendRecord(std::string& output, std::string_view type, std::uint32_t formId, std::string_view data)
-    {
-        if (type.size() != 4)
-            throw std::logic_error("invalid synthetic ESM4 record");
-        output.append(type);
-        appendPod(output, static_cast<std::uint32_t>(data.size()));
-        appendPod(output, std::uint32_t{ 0 });
-        appendPod(output, formId);
-        appendPod(output, std::uint32_t{ 0 });
-        appendPod(output, std::uint16_t{ 0 });
-        appendPod(output, std::uint16_t{ 0 });
-        output.append(data);
-    }
-
-    std::unique_ptr<ESM4::Reader> makeAmmunitionReader(std::string recordData)
-    {
-        std::string hedr;
-        appendPod(hedr, 1.34f);
-        appendPod(hedr, std::int32_t{ 2 });
-        appendPod(hedr, std::uint32_t{ 0x800 });
-        std::string headerData;
-        appendSubRecord(headerData, "HEDR", hedr);
-
-        std::string plugin;
-        appendRecord(plugin, "TES4", 0, headerData);
-        appendRecord(plugin, "AMMO", 0x123456, recordData);
-        auto stream = std::make_unique<std::istringstream>(plugin, std::ios::in | std::ios::binary);
-        auto reader = std::make_unique<ESM4::Reader>(std::move(stream), "synthetic.esm", nullptr, nullptr, true);
-        reader->setModIndex(2);
-        if (!reader->getRecordHeader())
-            throw std::logic_error("synthetic ESM4 AMMO record is missing");
-        reader->getRecordData();
-        return reader;
-    }
-
     std::string makeData2(std::uint32_t projectilesPerShot, std::uint32_t projectile, float weight,
         std::uint32_t consumedAmmo = 0, float consumedPercentage = 0.f, bool includeConsumedAmmo = false)
     {
         std::string result;
-        appendPod(result, projectilesPerShot);
-        appendPod(result, projectile);
-        appendPod(result, weight);
+        ESM4Test::appendPod(result, projectilesPerShot);
+        ESM4Test::appendPod(result, projectile);
+        ESM4Test::appendPod(result, weight);
         if (includeConsumedAmmo)
         {
-            appendPod(result, consumedAmmo);
-            appendPod(result, consumedPercentage);
+            ESM4Test::appendPod(result, consumedAmmo);
+            ESM4Test::appendPod(result, consumedPercentage);
         }
         return result;
     }
@@ -86,9 +30,9 @@ namespace
     ESM4::Ammunition loadAmmunition(std::string data2)
     {
         std::string recordData;
-        appendSubRecord(recordData, "DAT2", data2);
-        appendSubRecord(recordData, "ICON", "icons/ammo.dds\0"sv);
-        auto reader = makeAmmunitionReader(std::move(recordData));
+        ESM4Test::appendSubRecord(recordData, "DAT2", data2);
+        ESM4Test::appendSubRecord(recordData, "ICON", "icons/ammo.dds\0"sv);
+        auto reader = ESM4Test::makeReader("AMMO", std::move(recordData));
         ESM4::Ammunition ammunition;
         ammunition.load(*reader);
         return ammunition;
