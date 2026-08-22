@@ -133,6 +133,7 @@ namespace Resource
         META_Object(Resource, BulletShape)
 
         void setLocalScaling(const btVector3& scale);
+        bool getCollisionAabb(const btTransform& transform, btVector3& min, btVector3& max) const;
 
         std::optional<std::uint32_t> getHavokMaterial(int shapePart, int triangleIndex) const;
         std::optional<std::uint32_t> getHavokMaterial(std::size_t bodyIndex, int shapePart, int triangleIndex) const;

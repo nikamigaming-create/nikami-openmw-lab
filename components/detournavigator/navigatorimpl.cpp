@@ -48,9 +48,29 @@ namespace DetourNavigator
     bool NavigatorImpl::addObjectImpl(
         const ObjectId id, const ObjectShapes& shapes, const btTransform& transform, const UpdateGuard* guard)
     {
-        const CollisionShape collisionShape(
-            shapes.mShapeInstance, *shapes.mShapeInstance->mCollisionShape, shapes.mTransform);
-        bool result = mNavMeshManager.addObject(id, collisionShape, transform, AreaType_ground, guard);
+        if (const auto found = mAdditionalBodyIds.find(id); found != mAdditionalBodyIds.end())
+        {
+            for (const ObjectId bodyId : found->second)
+                mNavMeshManager.removeObject(bodyId, guard);
+            mAdditionalBodyIds.erase(found);
+        }
+
+        bool result = false;
+        std::vector<ObjectId> additionalBodyIds;
+        for (std::size_t bodyIndex = 0; bodyIndex < shapes.mShapeInstance->getCollisionBodyCount(); ++bodyIndex)
+        {
+            const Resource::CollisionBody* body = shapes.mShapeInstance->getCollisionBody(bodyIndex);
+            if (body == nullptr || body->mCollisionShape == nullptr)
+                continue;
+            const ObjectId bodyId = bodyIndex == 0 ? id : ObjectId(body->mCollisionShape.get());
+            const CollisionShape collisionShape(shapes.mShapeInstance, *body->mCollisionShape, shapes.mTransform);
+            result = mNavMeshManager.addObject(bodyId, collisionShape, transform, AreaType_ground, guard) || result;
+            if (bodyIndex != 0)
+                additionalBodyIds.push_back(bodyId);
+        }
+        if (!additionalBodyIds.empty())
+            mAdditionalBodyIds.emplace(id, std::move(additionalBodyIds));
+
         if (const btCollisionShape* const avoidShape = shapes.mShapeInstance->mAvoidCollisionShape.get())
         {
             const ObjectId avoidId(avoidShape);
@@ -80,6 +100,9 @@ namespace DetourNavigator
         const ObjectId id, const ObjectShapes& shapes, const btTransform& transform, const UpdateGuard* guard)
     {
         mNavMeshManager.updateObject(id, transform, AreaType_ground, guard);
+        if (const auto found = mAdditionalBodyIds.find(id); found != mAdditionalBodyIds.end())
+            for (const ObjectId bodyId : found->second)
+                mNavMeshManager.updateObject(bodyId, transform, AreaType_ground, guard);
         if (const btCollisionShape* const avoidShape = shapes.mShapeInstance->mAvoidCollisionShape.get())
         {
             const ObjectId avoidId(avoidShape);
@@ -97,6 +120,12 @@ namespace DetourNavigator
     void NavigatorImpl::removeObject(const ObjectId id, const UpdateGuard* guard)
     {
         mNavMeshManager.removeObject(id, guard);
+        if (const auto found = mAdditionalBodyIds.find(id); found != mAdditionalBodyIds.end())
+        {
+            for (const ObjectId bodyId : found->second)
+                mNavMeshManager.removeObject(bodyId, guard);
+            mAdditionalBodyIds.erase(found);
+        }
         const auto avoid = mAvoidIds.find(id);
         if (avoid != mAvoidIds.end())
             mNavMeshManager.removeObject(avoid->second, guard);

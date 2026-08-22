@@ -654,6 +654,14 @@ namespace
             instance->getCollisionBody(1)->mCollisionShape.get(), shape->getCollisionBody(1)->mCollisionShape.get());
         EXPECT_EQ(instance->getCollisionBody(0)->mCollisionShape->getLocalScaling(), btVector3(2.f, 3.f, 4.f));
         EXPECT_EQ(instance->getCollisionBody(1)->mCollisionShape->getLocalScaling(), btVector3(2.f, 3.f, 4.f));
+        btVector3 primaryMin;
+        btVector3 primaryMax;
+        instance->getCollisionBody(0)->mCollisionShape->getAabb(btTransform::getIdentity(), primaryMin, primaryMax);
+        btVector3 combinedMin;
+        btVector3 combinedMax;
+        ASSERT_TRUE(instance->getCollisionAabb(btTransform::getIdentity(), combinedMin, combinedMax));
+        EXPECT_LT(combinedMin.x(), primaryMin.x());
+        EXPECT_GT(combinedMax.x(), primaryMax.x());
         EXPECT_EQ(instance->getHavokMaterial(0, -1, -1), 4u);
         EXPECT_EQ(instance->getHavokMaterial(1, -1, -1), 9u);
         EXPECT_EQ(instance->getCollisionBody(1)->mBethesdaCollisionFilter, filter);

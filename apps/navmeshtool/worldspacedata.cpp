@@ -441,25 +441,31 @@ namespace NavMeshTool
                         return;
 
                     const btTransform& transform = object.getCollisionObject().getWorldTransform();
-                    const btAABB aabb
-                        = BulletHelpers::getAabb(*object.getCollisionObject().getCollisionShape(), transform);
-                    mergeOrAssign(aabb, data.mAabb, data.mAabbInitialized);
+                    for (std::size_t bodyIndex = 0; bodyIndex < object.getShapeInstance()->getCollisionBodyCount();
+                         ++bodyIndex)
+                    {
+                        const Resource::CollisionBody* body = object.getShapeInstance()->getCollisionBody(bodyIndex);
+                        if (body == nullptr || body->mCollisionShape == nullptr)
+                            continue;
+                        const btAABB aabb = BulletHelpers::getAabb(*body->mCollisionShape, transform);
+                        mergeOrAssign(aabb, data.mAabb, data.mAabbInitialized);
+
+                        const ObjectId objectId(++objectsCounter);
+                        const CollisionShape shape(
+                            object.getShapeInstance(), *body->mCollisionShape, object.getObjectTransform());
+                        if (!manager.addObject(
+                                objectId, shape, transform, DetourNavigator::AreaType_ground, guard.get()))
+                            throw std::logic_error(
+                                makeAddObjectErrorMessage(objectId, DetourNavigator::AreaType_ground, shape));
+
+                        addedCellRefs.push_back(AddedCellRef{
+                            .mCell = cell.getDescription(),
+                            .mCellRef = cellRef,
+                            .mRange = makeTilesPositionsRange(shape.getShape(), transform, settings.mRecast),
+                        });
+                    }
                     if (const btCollisionShape* avoid = object.getShapeInstance()->mAvoidCollisionShape.get())
                         data.mAabb.merge(BulletHelpers::getAabb(*avoid, transform));
-
-                    const ObjectId objectId(++objectsCounter);
-                    const CollisionShape shape(object.getShapeInstance(),
-                        *object.getCollisionObject().getCollisionShape(), object.getObjectTransform());
-
-                    if (!manager.addObject(objectId, shape, transform, DetourNavigator::AreaType_ground, guard.get()))
-                        throw std::logic_error(
-                            makeAddObjectErrorMessage(objectId, DetourNavigator::AreaType_ground, shape));
-
-                    addedCellRefs.push_back(AddedCellRef{
-                        .mCell = cell.getDescription(),
-                        .mCellRef = cellRef,
-                        .mRange = makeTilesPositionsRange(shape.getShape(), transform, settings.mRecast),
-                    });
 
                     if (const btCollisionShape* avoid = object.getShapeInstance()->mAvoidCollisionShape.get())
                     {

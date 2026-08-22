@@ -255,6 +255,57 @@ namespace
             << mPath;
     }
 
+    TEST_F(DetourNavigatorNavigatorTest, additional_collision_body_should_change_navmesh_and_be_removed)
+    {
+        mSettings.mWaitUntilMinDistanceToPlayer = 0;
+        mNavigator.reset(new NavigatorImpl(
+            mSettings, std::make_unique<NavMeshDb>(":memory:", std::numeric_limits<std::uint64_t>::max())));
+
+        const HeightfieldSurface surface = makeSquareHeightfieldSurface(defaultHeightfieldData);
+        const int cellSize = heightfieldTileSize * static_cast<int>(surface.mSize - 1);
+
+        osg::ref_ptr<Resource::BulletShape> bulletShape = new Resource::BulletShape;
+        auto primary = std::make_unique<btCompoundShape>();
+        primary->addChildShape(
+            btTransform(btMatrix3x3::getIdentity(), btVector3(1000, 0, 0)), new btBoxShape(btVector3(20, 20, 100)));
+        bulletShape->mCollisionShape.reset(primary.release());
+        auto additional = std::make_unique<btCompoundShape>();
+        additional->addChildShape(btTransform::getIdentity(), new btBoxShape(btVector3(20, 20, 100)));
+        bulletShape->mAdditionalCollisionBodies.emplace_back(
+            Resource::CollisionShapePtr(additional.release()), Resource::CollisionShapeMaterialTable{}, std::nullopt);
+        osg::ref_ptr<const Resource::BulletShapeInstance> instance(new Resource::BulletShapeInstance(bulletShape));
+        const ObjectId objectId(instance.get());
+
+        ASSERT_TRUE(mNavigator->addAgent(mAgentBounds));
+        mNavigator->addHeightfield(mCellPosition, cellSize, surface, nullptr);
+        mNavigator->update(mPlayerPosition, nullptr);
+        mNavigator->wait(WaitConditionType::allJobsDone, &mListener);
+
+        EXPECT_EQ(findPath(*mNavigator, mAgentBounds, mStart, mEnd, Flag_walk, mAreaCosts, mEndTolerance, {}, mOut),
+            Status::Success);
+        ASSERT_EQ(mPath.size(), 2u);
+
+        mNavigator->addObject(objectId, ObjectShapes(instance, mObjectTransform), mTransform, nullptr);
+        mNavigator->update(mPlayerPosition, nullptr);
+        mNavigator->wait(WaitConditionType::allJobsDone, &mListener);
+        mPath.clear();
+        mOut = std::back_inserter(mPath);
+
+        EXPECT_EQ(findPath(*mNavigator, mAgentBounds, mStart, mEnd, Flag_walk, mAreaCosts, mEndTolerance, {}, mOut),
+            Status::Success);
+        EXPECT_GT(mPath.size(), 2u);
+
+        mNavigator->removeObject(objectId, nullptr);
+        mNavigator->update(mPlayerPosition, nullptr);
+        mNavigator->wait(WaitConditionType::allJobsDone, &mListener);
+        mPath.clear();
+        mOut = std::back_inserter(mPath);
+
+        EXPECT_EQ(findPath(*mNavigator, mAgentBounds, mStart, mEnd, Flag_walk, mAreaCosts, mEndTolerance, {}, mOut),
+            Status::Success);
+        EXPECT_EQ(mPath.size(), 2u);
+    }
+
     TEST_F(DetourNavigatorNavigatorTest, update_changed_object_should_change_navmesh)
     {
         const HeightfieldSurface surface = makeSquareHeightfieldSurface(defaultHeightfieldData);

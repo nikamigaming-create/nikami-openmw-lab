@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace DetourNavigator
 {
@@ -80,6 +81,7 @@ namespace DetourNavigator
         std::map<AgentBounds, std::size_t> mAgents;
         std::unordered_map<ObjectId, ObjectId> mAvoidIds;
         std::unordered_map<ObjectId, ObjectId> mWaterIds;
+        std::unordered_map<ObjectId, std::vector<ObjectId>> mAdditionalBodyIds;
 
         inline bool addObjectImpl(
             const ObjectId id, const ObjectShapes& shapes, const btTransform& transform, const UpdateGuard* guard);

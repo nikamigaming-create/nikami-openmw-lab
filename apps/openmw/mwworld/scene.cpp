@@ -154,8 +154,8 @@ namespace
                 btVector3 aabbMin;
                 btVector3 aabbMax;
                 const auto transform = object->getTransform();
-                object->getShapeInstance()->mCollisionShape->getAabb(transform, aabbMin, aabbMax);
-                lowestPoint = std::min(lowestPoint, static_cast<float>(aabbMin.z()));
+                if (object->getShapeInstance()->getCollisionAabb(transform, aabbMin, aabbMax))
+                    lowestPoint = std::min(lowestPoint, static_cast<float>(aabbMin.z()));
             }
 
             const DetourNavigator::ObjectTransform objectTransform{ ptr.getRefData().getPosition(),
@@ -165,7 +165,8 @@ namespace
             {
                 btVector3 aabbMin;
                 btVector3 aabbMax;
-                object->getShapeInstance()->mCollisionShape->getAabb(btTransform::getIdentity(), aabbMin, aabbMax);
+                if (!object->getShapeInstance()->getCollisionAabb(btTransform::getIdentity(), aabbMin, aabbMax))
+                    return;
 
                 const auto center = (aabbMax + aabbMin) * 0.5f;
 

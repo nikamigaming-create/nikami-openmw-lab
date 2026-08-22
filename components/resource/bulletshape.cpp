@@ -184,6 +184,32 @@ namespace Resource
                 body.mCollisionShape->setLocalScaling(scale);
     }
 
+    bool BulletShape::getCollisionAabb(const btTransform& transform, btVector3& min, btVector3& max) const
+    {
+        bool found = false;
+        for (std::size_t i = 0; i < getCollisionBodyCount(); ++i)
+        {
+            const CollisionBody* body = getCollisionBody(i);
+            if (body == nullptr || body->mCollisionShape == nullptr)
+                continue;
+            btVector3 bodyMin;
+            btVector3 bodyMax;
+            body->mCollisionShape->getAabb(transform, bodyMin, bodyMax);
+            if (!found)
+            {
+                min = bodyMin;
+                max = bodyMax;
+                found = true;
+            }
+            else
+            {
+                min.setMin(bodyMin);
+                max.setMax(bodyMax);
+            }
+        }
+        return found;
+    }
+
     std::optional<std::uint32_t> BulletShape::getHavokMaterial(int shapePart, int triangleIndex) const
     {
         return mCollisionShapeMaterials.getMaterial(shapePart, triangleIndex);

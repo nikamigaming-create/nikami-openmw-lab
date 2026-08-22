@@ -3760,7 +3760,8 @@ namespace MWWorld
 
         btVector3 aabbMin;
         btVector3 aabbMax;
-        object->getShapeInstance()->mCollisionShape->getAabb(btTransform::getIdentity(), aabbMin, aabbMax);
+        if (!object->getShapeInstance()->getCollisionAabb(btTransform::getIdentity(), aabbMin, aabbMax))
+            return false;
 
         const auto toLocal = object->getTransform().inverse();
         const auto localFrom = toLocal(Misc::Convert::toBullet(position));
