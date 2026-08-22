@@ -24,9 +24,14 @@ namespace MWPhysics
 
         btScalar addSingleResult(btCollisionWorld::LocalRayResult& rayResult, bool normalInWorldSpace) override;
 
+        int getHitShapePart() const { return mHitShapePart; }
+        int getHitTriangleIndex() const { return mHitTriangleIndex; }
+
     private:
         const std::span<const btCollisionObject*> mIgnoreList;
         const std::span<const btCollisionObject*> mTargets;
+        int mHitShapePart = -1;
+        int mHitTriangleIndex = -1;
     };
 }
 

@@ -16,6 +16,8 @@ namespace MWPhysics
         osg::Vec3f mHitPos;
         osg::Vec3f mHitNormal;
         MWWorld::Ptr mHitObject;
+        int mHitShapePart = -1;
+        int mHitTriangleIndex = -1;
     };
 
     class RayCastingInterface

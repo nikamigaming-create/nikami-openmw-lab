@@ -21,6 +21,18 @@ namespace MWPhysics
                 return 1.f;
         }
 
-        return btCollisionWorld::ClosestRayResultCallback::addSingleResult(rayResult, normalInWorldSpace);
+        const btScalar result
+            = btCollisionWorld::ClosestRayResultCallback::addSingleResult(rayResult, normalInWorldSpace);
+        if (rayResult.m_localShapeInfo != nullptr)
+        {
+            mHitShapePart = rayResult.m_localShapeInfo->m_shapePart;
+            mHitTriangleIndex = rayResult.m_localShapeInfo->m_triangleIndex;
+        }
+        else
+        {
+            mHitShapePart = -1;
+            mHitTriangleIndex = -1;
+        }
+        return result;
     }
 }

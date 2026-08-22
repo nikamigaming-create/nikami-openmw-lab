@@ -245,6 +245,8 @@ namespace MWPhysics
         {
             result.mHitPos = Misc::Convert::toOsg(resultCallback.m_hitPointWorld);
             result.mHitNormal = Misc::Convert::toOsg(resultCallback.m_hitNormalWorld);
+            result.mHitShapePart = resultCallback.getHitShapePart();
+            result.mHitTriangleIndex = resultCallback.getHitTriangleIndex();
             if (PtrHolder* ptrHolder = static_cast<PtrHolder*>(resultCallback.m_collisionObject->getUserPointer()))
                 result.mHitObject = ptrHolder->getPtr();
         }
