@@ -457,7 +457,7 @@ namespace MWPhysics
         assert(projectile.mProjectile != nullptr);
 
         ProjectileConvexCallback resultCallback(
-            projectile.mCaster, projectile.mCollisionObject, btFrom, btTo, *projectile.mProjectile);
+            projectile.mCasters, projectile.mCollisionObject, btFrom, btTo, *projectile.mProjectile);
         resultCallback.m_collisionFilterMask = CollisionType_AnyPhysical;
         resultCallback.m_collisionFilterGroup = CollisionType_Projectile;
 

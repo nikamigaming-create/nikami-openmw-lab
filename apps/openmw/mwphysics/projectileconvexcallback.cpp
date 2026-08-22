@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include <BulletCollision/CollisionDispatch/btCollisionObject.h>
 
 #include "collisiontype.hpp"
@@ -11,7 +13,7 @@ namespace MWPhysics
     {
         const auto* hitObject = result.m_hitCollisionObject;
         // don't hit the caster
-        if (hitObject == mCaster)
+        if (std::ranges::find(mCasters, hitObject) != mCasters.end())
             return 1.f;
 
         // don't hit the projectile
@@ -30,7 +32,7 @@ namespace MWPhysics
             case CollisionType_Projectile:
             {
                 auto* target = static_cast<Projectile*>(hitObject->getUserPointer());
-                if (!mProjectile.isValidTarget(target->getCasterCollisionObject()))
+                if (!mProjectile.isAnyValidTarget(target->getCasterCollisionObjects()))
                     return 1.f;
                 target->hit(mMe, m_hitPointWorld, m_hitNormalWorld);
                 break;

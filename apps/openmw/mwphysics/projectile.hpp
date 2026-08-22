@@ -4,6 +4,8 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <span>
+#include <vector>
 
 #include <LinearMath/btVector3.h>
 
@@ -41,7 +43,7 @@ namespace MWPhysics
 
         MWWorld::Ptr getCaster() const;
         void setCaster(const MWWorld::Ptr& caster);
-        const btCollisionObject* getCasterCollisionObject() const { return mCasterColObj; }
+        std::span<const btCollisionObject* const> getCasterCollisionObjects() const { return mCasterColObjs; }
 
         void setHitWater() { mHitWater = true; }
 
@@ -52,6 +54,7 @@ namespace MWPhysics
 
         void setValidTargets(const std::vector<MWWorld::Ptr>& targets);
         bool isValidTarget(const btCollisionObject* target) const;
+        bool isAnyValidTarget(std::span<const btCollisionObject* const> targets) const;
 
         btVector3 getHitPosition() const { return mHitPosition; }
 
@@ -62,7 +65,7 @@ namespace MWPhysics
         bool mHitWater;
         std::atomic<bool> mActive;
         MWWorld::Ptr mCaster;
-        const btCollisionObject* mCasterColObj;
+        std::vector<const btCollisionObject*> mCasterColObjs;
         const btCollisionObject* mHitTarget;
         btVector3 mHitPosition;
         btVector3 mHitNormal;

@@ -1,6 +1,7 @@
 #ifndef OPENMW_MWPHYSICS_RAYCASTING_H
 #define OPENMW_MWPHYSICS_RAYCASTING_H
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -20,6 +21,7 @@ namespace MWPhysics
         osg::Vec3f mHitNormal;
         MWWorld::Ptr mHitObject;
         std::optional<std::uint32_t> mHitHavokMaterial;
+        std::size_t mHitBodyIndex = 0;
         int mHitShapePart = -1;
         int mHitTriangleIndex = -1;
     };

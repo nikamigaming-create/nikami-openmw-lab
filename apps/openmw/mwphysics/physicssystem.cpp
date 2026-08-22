@@ -1,6 +1,7 @@
 #include "physicssystem.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <vector>
 
@@ -59,6 +60,12 @@
 
 namespace
 {
+    std::size_t getCollisionBodyIndex(const btCollisionObject& object)
+    {
+        const int index = object.getUserIndex();
+        return index >= 0 ? static_cast<std::size_t>(index) : 0;
+    }
+
     void handleJump(const MWWorld::Ptr& ptr)
     {
         if (!ptr.getClass().isActor())
@@ -219,7 +226,10 @@ namespace MWPhysics
                 {
                     const Object* object = getObject(ptr);
                     if (object)
-                        ignoreList.push_back(object->getCollisionObject());
+                    {
+                        const auto collisionObjects = object->getCollisionObjects();
+                        ignoreList.insert(ignoreList.end(), collisionObjects.begin(), collisionObjects.end());
+                    }
                 }
             }
         }
@@ -246,13 +256,14 @@ namespace MWPhysics
         {
             result.mHitPos = Misc::Convert::toOsg(resultCallback.m_hitPointWorld);
             result.mHitNormal = Misc::Convert::toOsg(resultCallback.m_hitNormalWorld);
+            result.mHitBodyIndex = getCollisionBodyIndex(*resultCallback.m_collisionObject);
             result.mHitShapePart = resultCallback.getHitShapePart();
             result.mHitTriangleIndex = resultCallback.getHitTriangleIndex();
             if (PtrHolder* ptrHolder = static_cast<PtrHolder*>(resultCallback.m_collisionObject->getUserPointer()))
             {
                 result.mHitObject = ptrHolder->getPtr();
                 result.mHitHavokMaterial
-                    = ptrHolder->getHavokMaterial(result.mHitShapePart, result.mHitTriangleIndex);
+                    = ptrHolder->getHavokMaterial(result.mHitBodyIndex, result.mHitShapePart, result.mHitTriangleIndex);
             }
         }
         return result;
@@ -277,13 +288,14 @@ namespace MWPhysics
         {
             result.mHitPos = Misc::Convert::toOsg(callback.m_hitPointWorld);
             result.mHitNormal = Misc::Convert::toOsg(callback.m_hitNormalWorld);
+            result.mHitBodyIndex = getCollisionBodyIndex(*callback.m_hitCollisionObject);
             result.mHitShapePart = callback.getHitShapePart();
             result.mHitTriangleIndex = callback.getHitTriangleIndex();
             if (auto* ptrHolder = static_cast<PtrHolder*>(callback.m_hitCollisionObject->getUserPointer()))
             {
                 result.mHitObject = ptrHolder->getPtr();
                 result.mHitHavokMaterial
-                    = ptrHolder->getHavokMaterial(result.mHitShapePart, result.mHitTriangleIndex);
+                    = ptrHolder->getHavokMaterial(result.mHitBodyIndex, result.mHitShapePart, result.mHitTriangleIndex);
             }
         }
         return result;
@@ -345,9 +357,16 @@ namespace MWPhysics
         const Object* physobject = getObject(object);
         if (!physobject)
             return osg::BoundingBox();
-        btVector3 min, max;
-        mTaskScheduler->getAabb(physobject->getCollisionObject(), min, max);
-        return osg::BoundingBox(Misc::Convert::toOsg(min), Misc::Convert::toOsg(max));
+        osg::BoundingBox result;
+        for (const btCollisionObject* collisionObject : physobject->getCollisionObjects())
+        {
+            btVector3 min;
+            btVector3 max;
+            mTaskScheduler->getAabb(collisionObject, min, max);
+            result.expandBy(Misc::Convert::toOsg(min));
+            result.expandBy(Misc::Convert::toOsg(max));
+        }
+        return result;
     }
 
     osg::Vec3f PhysicsSystem::getCollisionObjectPosition(const MWWorld::ConstPtr& actor) const
@@ -362,19 +381,20 @@ namespace MWPhysics
     std::vector<ContactPoint> PhysicsSystem::getCollisionsPoints(
         const MWWorld::ConstPtr& ptr, int collisionGroup, int collisionMask) const
     {
-        btCollisionObject* me = nullptr;
-
         auto found = mObjects.find(ptr.mRef);
-        if (found != mObjects.end())
-            me = found->second->getCollisionObject();
-        else
+        if (found == mObjects.end())
             return {};
 
-        ContactTestResultCallback resultCallback(me);
-        resultCallback.m_collisionFilterGroup = collisionGroup;
-        resultCallback.m_collisionFilterMask = collisionMask;
-        mTaskScheduler->contactTest(me, resultCallback);
-        return resultCallback.mResult;
+        std::vector<ContactPoint> result;
+        for (btCollisionObject* collisionObject : found->second->getCollisionObjects())
+        {
+            ContactTestResultCallback resultCallback(collisionObject);
+            resultCallback.m_collisionFilterGroup = collisionGroup;
+            resultCallback.m_collisionFilterMask = collisionMask;
+            mTaskScheduler->contactTest(collisionObject, resultCallback);
+            result.insert(result.end(), resultCallback.mResult.begin(), resultCallback.mResult.end());
+        }
+        return result;
     }
 
     std::vector<MWWorld::Ptr> PhysicsSystem::getCollisions(
@@ -924,7 +944,7 @@ namespace MWPhysics
     ProjectileFrameData::ProjectileFrameData(Projectile& projectile)
         : mPosition(projectile.getPosition())
         , mMovement(projectile.velocity())
-        , mCaster(projectile.getCasterCollisionObject())
+        , mCasters(projectile.getCasterCollisionObjects().begin(), projectile.getCasterCollisionObjects().end())
         , mCollisionObject(projectile.getCollisionObject())
         , mProjectile(&projectile)
     {

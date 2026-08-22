@@ -12,6 +12,9 @@
 
 #include <LinearMath/btTransform.h>
 
+#include <limits>
+#include <stdexcept>
+
 namespace MWPhysics
 {
     Object::Object(const MWWorld::Ptr& ptr, osg::ref_ptr<Resource::BulletShapeInstance> shapeInstance,
@@ -25,17 +28,40 @@ namespace MWPhysics
         , mTaskScheduler(scheduler)
         , mCollidedWith(ScriptedCollisionType_None)
     {
-        mCollisionObject = BulletHelpers::makeCollisionObject(mShapeInstance->mCollisionShape.get(),
-            Misc::Convert::toBullet(mPosition), Misc::Convert::toBullet(rotation));
-        mCollisionObject->setUserPointer(this);
         mShapeInstance->setLocalScaling(mScale);
-        mTaskScheduler->addCollisionObject(mCollisionObject.get(), collisionType,
-            CollisionType_Actor | CollisionType_HeightMap | CollisionType_Projectile);
+        const std::size_t bodyCount = mShapeInstance->getCollisionBodyCount();
+        if (bodyCount == 0 || bodyCount > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+            throw std::logic_error("Physics object requires a representable collision body");
+
+        mAdditionalCollisionObjects.reserve(bodyCount - 1);
+        mCollisionObjects.reserve(bodyCount);
+        for (std::size_t bodyIndex = 0; bodyIndex < bodyCount; ++bodyIndex)
+        {
+            const Resource::CollisionBody* body = mShapeInstance->getCollisionBody(bodyIndex);
+            if (body == nullptr || body->mCollisionShape == nullptr)
+                throw std::logic_error("Physics object collision body has no shape");
+
+            auto object = BulletHelpers::makeCollisionObject(
+                body->mCollisionShape.get(), Misc::Convert::toBullet(mPosition), Misc::Convert::toBullet(rotation));
+            object->setUserPointer(this);
+            object->setUserIndex(static_cast<int>(bodyIndex));
+            btCollisionObject* const view = object.get();
+            if (bodyIndex == 0)
+                mCollisionObject = std::move(object);
+            else
+                mAdditionalCollisionObjects.push_back(std::move(object));
+            mCollisionObjects.push_back(view);
+        }
+
+        for (btCollisionObject* object : mCollisionObjects)
+            mTaskScheduler->addCollisionObject(
+                object, collisionType, CollisionType_Actor | CollisionType_HeightMap | CollisionType_Projectile);
     }
 
     Object::~Object()
     {
-        mTaskScheduler->removeCollisionObject(mCollisionObject.get());
+        for (btCollisionObject* object : mCollisionObjects)
+            mTaskScheduler->removeCollisionObject(object);
     }
 
     const Resource::BulletShapeInstance* Object::getShapeInstance() const
@@ -45,7 +71,13 @@ namespace MWPhysics
 
     std::optional<std::uint32_t> Object::getHavokMaterial(int shapePart, int triangleIndex) const
     {
-        return mShapeInstance != nullptr ? mShapeInstance->getHavokMaterial(shapePart, triangleIndex) : std::nullopt;
+        return getHavokMaterial(0, shapePart, triangleIndex);
+    }
+
+    std::optional<std::uint32_t> Object::getHavokMaterial(std::size_t bodyIndex, int shapePart, int triangleIndex) const
+    {
+        return mShapeInstance != nullptr ? mShapeInstance->getHavokMaterial(bodyIndex, shapePart, triangleIndex)
+                                         : std::nullopt;
     }
 
     void Object::setScale(float scale)
@@ -82,7 +114,8 @@ namespace MWPhysics
             btTransform trans;
             trans.setOrigin(Misc::Convert::toBullet(mPosition));
             trans.setRotation(Misc::Convert::toBullet(mRotation));
-            mCollisionObject->setWorldTransform(trans);
+            for (btCollisionObject* object : mCollisionObjects)
+                object->setWorldTransform(trans);
             mTransformUpdatePending = false;
         }
     }

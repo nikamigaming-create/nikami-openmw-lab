@@ -19,6 +19,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     mwphysics/testclosestconvexresultcallback.cpp
     mwphysics/testclosestnotmerayresultcallback.cpp
+    mwphysics/testobject.cpp
 
     mwscript/testscripts.cpp
 )

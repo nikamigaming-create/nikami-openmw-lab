@@ -6,8 +6,12 @@
 #include <LinearMath/btTransform.h>
 #include <osg/Node>
 
+#include <cstddef>
 #include <map>
+#include <memory>
 #include <mutex>
+#include <span>
+#include <vector>
 
 namespace Resource
 {
@@ -35,6 +39,9 @@ namespace MWPhysics
 
         const Resource::BulletShapeInstance* getShapeInstance() const;
         std::optional<std::uint32_t> getHavokMaterial(int shapePart = -1, int triangleIndex = -1) const override;
+        std::optional<std::uint32_t> getHavokMaterial(
+            std::size_t bodyIndex, int shapePart, int triangleIndex) const override;
+        std::span<btCollisionObject* const> getCollisionObjects() const { return mCollisionObjects; }
         void setScale(float scale);
         void setRotation(osg::Quat quat);
         void updatePosition();
@@ -53,6 +60,8 @@ namespace MWPhysics
 
     private:
         osg::ref_ptr<Resource::BulletShapeInstance> mShapeInstance;
+        std::vector<std::unique_ptr<btCollisionObject>> mAdditionalCollisionObjects;
+        std::vector<btCollisionObject*> mCollisionObjects;
         std::map<int, osg::NodePath> mRecordIndexToNodePath;
         bool mSolid;
         btVector3 mScale;

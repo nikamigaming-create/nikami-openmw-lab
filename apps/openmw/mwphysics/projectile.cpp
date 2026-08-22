@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cstddef>
 #include <memory>
 
 #include <BulletCollision/CollisionShapes/btSphereShape.h>
@@ -82,7 +84,9 @@ namespace MWPhysics
     {
         assert(!mActive);
         const auto* target = static_cast<const PtrHolder*>(mHitTarget->getUserPointer());
-        return target != nullptr ? target->getHavokMaterial(mHitShapePart, mHitTriangleIndex) : std::nullopt;
+        const int index = mHitTarget->getUserIndex();
+        const std::size_t bodyIndex = index >= 0 ? static_cast<std::size_t>(index) : 0;
+        return target != nullptr ? target->getHavokMaterial(bodyIndex, mHitShapePart, mHitTriangleIndex) : std::nullopt;
     }
 
     MWWorld::Ptr Projectile::getCaster() const
@@ -93,15 +97,14 @@ namespace MWPhysics
     void Projectile::setCaster(const MWWorld::Ptr& caster)
     {
         mCaster = caster;
-        mCasterColObj = [this, &caster]() -> const btCollisionObject* {
-            const Actor* actor = mPhysics->getActor(caster);
-            if (actor)
-                return actor->getCollisionObject();
-            const Object* object = mPhysics->getObject(caster);
-            if (object)
-                return object->getCollisionObject();
-            return nullptr;
-        }();
+        mCasterColObjs.clear();
+        if (const Actor* actor = mPhysics->getActor(caster))
+            mCasterColObjs.push_back(actor->getCollisionObject());
+        else if (const Object* object = mPhysics->getObject(caster))
+        {
+            const auto collisionObjects = object->getCollisionObjects();
+            mCasterColObjs.insert(mCasterColObjs.end(), collisionObjects.begin(), collisionObjects.end());
+        }
     }
 
     void Projectile::setValidTargets(const std::vector<MWWorld::Ptr>& targets)
@@ -120,7 +123,7 @@ namespace MWPhysics
     {
         assert(target);
         std::scoped_lock lock(mMutex);
-        if (mCasterColObj == target)
+        if (std::ranges::find(mCasterColObjs, target) != mCasterColObjs.end())
             return false;
 
         if (mValidTargets.empty())
@@ -128,6 +131,12 @@ namespace MWPhysics
 
         return std::any_of(mValidTargets.begin(), mValidTargets.end(),
             [target](const btCollisionObject* actor) { return target == actor; });
+    }
+
+    bool Projectile::isAnyValidTarget(std::span<const btCollisionObject* const> targets) const
+    {
+        return targets.empty()
+            || std::ranges::any_of(targets, [this](const btCollisionObject* target) { return isValidTarget(target); });
     }
 
 }

@@ -111,7 +111,7 @@ namespace MWPhysics
         explicit ProjectileFrameData(Projectile& projectile);
         osg::Vec3f mPosition;
         osg::Vec3f mMovement;
-        const btCollisionObject* mCaster;
+        std::vector<const btCollisionObject*> mCasters;
         const btCollisionObject* mCollisionObject;
         Projectile* mProjectile;
     };
