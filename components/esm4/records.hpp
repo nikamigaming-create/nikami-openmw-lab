@@ -37,6 +37,7 @@
 #include <components/esm4/loadidlm.hpp>
 #include <components/esm4/loadimod.hpp>
 #include <components/esm4/loadinfo.hpp>
+#include <components/esm4/loadipct.hpp>
 #include <components/esm4/loadipds.hpp>
 #include <components/esm4/loadingr.hpp>
 #include <components/esm4/loadkeym.hpp>

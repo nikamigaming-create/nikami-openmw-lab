@@ -244,6 +244,7 @@ add_component_dir (esm4
     loadidlm
     loadimod
     loadinfo
+    loadipct
     loadipds
     loadingr
     loadkeym
