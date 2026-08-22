@@ -1,6 +1,12 @@
 #include "bulletnifloader.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cassert>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <optional>
 #include <sstream>
 #include <tuple>
 #include <variant>
@@ -14,15 +20,297 @@
 #include <components/nif/nifstream.hpp>
 #include <components/nif/node.hpp>
 #include <components/nif/parent.hpp>
+#include <components/nif/physics.hpp>
+
+#include <BulletCollision/CollisionShapes/btTriangleIndexVertexArray.h>
 
 namespace
 {
+
+    // Fallout 3 / New Vegas bhk positions use Havok units at a 1:7 ratio to scene-graph units.
+    constexpr float sHavokToGameUnits = 7.f;
+
+    struct TriangleMeshPart
+    {
+        std::vector<osg::Vec3f> mVertices;
+        std::vector<std::array<std::uint16_t, 3>> mTriangles;
+    };
+
+    class OwnedTriangleIndexVertexArray final : public btTriangleIndexVertexArray
+    {
+    public:
+        explicit OwnedTriangleIndexVertexArray(std::vector<TriangleMeshPart> parts)
+            : mParts(std::move(parts))
+        {
+            static_assert(sizeof(osg::Vec3f) == sizeof(float) * 3);
+            static_assert(sizeof(std::array<std::uint16_t, 3>) == sizeof(std::uint16_t) * 3);
+
+            for (const TriangleMeshPart& part : mParts)
+            {
+                btIndexedMesh indexedMesh;
+                indexedMesh.m_numTriangles = static_cast<int>(part.mTriangles.size());
+                indexedMesh.m_triangleIndexBase = reinterpret_cast<const unsigned char*>(part.mTriangles.data());
+                indexedMesh.m_triangleIndexStride = static_cast<int>(sizeof(part.mTriangles.front()));
+                indexedMesh.m_numVertices = static_cast<int>(part.mVertices.size());
+                indexedMesh.m_vertexBase = reinterpret_cast<const unsigned char*>(part.mVertices.data());
+                indexedMesh.m_vertexStride = static_cast<int>(sizeof(part.mVertices.front()));
+                indexedMesh.m_vertexType = PHY_FLOAT;
+                addIndexedMesh(indexedMesh, PHY_SHORT);
+            }
+        }
+
+    private:
+        std::vector<TriangleMeshPart> mParts;
+    };
+
+    struct PackedCollision
+    {
+        Resource::CollisionShapePtr mShape;
+        Resource::CollisionShapeMaterialTable mMaterials;
+    };
+
+    struct SubshapeRange
+    {
+        std::size_t mBegin = 0;
+        std::size_t mEnd = 0;
+        std::optional<std::uint32_t> mMaterial;
+    };
+
+    std::optional<PackedCollision> makePackedCollision(
+        const Nif::bhkPackedNiTriStripsShape& packed, const Nif::bhkRigidBody& body, const osg::Matrixf& nodeTransform)
+    {
+        if (packed.mData.empty())
+            return std::nullopt;
+
+        const Nif::hkPackedNiTriStripsData& data = packed.mData.get();
+        if (data.mVertices.empty() || data.mTriangles.empty()
+            || data.mVertices.size() > static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max()) + 1)
+            return std::nullopt;
+
+        const std::vector<Nif::hkSubPartData>& subshapes
+            = data.mSubshapes.empty() ? packed.mSubshapes : data.mSubshapes;
+        std::vector<SubshapeRange> ranges;
+        if (subshapes.empty())
+            ranges.push_back({ 0, data.mVertices.size(), std::nullopt });
+        else
+        {
+            ranges.reserve(subshapes.size());
+            std::size_t begin = 0;
+            for (const Nif::hkSubPartData& subshape : subshapes)
+            {
+                const std::size_t end = begin + subshape.mNumVertices;
+                if (end > data.mVertices.size())
+                    return std::nullopt;
+                ranges.push_back({ begin, end, subshape.mHavokMaterial.mMaterial & 0x1f });
+                begin = end;
+            }
+            if (begin != data.mVertices.size())
+                return std::nullopt;
+        }
+
+        const auto transformVertex = [&](const osg::Vec3f& source) {
+            osg::Vec3f result = source * sHavokToGameUnits;
+            if (body.mRecordType == Nif::RC_bhkRigidBodyT)
+            {
+                result = body.mInfo.mRotation * result;
+                result
+                    += osg::Vec3f(body.mInfo.mTranslation.x(), body.mInfo.mTranslation.y(), body.mInfo.mTranslation.z())
+                    * sHavokToGameUnits;
+            }
+            return nodeTransform.preMult(result);
+        };
+
+        std::vector<TriangleMeshPart> sourceParts(ranges.size());
+        std::vector<std::size_t> vertexParts(data.mVertices.size());
+        for (std::size_t part = 0; part < ranges.size(); ++part)
+        {
+            const SubshapeRange& range = ranges[part];
+            sourceParts[part].mVertices.reserve(range.mEnd - range.mBegin);
+            for (std::size_t vertex = range.mBegin; vertex < range.mEnd; ++vertex)
+            {
+                vertexParts[vertex] = part;
+                sourceParts[part].mVertices.push_back(transformVertex(data.mVertices[vertex]));
+            }
+        }
+
+        for (const Nif::TriangleData& sourceTriangle : data.mTriangles)
+        {
+            if (std::ranges::any_of(
+                    sourceTriangle.mTriangle, [&](std::uint16_t vertex) { return vertex >= data.mVertices.size(); }))
+                return std::nullopt;
+
+            const std::size_t firstPart = vertexParts[sourceTriangle.mTriangle[0]];
+            if (vertexParts[sourceTriangle.mTriangle[1]] != firstPart
+                || vertexParts[sourceTriangle.mTriangle[2]] != firstPart)
+                return std::nullopt;
+
+            const std::size_t begin = ranges[firstPart].mBegin;
+            sourceParts[firstPart].mTriangles.push_back(
+                { static_cast<std::uint16_t>(sourceTriangle.mTriangle[0] - begin),
+                    static_cast<std::uint16_t>(sourceTriangle.mTriangle[1] - begin),
+                    static_cast<std::uint16_t>(sourceTriangle.mTriangle[2] - begin) });
+        }
+
+        std::vector<TriangleMeshPart> parts;
+        Resource::CollisionShapeMaterialTable materials;
+        std::optional<std::uint32_t> uniformMaterial;
+        bool hasUniformMaterial = true;
+        if (sourceParts.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+            return std::nullopt;
+        for (std::size_t sourcePart = 0; sourcePart < sourceParts.size(); ++sourcePart)
+        {
+            if (sourceParts[sourcePart].mTriangles.empty())
+                continue;
+            const int shapePart = static_cast<int>(parts.size());
+            parts.push_back(std::move(sourceParts[sourcePart]));
+            if (ranges[sourcePart].mMaterial)
+            {
+                if (!materials.addShapePartMaterial(shapePart, *ranges[sourcePart].mMaterial))
+                    return std::nullopt;
+                if (!uniformMaterial)
+                    uniformMaterial = ranges[sourcePart].mMaterial;
+                else if (*uniformMaterial != *ranges[sourcePart].mMaterial)
+                    hasUniformMaterial = false;
+            }
+            else
+                hasUniformMaterial = false;
+        }
+        if (parts.empty())
+            return std::nullopt;
+
+        if (uniformMaterial && hasUniformMaterial && !materials.addUniformMaterial(*uniformMaterial))
+            return std::nullopt;
+
+        auto mesh = std::make_unique<OwnedTriangleIndexVertexArray>(std::move(parts));
+        Resource::CollisionShapePtr shape(new Resource::TriangleMeshShape(mesh.release(), true));
+        return PackedCollision{ std::move(shape), std::move(materials) };
+    }
+
+    bool packedScaleMirrorsNode(const Nif::bhkPackedNiTriStripsShape& packed, const Nif::NiAVObject& node)
+    {
+        constexpr float tolerance = 1e-5f;
+        const float nodeScale = node.mTransform.mScale;
+        if (!std::isfinite(nodeScale))
+            return false;
+        for (unsigned int component = 0; component < 4; ++component)
+        {
+            const float value = packed.mScale[component];
+            const float expected = component == 3 ? 0.f : nodeScale;
+            if (!std::isfinite(value) || std::abs(value - expected) > tolerance)
+                return false;
+        }
+        return true;
+    }
+
+    osg::Matrixf getNodeTransform(const Nif::NiAVObject& node, const Nif::Parent* parent)
+    {
+        osg::Matrixf transform = node.mTransform.toMatrix();
+        for (const Nif::Parent* current = parent; current != nullptr; current = current->mParent)
+            transform *= current->mNiNode.mTransform.toMatrix();
+        return transform;
+    }
+
+    std::optional<PackedCollision> loadPackedCollision(const Nif::NiAVObject& node, const Nif::Parent* parent)
+    {
+        if (node.mCollision.empty())
+            return std::nullopt;
+        const auto* collision = dynamic_cast<const Nif::bhkCollisionObject*>(&node.mCollision.get());
+        if (collision == nullptr || collision->mBody.empty())
+            return std::nullopt;
+        const auto* body = dynamic_cast<const Nif::bhkRigidBody*>(&collision->mBody.get());
+        if (body == nullptr || body->mShape.empty())
+            return std::nullopt;
+
+        const Nif::bhkShape* shape = body->mShape.getPtr();
+        if (const auto* mopp = dynamic_cast<const Nif::bhkMoppBvTreeShape*>(shape))
+        {
+            if (mopp->mShape.empty())
+                return std::nullopt;
+            shape = mopp->mShape.getPtr();
+        }
+        const auto* packed = dynamic_cast<const Nif::bhkPackedNiTriStripsShape*>(shape);
+        // Bethesda's supported packed-shape layout mirrors the owning node scale. The node transform below already
+        // applies it; reject independent/non-uniform scale rather than double-scaling it.
+        if (packed == nullptr || !packedScaleMirrorsNode(*packed, node))
+            return std::nullopt;
+        return makePackedCollision(*packed, *body, getNodeTransform(node, parent));
+    }
+
+    bool hasActiveTransformController(const Nif::NiAVObject& node)
+    {
+        for (Nif::NiTimeControllerPtr controller = node.mController; !controller.empty();
+            controller = controller->mNext)
+        {
+            if (!controller->isActive())
+                continue;
+            if (controller->mRecordType == Nif::RC_NiKeyframeController
+                || controller->mRecordType == Nif::RC_NiPathController
+                || controller->mRecordType == Nif::RC_NiRollController)
+                return true;
+        }
+        return false;
+    }
+
+    struct PackedCollisionSearch
+    {
+        std::optional<PackedCollision> mCollision;
+        bool mRejected = false;
+    };
+
+    void findPackedCollision(const Nif::NiAVObject& node, const Nif::Parent* parent, bool inheritedAnimated,
+        bool inheritedAvoid, PackedCollisionSearch& result)
+    {
+        if (result.mRejected || (node.mRecordType == Nif::RC_NiCollisionSwitch && !node.collisionActive()))
+            return;
+
+        const bool animated = inheritedAnimated || hasActiveTransformController(node);
+        const bool avoid = inheritedAvoid || node.mRecordType == Nif::RC_AvoidNode;
+        if (!node.mCollision.empty())
+        {
+            // Animated and avoid bodies need distinct runtime ownership. Multiple bodies also remain distinct until
+            // their motion and filter semantics can be represented without flattening them by guesswork.
+            if (result.mCollision || animated || avoid)
+            {
+                result.mRejected = true;
+                return;
+            }
+            auto collision = loadPackedCollision(node, parent);
+            if (!collision)
+            {
+                result.mRejected = true;
+                return;
+            }
+            result.mCollision = std::move(collision);
+        }
+
+        const auto* parentNode = dynamic_cast<const Nif::NiNode*>(&node);
+        if (parentNode == nullptr)
+            return;
+        const Nif::Parent currentParent{ *parentNode, parent };
+        for (const Nif::NiAVObjectPtr& child : parentNode->mChildren)
+        {
+            if (!child.empty())
+                findPackedCollision(child.get(), &currentParent, animated, avoid, result);
+            if (result.mRejected || node.mRecordType == Nif::RC_NiSwitchNode
+                || node.mRecordType == Nif::RC_NiFltAnimationNode)
+                break;
+        }
+    }
 
     bool pathFileNameStartsWithX(const std::string& path)
     {
         const std::size_t slashpos = path.find_last_of("/\\");
         const std::size_t letterPos = slashpos == std::string::npos ? 0 : slashpos + 1;
         return letterPos < path.size() && (path[letterPos] == 'x' || path[letterPos] == 'X');
+    }
+
+    bool hasBethesdaCollisionFlag(const Nif::NiAVObject& root)
+    {
+        for (const auto& extra : root.getExtraList())
+            if (!extra.empty() && extra->mRecordType == Nif::RC_BSXFlags
+                && (static_cast<const Nif::NiIntegerExtraData&>(extra.get()).mData & 2) != 0)
+                return true;
+        return false;
     }
 
 }
@@ -60,6 +348,31 @@ namespace NifBullet
         for (const Nif::NiAVObject* node : roots)
             if (findBoundingBox(*node))
                 break;
+
+        if (nif.getVersion() == Nif::NIFFile::NIFVersion::VER_BGS
+            && nif.getBethVersion() == Nif::NIFFile::BethVersion::BETHVER_FO3)
+        {
+            // Treat the active collision hierarchy as one atomic contract. A root body does not make additional
+            // descendant bodies disappear, and a rejected authored tree must not be mixed with generated geometry.
+            PackedCollisionSearch search;
+            const bool fileAnimated = pathFileNameStartsWithX(mShape->mFileName);
+            bool foundCollisionRoot = false;
+            for (const Nif::NiAVObject* root : roots)
+            {
+                if (!hasBethesdaCollisionFlag(*root))
+                    continue;
+                foundCollisionRoot = true;
+                findPackedCollision(*root, nullptr, fileAnimated, false, search);
+                if (search.mRejected)
+                    break;
+            }
+            if (foundCollisionRoot && search.mCollision && !search.mRejected)
+            {
+                mShape->mCollisionShape = std::move(search.mCollision->mShape);
+                mShape->mCollisionShapeMaterials = std::move(search.mCollision->mMaterials);
+                return mShape;
+            }
+        }
 
         HandleNodeArgs args;
 

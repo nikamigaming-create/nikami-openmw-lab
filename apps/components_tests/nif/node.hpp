@@ -28,6 +28,7 @@ namespace Nif::Testing
         init(static_cast<NiObjectNET&>(value));
         value.mFlags = 0;
         init(value.mTransform);
+        value.mCollision = NiCollisionObjectPtr(nullptr);
     }
 
     inline void init(NiGeometry& value)
