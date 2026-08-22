@@ -10,7 +10,10 @@
 
 #include <BulletCollision/CollisionDispatch/btCollisionWorld.h>
 #include <BulletCollision/CollisionShapes/btBoxShape.h>
+#include <BulletCollision/CollisionShapes/btCapsuleShape.h>
 #include <BulletCollision/CollisionShapes/btCompoundShape.h>
+#include <BulletCollision/CollisionShapes/btConvexHullShape.h>
+#include <BulletCollision/CollisionShapes/btSphereShape.h>
 #include <BulletCollision/CollisionShapes/btTriangleMesh.h>
 
 #include <gmock/gmock.h>
@@ -391,6 +394,28 @@ namespace
         void attach(Nif::NiAVObject& node) { node.mCollision = Nif::NiCollisionObjectPtr(&mCollision); }
     };
 
+    template <class Shape>
+    struct PrimitiveCollisionRecords
+    {
+        Nif::bhkCollisionObject mCollision;
+        Nif::bhkRigidBody mBody;
+        Shape mShape;
+
+        PrimitiveCollisionRecords(Nif::RecordType shapeType, Nif::RecordType bodyType = Nif::RC_bhkRigidBody)
+        {
+            mCollision.mRecordType = Nif::RC_bhkCollisionObject;
+            mCollision.mFlags = 1;
+            mBody.mRecordType = bodyType;
+            mBody.mInfo.mRotation = osg::Quat();
+            mBody.mInfo.mTranslation = osg::Vec4f();
+            mShape.mRecordType = shapeType;
+            mBody.mShape = Nif::bhkShapePtr(&mShape);
+            mCollision.mBody = Nif::bhkWorldObjectPtr(&mBody);
+        }
+
+        void attach(Nif::NiAVObject& node) { node.mCollision = Nif::NiCollisionObjectPtr(&mCollision); }
+    };
+
     void copy(const btTransform& src, Nif::NiTransform& dst)
     {
         dst.mTranslation = Misc::Convert::makeOsgVec3f(src.getOrigin());
@@ -466,6 +491,15 @@ namespace
             mNiIntegerExtraData.mRecordType = Nif::RC_BSXFlags;
             root.mExtraList.push_back(Nif::ExtraPtr(&mNiIntegerExtraData));
         }
+
+        osg::ref_ptr<Resource::BulletShape> loadFallout(Nif::NiAVObject& root)
+        {
+            Nif::NIFFile file(testNif);
+            file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+            file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+            file.mRoots.push_back(&root);
+            return mLoader.load(file);
+        }
     };
 
     TEST_F(TestBulletNifLoader, for_zero_num_roots_should_return_default)
@@ -501,9 +535,12 @@ namespace
 
         EXPECT_FALSE(materials.addShapePartMaterial(-1, 1));
         EXPECT_FALSE(materials.addTriangleMaterial(2, -1, 1));
+        EXPECT_FALSE(materials.addCompoundChildMaterial(-1, 1));
         EXPECT_TRUE(materials.addShapePartMaterial(2, 3));
         EXPECT_TRUE(materials.addShapePartMaterial(2, 3));
         EXPECT_FALSE(materials.addShapePartMaterial(2, 4));
+        EXPECT_TRUE(materials.addCompoundChildMaterial(5, 7));
+        EXPECT_EQ(materials.getMaterial(-1, 5), 7u);
     }
 
     TEST(BulletShapeMaterialTest, leavesUnmappedHitsUnresolved)
@@ -511,6 +548,207 @@ namespace
         const Resource::BulletShape shape;
 
         EXPECT_FALSE(shape.getHavokMaterial(0, 0).has_value());
+    }
+
+    TEST(BulletShapeMaterialTest, reportsCompoundConvexChildIdentity)
+    {
+        btCompoundShape compound;
+        btBoxShape first(btVector3(1.f, 1.f, 1.f));
+        btBoxShape second(btVector3(1.f, 1.f, 1.f));
+        btTransform firstTransform = btTransform::getIdentity();
+        btTransform secondTransform = btTransform::getIdentity();
+        secondTransform.setOrigin(btVector3(10.f, 0.f, 0.f));
+        compound.addChildShape(firstTransform, &first);
+        compound.addChildShape(secondTransform, &second);
+
+        btCollisionObject object;
+        object.setCollisionShape(&compound);
+        const btVector3 rayFrom(10.f, 0.f, 10.f);
+        const btVector3 rayTo(10.f, 0.f, -10.f);
+        ClosestRayResultWithIdentity callback(rayFrom, rayTo);
+        btTransform fromTransform = btTransform::getIdentity();
+        btTransform toTransform = btTransform::getIdentity();
+        fromTransform.setOrigin(rayFrom);
+        toTransform.setOrigin(rayTo);
+        btCollisionWorld::rayTestSingle(
+            fromTransform, toTransform, &object, &compound, btTransform::getIdentity(), callback);
+
+        ASSERT_TRUE(callback.hasHit());
+        EXPECT_EQ(callback.mShapePart, -1);
+        EXPECT_EQ(callback.mTriangleIndex, 1);
+
+        Resource::CollisionShapeMaterialTable materials;
+        ASSERT_TRUE(materials.addCompoundChildMaterial(1, 9));
+        EXPECT_EQ(materials.getMaterial(callback.mShapePart, callback.mTriangleIndex), 9u);
+    }
+
+    TEST_F(TestBulletNifLoader, loadsFalloutBoxCollisionWithBodyAndNodeTransforms)
+    {
+        PrimitiveCollisionRecords<Nif::bhkBoxShape> collision(Nif::RC_bhkBoxShape, Nif::RC_bhkRigidBodyT);
+        collision.mShape.mHavokMaterial.mMaterial = 0x45;
+        collision.mShape.mRadius = 0.1f;
+        collision.mShape.mExtents = osg::Vec3f(1.f, 2.f, 3.f);
+        collision.mBody.mInfo.mTranslation = osg::Vec4f(1.f, 0.f, 0.f, 0.f);
+        collision.attach(mNode);
+        mNode.mTransform.mTranslation = osg::Vec3f(2.f, 0.f, 0.f);
+        mNode.mTransform.mScale = 2.f;
+        enableBethesdaCollision(mNode);
+
+        const auto result = loadFallout(mNode);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        ASSERT_TRUE(result->mCollisionShape->isCompound());
+        const auto& compound = static_cast<const btCompoundShape&>(*result->mCollisionShape);
+        ASSERT_EQ(compound.getNumChildShapes(), 1);
+        ASSERT_EQ(compound.getChildShape(0)->getShapeType(), BOX_SHAPE_PROXYTYPE);
+        EXPECT_TRUE(isNear(compound.getChildTransform(0).getOrigin(), btVector3(16.f, 0.f, 0.f)));
+        const auto& box = static_cast<const btBoxShape&>(*compound.getChildShape(0));
+        EXPECT_TRUE(isNear(box.getHalfExtentsWithMargin(), btVector3(15.4f, 29.4f, 43.4f)));
+        EXPECT_EQ(result->getHavokMaterial(-1, -1), 5u);
+
+        btCollisionObject object;
+        object.setCollisionShape(result->mCollisionShape.get());
+        const btVector3 rayFrom(16.f, 0.f, 100.f);
+        const btVector3 rayTo(16.f, 0.f, -100.f);
+        ClosestRayResultWithIdentity callback(rayFrom, rayTo);
+        btTransform fromTransform = btTransform::getIdentity();
+        btTransform toTransform = btTransform::getIdentity();
+        fromTransform.setOrigin(rayFrom);
+        toTransform.setOrigin(rayTo);
+        btCollisionWorld::rayTestSingle(
+            fromTransform, toTransform, &object, result->mCollisionShape.get(), btTransform::getIdentity(), callback);
+        ASSERT_TRUE(callback.hasHit());
+        EXPECT_EQ(result->getHavokMaterial(callback.mShapePart, callback.mTriangleIndex), 5u);
+        EXPECT_NO_THROW(Resource::makeInstance(result));
+    }
+
+    TEST_F(TestBulletNifLoader, loadsFalloutSphereCollision)
+    {
+        PrimitiveCollisionRecords<Nif::bhkSphereShape> collision(Nif::RC_bhkSphereShape);
+        collision.mShape.mHavokMaterial.mMaterial = 9;
+        collision.mShape.mRadius = 2.f;
+        collision.attach(mNode);
+        enableBethesdaCollision(mNode);
+
+        const auto result = loadFallout(mNode);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        const auto& compound = static_cast<const btCompoundShape&>(*result->mCollisionShape);
+        ASSERT_EQ(compound.getNumChildShapes(), 1);
+        ASSERT_EQ(compound.getChildShape(0)->getShapeType(), SPHERE_SHAPE_PROXYTYPE);
+        EXPECT_EQ(static_cast<const btSphereShape&>(*compound.getChildShape(0)).getRadius(), btScalar(14.f));
+        EXPECT_EQ(result->getHavokMaterial(-1, -1), 9u);
+        EXPECT_NO_THROW(Resource::makeInstance(result));
+    }
+
+    TEST_F(TestBulletNifLoader, loadsFalloutCapsuleCollision)
+    {
+        PrimitiveCollisionRecords<Nif::bhkCapsuleShape> collision(Nif::RC_bhkCapsuleShape);
+        collision.mShape.mHavokMaterial.mMaterial = 7;
+        collision.mShape.mRadius = 0.5f;
+        collision.mShape.mRadius1 = 0.5f;
+        collision.mShape.mRadius2 = 0.5f;
+        collision.mShape.mPoint1 = osg::Vec3f(0.f, -1.f, 0.f);
+        collision.mShape.mPoint2 = osg::Vec3f(0.f, 1.f, 0.f);
+        collision.attach(mNode);
+        enableBethesdaCollision(mNode);
+
+        const auto result = loadFallout(mNode);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        const auto& compound = static_cast<const btCompoundShape&>(*result->mCollisionShape);
+        ASSERT_EQ(compound.getNumChildShapes(), 1);
+        ASSERT_EQ(compound.getChildShape(0)->getShapeType(), CAPSULE_SHAPE_PROXYTYPE);
+        const auto& capsule = static_cast<const btCapsuleShape&>(*compound.getChildShape(0));
+        EXPECT_EQ(capsule.getRadius(), btScalar(3.5f));
+        EXPECT_EQ(capsule.getHalfHeight(), btScalar(7.f));
+        EXPECT_EQ(result->getHavokMaterial(-1, -1), 7u);
+        EXPECT_NO_THROW(Resource::makeInstance(result));
+    }
+
+    TEST_F(TestBulletNifLoader, loadsAnimatedFalloutConvexHullCollision)
+    {
+        PrimitiveCollisionRecords<Nif::bhkConvexVerticesShape> collision(Nif::RC_bhkConvexVerticesShape);
+        collision.mShape.mHavokMaterial.mMaterial = 3;
+        collision.mShape.mRadius = 0.05f;
+        collision.mShape.mVertices = { osg::Vec4f(0.f, 0.f, 0.f, 0.f), osg::Vec4f(1.f, 0.f, 0.f, 0.f),
+            osg::Vec4f(0.f, 1.f, 0.f, 0.f), osg::Vec4f(0.f, 0.f, 1.f, 0.f) };
+        collision.attach(mNiNode);
+        mNiNode.mRecordIndex = 44;
+        mController.mRecordType = Nif::RC_NiKeyframeController;
+        mController.mFlags = Nif::NiTimeController::Flag_Active;
+        mNiNode.mController = Nif::NiTimeControllerPtr(&mController);
+        enableBethesdaCollision(mNiNode);
+
+        const auto result = loadFallout(mNiNode);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        const auto& compound = static_cast<const btCompoundShape&>(*result->mCollisionShape);
+        ASSERT_EQ(compound.getNumChildShapes(), 1);
+        ASSERT_TRUE(compound.getChildShape(0)->isCompound());
+        const auto& local = static_cast<const btCompoundShape&>(*compound.getChildShape(0));
+        ASSERT_EQ(local.getNumChildShapes(), 1);
+        ASSERT_EQ(local.getChildShape(0)->getShapeType(), CONVEX_HULL_SHAPE_PROXYTYPE);
+        EXPECT_EQ(static_cast<const btConvexHullShape&>(*local.getChildShape(0)).getNumPoints(), 4);
+        EXPECT_EQ(result->mAnimatedShapes, (std::map<int, int>{ { 44, 0 } }));
+        EXPECT_EQ(result->getHavokMaterial(-1, -1), 3u);
+        EXPECT_NO_THROW(Resource::makeInstance(result));
+    }
+
+    TEST_F(TestBulletNifLoader, loadsFalloutListCollisionWithChildMaterials)
+    {
+        PrimitiveCollisionRecords<Nif::bhkListShape> collision(Nif::RC_bhkListShape);
+        Nif::bhkBoxShape box;
+        Nif::bhkConvexTransformShape transformedBox;
+        Nif::bhkConvexVerticesShape convex;
+        box.mRecordType = Nif::RC_bhkBoxShape;
+        box.mHavokMaterial.mMaterial = 5;
+        box.mRadius = 0.1f;
+        box.mExtents = osg::Vec3f(1.f, 1.f, 1.f);
+        transformedBox.mRecordType = Nif::RC_bhkConvexTransformShape;
+        transformedBox.mShape = Nif::bhkShapePtr(&box);
+        transformedBox.mHavokMaterial.mMaterial = 5;
+        transformedBox.mTransform = osg::Matrixf::identity();
+        transformedBox.mTransform.setTrans(osg::Vec3f(1.f, 0.f, 0.f));
+        convex.mRecordType = Nif::RC_bhkConvexVerticesShape;
+        convex.mHavokMaterial.mMaterial = 9;
+        convex.mRadius = 0.05f;
+        convex.mVertices = { osg::Vec4f(10.f, 0.f, 0.f, 0.f), osg::Vec4f(11.f, 0.f, 0.f, 0.f),
+            osg::Vec4f(10.f, 1.f, 0.f, 0.f), osg::Vec4f(10.f, 0.f, 1.f, 0.f) };
+        collision.mShape.mSubshapes = { Nif::bhkShapePtr(&transformedBox), Nif::bhkShapePtr(&convex) };
+        collision.attach(mNode);
+        mNode.mTransform.mTranslation = osg::Vec3f(2.f, 0.f, 0.f);
+        enableBethesdaCollision(mNode);
+
+        const auto result = loadFallout(mNode);
+
+        ASSERT_NE(result->mCollisionShape, nullptr);
+        ASSERT_TRUE(result->mCollisionShape->isCompound());
+        const auto& compound = static_cast<const btCompoundShape&>(*result->mCollisionShape);
+        ASSERT_EQ(compound.getNumChildShapes(), 2);
+        EXPECT_EQ(compound.getChildShape(0)->getShapeType(), BOX_SHAPE_PROXYTYPE);
+        EXPECT_EQ(compound.getChildShape(1)->getShapeType(), CONVEX_HULL_SHAPE_PROXYTYPE);
+        EXPECT_TRUE(isNear(compound.getChildTransform(0).getOrigin(), btVector3(9.f, 0.f, 0.f)));
+        EXPECT_EQ(result->getHavokMaterial(-1, 0), 5u);
+        EXPECT_EQ(result->getHavokMaterial(-1, 1), 9u);
+        EXPECT_FALSE(result->getHavokMaterial(-1, -1).has_value());
+
+        btCollisionObject object;
+        object.setCollisionShape(result->mCollisionShape.get());
+        const btVector3 rayFrom(73.f, 1.f, 10.f);
+        const btVector3 rayTo(73.f, 1.f, -10.f);
+        ClosestRayResultWithIdentity callback(rayFrom, rayTo);
+        btTransform fromTransform = btTransform::getIdentity();
+        btTransform toTransform = btTransform::getIdentity();
+        fromTransform.setOrigin(rayFrom);
+        toTransform.setOrigin(rayTo);
+        btCollisionWorld::rayTestSingle(
+            fromTransform, toTransform, &object, result->mCollisionShape.get(), btTransform::getIdentity(), callback);
+        ASSERT_TRUE(callback.hasHit());
+        EXPECT_EQ(callback.mShapePart, -1);
+        EXPECT_EQ(callback.mTriangleIndex, 1);
+        EXPECT_EQ(result->getHavokMaterial(callback.mShapePart, callback.mTriangleIndex), 9u);
+        EXPECT_NO_THROW(Resource::makeInstance(result));
     }
 
     TEST_F(TestBulletNifLoader, loadsFalloutPackedCollisionWithSubshapeMaterials)

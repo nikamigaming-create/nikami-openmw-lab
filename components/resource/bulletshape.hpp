@@ -52,6 +52,7 @@ namespace Resource
         bool addUniformMaterial(std::uint32_t material);
         bool addShapePartMaterial(int shapePart, std::uint32_t material);
         bool addTriangleMaterial(int shapePart, int triangleIndex, std::uint32_t material);
+        bool addCompoundChildMaterial(int childIndex, std::uint32_t material);
 
         std::optional<std::uint32_t> getMaterial(int shapePart, int triangleIndex) const;
 

@@ -24,6 +24,10 @@
 #include <components/nif/parent.hpp>
 #include <components/nif/physics.hpp>
 
+#include <BulletCollision/CollisionShapes/btBoxShape.h>
+#include <BulletCollision/CollisionShapes/btCapsuleShape.h>
+#include <BulletCollision/CollisionShapes/btConvexHullShape.h>
+#include <BulletCollision/CollisionShapes/btSphereShape.h>
 #include <BulletCollision/CollisionShapes/btTriangleIndexVertexArray.h>
 
 namespace
@@ -118,6 +122,16 @@ namespace
         bool mAnimated = false;
         int mRecordIndex = -1;
         osg::Matrixf mNodeTransform = osg::Matrixf::identity();
+    };
+
+    struct PrimitiveCollisionData
+    {
+        Resource::CollisionShapePtr mShape;
+        osg::Matrixf mLocalTransform = osg::Matrixf::identity();
+        osg::Matrixf mNodeTransform = osg::Matrixf::identity();
+        Resource::CollisionShapeMaterialTable mMaterials;
+        bool mAnimated = false;
+        int mRecordIndex = -1;
     };
 
     struct SubshapeRange
@@ -350,6 +364,244 @@ namespace
         return { rigidTransform, scale };
     }
 
+    bool isFinite(const osg::Vec3f& value)
+    {
+        return std::ranges::all_of(value._v, [](float component) { return std::isfinite(component); });
+    }
+
+    bool isFinite(const osg::Matrixf& value)
+    {
+        for (int row = 0; row < 4; ++row)
+            for (int column = 0; column < 4; ++column)
+                if (!std::isfinite(value(row, column)))
+                    return false;
+        return true;
+    }
+
+    osg::Matrixf getRigidBodyTransform(const Nif::bhkRigidBody& body)
+    {
+        if (body.mRecordType != Nif::RC_bhkRigidBodyT)
+            return osg::Matrixf::identity();
+
+        osg::Matrixf result;
+        result.makeRotate(body.mInfo.mRotation);
+        result.setTrans(
+            osg::Vec3f(body.mInfo.mTranslation.x(), body.mInfo.mTranslation.y(), body.mInfo.mTranslation.z())
+            * sHavokToGameUnits);
+        return result;
+    }
+
+    struct PrimitiveShapeData
+    {
+        Resource::CollisionShapePtr mShape;
+        osg::Matrixf mTransform = osg::Matrixf::identity();
+        Resource::CollisionShapeMaterialTable mMaterials;
+    };
+
+    struct ShapeStackGuard
+    {
+        std::set<const Nif::bhkShape*>& mStack;
+        const Nif::bhkShape* mShape;
+
+        ~ShapeStackGuard() { mStack.erase(mShape); }
+    };
+
+    std::optional<PrimitiveShapeData> makePrimitiveShape(
+        const Nif::bhkShape& source, std::set<const Nif::bhkShape*>& stack)
+    {
+        if (stack.size() >= 64 || !stack.insert(&source).second)
+            return std::nullopt;
+        const ShapeStackGuard guard{ stack, &source };
+
+        if (const auto* mopp = dynamic_cast<const Nif::bhkMoppBvTreeShape*>(&source))
+        {
+            if (mopp->mShape.empty())
+                return std::nullopt;
+            return makePrimitiveShape(mopp->mShape.get(), stack);
+        }
+
+        if (const auto* transformed = dynamic_cast<const Nif::bhkConvexTransformShape*>(&source))
+        {
+            if (transformed->mShape.empty())
+                return std::nullopt;
+            auto child = makePrimitiveShape(transformed->mShape.get(), stack);
+            if (!child)
+                return std::nullopt;
+            osg::Matrixf transform = transformed->mTransform;
+            if (!isFinite(transform))
+                return std::nullopt;
+            transform.setTrans(transform.getTrans() * sHavokToGameUnits);
+            child->mTransform *= transform;
+            child->mMaterials = {};
+            if (!child->mMaterials.addUniformMaterial(transformed->mHavokMaterial.mMaterial & 0x1f))
+                return std::nullopt;
+            return child;
+        }
+
+        if (const auto* list = dynamic_cast<const Nif::bhkListShape*>(&source))
+        {
+            if (list->mSubshapes.empty()
+                || list->mSubshapes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+                return std::nullopt;
+
+            auto compound = std::make_unique<btCompoundShape>();
+            Resource::CollisionShapeMaterialTable materials;
+            std::optional<std::uint32_t> uniformMaterial;
+            bool hasUniformMaterial = true;
+            for (const Nif::bhkShapePtr& subshape : list->mSubshapes)
+            {
+                if (subshape.empty())
+                    return std::nullopt;
+                auto child = makePrimitiveShape(subshape.get(), stack);
+                if (!child)
+                    return std::nullopt;
+                const std::optional<std::uint32_t> material = child->mMaterials.getMaterial(-1, -1);
+                if (!material)
+                    return std::nullopt;
+
+                const BulletTransform transform = decomposeTransform(child->mTransform);
+                child->mShape->setLocalScaling(transform.mScale);
+                const int childIndex = compound->getNumChildShapes();
+                compound->addChildShape(transform.mRigidTransform, child->mShape.release());
+                if (!materials.addCompoundChildMaterial(childIndex, *material))
+                    return std::nullopt;
+                if (!uniformMaterial)
+                    uniformMaterial = material;
+                else if (*uniformMaterial != *material)
+                    hasUniformMaterial = false;
+            }
+            if (uniformMaterial && hasUniformMaterial && !materials.addUniformMaterial(*uniformMaterial))
+                return std::nullopt;
+
+            PrimitiveShapeData result;
+            result.mShape.reset(compound.release());
+            result.mMaterials = std::move(materials);
+            return result;
+        }
+
+        Resource::CollisionShapePtr shape;
+        osg::Matrixf localTransform = osg::Matrixf::identity();
+        const auto* materialShape = dynamic_cast<const Nif::bhkSphereRepShape*>(&source);
+        if (materialShape == nullptr)
+            return std::nullopt;
+
+        switch (source.mRecordType)
+        {
+            case Nif::RC_bhkBoxShape:
+            {
+                const auto& box = static_cast<const Nif::bhkBoxShape&>(source);
+                if (!isFinite(box.mExtents)
+                    || std::ranges::any_of(box.mExtents._v, [](float value) { return value <= 0.f; })
+                    || !std::isfinite(box.mRadius) || box.mRadius < 0.f)
+                    return std::nullopt;
+                const btVector3 halfExtents = Misc::Convert::toBullet(box.mExtents * sHavokToGameUnits);
+                const btScalar margin = box.mRadius * sHavokToGameUnits;
+                auto result = std::make_unique<btBoxShape>(halfExtents + btVector3(margin, margin, margin));
+                result->setMargin(margin);
+                shape.reset(result.release());
+                break;
+            }
+            case Nif::RC_bhkSphereShape:
+            {
+                const auto& sphere = static_cast<const Nif::bhkSphereShape&>(source);
+                if (!std::isfinite(sphere.mRadius) || sphere.mRadius <= 0.f)
+                    return std::nullopt;
+                shape.reset(new btSphereShape(sphere.mRadius * sHavokToGameUnits));
+                break;
+            }
+            case Nif::RC_bhkCapsuleShape:
+            {
+                const auto& capsule = static_cast<const Nif::bhkCapsuleShape&>(source);
+                constexpr float tolerance = 1e-5f;
+                if (!isFinite(capsule.mPoint1) || !isFinite(capsule.mPoint2) || !std::isfinite(capsule.mRadius)
+                    || capsule.mRadius <= 0.f || std::abs(capsule.mRadius1 - capsule.mRadius) > tolerance
+                    || std::abs(capsule.mRadius2 - capsule.mRadius) > tolerance)
+                    return std::nullopt;
+                const osg::Vec3f axis = capsule.mPoint2 - capsule.mPoint1;
+                const float height = axis.length();
+                const osg::Vec3f center = (capsule.mPoint1 + capsule.mPoint2) * (0.5f * sHavokToGameUnits);
+                if (height <= tolerance)
+                    shape.reset(new btSphereShape(capsule.mRadius * sHavokToGameUnits));
+                else
+                {
+                    shape.reset(new btCapsuleShape(capsule.mRadius * sHavokToGameUnits, height * sHavokToGameUnits));
+                    osg::Quat rotation;
+                    rotation.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), axis);
+                    localTransform.makeRotate(rotation);
+                }
+                localTransform.setTrans(center);
+                break;
+            }
+            case Nif::RC_bhkConvexVerticesShape:
+            {
+                const auto& convex = static_cast<const Nif::bhkConvexVerticesShape&>(source);
+                if (convex.mVertices.size() < 4
+                    || convex.mVertices.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())
+                    || !std::isfinite(convex.mRadius) || convex.mRadius < 0.f)
+                    return std::nullopt;
+                auto result = std::make_unique<btConvexHullShape>();
+                for (const osg::Vec4f& vertex : convex.mVertices)
+                {
+                    const osg::Vec3f point(vertex.x(), vertex.y(), vertex.z());
+                    if (!isFinite(point))
+                        return std::nullopt;
+                    result->addPoint(Misc::Convert::toBullet(point * sHavokToGameUnits), false);
+                }
+                result->setMargin(convex.mRadius * sHavokToGameUnits);
+                result->recalcLocalAabb();
+                shape.reset(result.release());
+                break;
+            }
+            default:
+                return std::nullopt;
+        }
+
+        PrimitiveShapeData result;
+        result.mShape = std::move(shape);
+        result.mTransform = localTransform;
+        if (!result.mMaterials.addUniformMaterial(materialShape->mHavokMaterial.mMaterial & 0x1f))
+            return std::nullopt;
+        return result;
+    }
+
+    std::optional<PrimitiveShapeData> makePrimitiveShape(const Nif::bhkShape& source)
+    {
+        std::set<const Nif::bhkShape*> stack;
+        return makePrimitiveShape(source, stack);
+    }
+
+    std::optional<PrimitiveCollisionData> loadPrimitiveCollisionData(
+        const Nif::NiAVObject& node, const Nif::Parent* parent, bool animated)
+    {
+        if (node.mCollision.empty())
+            return std::nullopt;
+        const auto* collision = dynamic_cast<const Nif::bhkCollisionObject*>(&node.mCollision.get());
+        if (collision == nullptr || collision->mBody.empty())
+            return std::nullopt;
+        const auto* body = dynamic_cast<const Nif::bhkRigidBody*>(&collision->mBody.get());
+        if (body == nullptr || body->mShape.empty())
+            return std::nullopt;
+
+        auto primitive = makePrimitiveShape(body->mShape.get());
+        if (!primitive)
+            return std::nullopt;
+        primitive->mTransform *= getRigidBodyTransform(*body);
+
+        PrimitiveCollisionData result;
+        result.mShape = std::move(primitive->mShape);
+        result.mLocalTransform = primitive->mTransform;
+        result.mNodeTransform = getNodeTransform(node, parent);
+        result.mMaterials = std::move(primitive->mMaterials);
+        result.mAnimated = animated;
+        if (animated)
+        {
+            if (node.mRecordIndex > static_cast<unsigned int>(std::numeric_limits<int>::max()))
+                return std::nullopt;
+            result.mRecordIndex = static_cast<int>(node.mRecordIndex);
+        }
+        return result;
+    }
+
     std::optional<PackedCollisionData> loadPackedCollisionData(
         const Nif::NiAVObject& node, const Nif::Parent* parent, bool animated)
     {
@@ -409,6 +661,7 @@ namespace
     struct PackedCollisionSearch
     {
         std::vector<PackedCollisionData> mCollisions;
+        std::optional<PrimitiveCollisionData> mPrimitive;
         bool mRejected = false;
     };
 
@@ -428,13 +681,29 @@ namespace
                 result.mRejected = true;
                 return;
             }
-            auto collision = loadPackedCollisionData(node, parent, animated);
-            if (!collision)
+            if (auto collision = loadPackedCollisionData(node, parent, animated))
+            {
+                if (result.mPrimitive)
+                {
+                    result.mRejected = true;
+                    return;
+                }
+                result.mCollisions.push_back(std::move(*collision));
+            }
+            else if (auto primitive = loadPrimitiveCollisionData(node, parent, animated))
+            {
+                if (result.mPrimitive || !result.mCollisions.empty())
+                {
+                    result.mRejected = true;
+                    return;
+                }
+                result.mPrimitive = std::move(primitive);
+            }
+            else
             {
                 result.mRejected = true;
                 return;
             }
-            result.mCollisions.push_back(std::move(*collision));
         }
 
         const auto* parentNode = dynamic_cast<const Nif::NiNode*>(&node);
@@ -519,6 +788,53 @@ namespace NifBullet
                 findPackedCollision(*root, nullptr, fileAnimated, false, search);
                 if (search.mRejected)
                     break;
+            }
+            if (foundCollisionRoot && !search.mRejected && search.mPrimitive && search.mCollisions.empty())
+            {
+                PrimitiveCollisionData primitive = std::move(*search.mPrimitive);
+                if (!primitive.mMaterials.empty())
+                {
+                    if (primitive.mAnimated)
+                    {
+                        auto compound = std::make_unique<btCompoundShape>();
+                        const BulletTransform local = decomposeTransform(primitive.mLocalTransform);
+                        primitive.mShape->setLocalScaling(local.mScale);
+                        auto localShape = std::make_unique<btCompoundShape>();
+                        localShape->addChildShape(local.mRigidTransform, primitive.mShape.release());
+
+                        const BulletTransform node = decomposeTransform(primitive.mNodeTransform);
+                        localShape->setLocalScaling(node.mScale);
+                        compound->addChildShape(node.mRigidTransform, localShape.release());
+                        mShape->mCollisionShape.reset(compound.release());
+                        mShape->mAnimatedShapes.emplace(primitive.mRecordIndex, 0);
+                    }
+                    else if (primitive.mShape->isCompound())
+                    {
+                        primitive.mLocalTransform *= primitive.mNodeTransform;
+                        const BulletTransform transform = decomposeTransform(primitive.mLocalTransform);
+                        auto* compound = static_cast<btCompoundShape*>(primitive.mShape.get());
+                        compound->setLocalScaling(transform.mScale);
+                        for (int child = 0; child < compound->getNumChildShapes(); ++child)
+                        {
+                            const btTransform childTransform
+                                = transform.mRigidTransform * compound->getChildTransform(child);
+                            compound->updateChildTransform(child, childTransform, false);
+                        }
+                        compound->recalculateLocalAabb();
+                        mShape->mCollisionShape = std::move(primitive.mShape);
+                    }
+                    else
+                    {
+                        auto compound = std::make_unique<btCompoundShape>();
+                        primitive.mLocalTransform *= primitive.mNodeTransform;
+                        const BulletTransform transform = decomposeTransform(primitive.mLocalTransform);
+                        primitive.mShape->setLocalScaling(transform.mScale);
+                        compound->addChildShape(transform.mRigidTransform, primitive.mShape.release());
+                        mShape->mCollisionShape.reset(compound.release());
+                    }
+                    mShape->mCollisionShapeMaterials = std::move(primitive.mMaterials);
+                    return mShape;
+                }
             }
             const bool supportedBodyCount
                 = search.mCollisions.size() == 1 || canMergePackedCollisions(search.mCollisions);

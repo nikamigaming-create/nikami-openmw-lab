@@ -4,9 +4,12 @@
 #include <string>
 
 #include <BulletCollision/CollisionShapes/btBoxShape.h>
+#include <BulletCollision/CollisionShapes/btCapsuleShape.h>
 #include <BulletCollision/CollisionShapes/btCompoundShape.h>
+#include <BulletCollision/CollisionShapes/btConvexHullShape.h>
 #include <BulletCollision/CollisionShapes/btHeightfieldTerrainShape.h>
 #include <BulletCollision/CollisionShapes/btScaledBvhTriangleMeshShape.h>
+#include <BulletCollision/CollisionShapes/btSphereShape.h>
 
 namespace Resource
 {
@@ -44,6 +47,24 @@ namespace Resource
                 const btBvhTriangleMeshShape* trishape = static_cast<const btBvhTriangleMeshShape*>(shape);
                 return CollisionShapePtr(new btScaledBvhTriangleMeshShape(
                     const_cast<btBvhTriangleMeshShape*>(trishape), btVector3(1.f, 1.f, 1.f)));
+            }
+
+            if (shape->getShapeType() == SPHERE_SHAPE_PROXYTYPE)
+                return CollisionShapePtr(new btSphereShape(static_cast<const btSphereShape&>(*shape)));
+
+            if (shape->getShapeType() == CAPSULE_SHAPE_PROXYTYPE)
+                return CollisionShapePtr(new btCapsuleShape(static_cast<const btCapsuleShape&>(*shape)));
+
+            if (shape->getShapeType() == CONVEX_HULL_SHAPE_PROXYTYPE)
+            {
+                const auto& hull = static_cast<const btConvexHullShape&>(*shape);
+                auto copy = std::make_unique<btConvexHullShape>();
+                for (int i = 0; i < hull.getNumPoints(); ++i)
+                    copy->addPoint(hull.getUnscaledPoints()[i], false);
+                copy->setMargin(hull.getMargin());
+                copy->setLocalScaling(hull.getLocalScaling());
+                copy->recalcLocalAabb();
+                return CollisionShapePtr(copy.release());
             }
 
             if (shape->getShapeType() == BOX_SHAPE_PROXYTYPE)
@@ -94,14 +115,17 @@ namespace Resource
         return shapePart >= 0 && addMaterial(shapePart, sWildcard, material);
     }
 
-    bool CollisionShapeMaterialTable::addTriangleMaterial(
-        int shapePart, int triangleIndex, std::uint32_t material)
+    bool CollisionShapeMaterialTable::addTriangleMaterial(int shapePart, int triangleIndex, std::uint32_t material)
     {
         return shapePart >= 0 && triangleIndex >= 0 && addMaterial(shapePart, triangleIndex, material);
     }
 
-    std::optional<std::uint32_t> CollisionShapeMaterialTable::findMaterial(
-        int shapePart, int triangleIndex) const
+    bool CollisionShapeMaterialTable::addCompoundChildMaterial(int childIndex, std::uint32_t material)
+    {
+        return childIndex >= 0 && addMaterial(sWildcard, childIndex, material);
+    }
+
+    std::optional<std::uint32_t> CollisionShapeMaterialTable::findMaterial(int shapePart, int triangleIndex) const
     {
         const auto found = mEntries.find({ shapePart, triangleIndex });
         return found != mEntries.end() ? std::optional(found->second) : std::nullopt;
