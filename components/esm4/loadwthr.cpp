@@ -14,7 +14,8 @@ namespace
         = ESM4::Weather::sTimeCount * ESM4::Weather::sColorTypeCount * sColorChannelCount;
     constexpr std::size_t sLegacyColorDataSize
         = ESM4::Weather::sLegacyTimeCount * ESM4::Weather::sColorTypeCount * sColorChannelCount;
-    constexpr std::size_t sSoundDataSize = sizeof(ESM::FormId) + sizeof(std::uint32_t);
+    // SNAM stores a compact ESM4 FormID, not the in-memory adjusted FormId pair.
+    constexpr std::size_t sSoundDataSize = sizeof(ESM::FormId32) + sizeof(std::uint32_t);
 
     constexpr std::uint32_t sEditorId = ESM::fourCC("EDID");
     constexpr std::uint32_t sSunriseImageSpace = ESM::fourCC("\0IAD");
