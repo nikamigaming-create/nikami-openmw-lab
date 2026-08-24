@@ -225,6 +225,7 @@ add_component_dir (esm4
     loadcell
     loadclas
     loadclfm
+    loadclmt
     loadclot
     loadcont
     loadcrea

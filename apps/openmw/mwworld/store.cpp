@@ -9,6 +9,7 @@
 #include <components/esm/records.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+#include <components/esm4/loadclmt.hpp>
 #include <components/esm4/loadwthr.hpp>
 
 #include <components/loadinglistener/loadinglistener.hpp>
@@ -1247,6 +1248,7 @@ template class MWWorld::TypedDynamicStore<ESM4::Armor>;
 template class MWWorld::TypedDynamicStore<ESM4::ArmorAddon>;
 template class MWWorld::TypedDynamicStore<ESM4::Book>;
 template class MWWorld::TypedDynamicStore<ESM4::Cell>;
+template class MWWorld::TypedDynamicStore<ESM4::Climate>;
 template class MWWorld::TypedDynamicStore<ESM4::Clothing>;
 template class MWWorld::TypedDynamicStore<ESM4::Container>;
 template class MWWorld::TypedDynamicStore<ESM4::Creature>;
