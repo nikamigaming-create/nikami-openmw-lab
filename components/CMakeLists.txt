@@ -260,6 +260,7 @@ add_component_dir (esm4
     loadlvlc
     loadlvli
     loadlvln
+    loadmgef
     loadmato
     loadmisc
     loadmset
@@ -289,6 +290,7 @@ add_component_dir (esm4
     loadslgm
     loadsndr
     loadsoun
+    loadspel
     loadstat
     loadtact
     loadterm

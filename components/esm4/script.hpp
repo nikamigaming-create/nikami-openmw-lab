@@ -38,6 +38,8 @@
 
 namespace ESM4
 {
+    class Reader;
+
     enum EmotionType
     {
         EMO_Neutral = 0,
@@ -376,6 +378,13 @@ namespace ESM4
         std::vector<std::uint32_t> localRefVarIndex;
         ESM::FormId globReference;
     };
+
+    // Read a CTDA subrecord in any of the TES4/FO3/FNV/TES5 layouts. The
+    // reader is already positioned at the subrecord payload; unsupported
+    // sizes are consumed and reported as false so callers can fail with the
+    // record-specific context.
+    [[nodiscard]] bool loadTargetCondition(Reader& reader, TargetCondition& condition,
+        ESM::FormId* parameter3 = nullptr);
 }
 
 #endif // ESM4_SCRIPT_H

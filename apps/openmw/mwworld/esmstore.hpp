@@ -15,7 +15,9 @@
 #include <components/esm4/loadavif.hpp>
 #include <components/esm4/loadamef.hpp>
 #include <components/esm4/loadclmt.hpp>
+#include <components/esm4/loadmgef.hpp>
 #include <components/esm4/loadrepu.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadwthr.hpp>
 #include <components/misc/tuplemeta.hpp>
 
@@ -112,6 +114,7 @@ namespace ESM4
     struct LevelledNpc;
     struct Light;
     struct MiscItem;
+    struct MagicEffect;
     struct MovableStatic;
     struct Npc;
     struct Outfit;
@@ -122,6 +125,7 @@ namespace ESM4
     struct Reputation;
     struct Sound;
     struct SoundReference;
+    struct Spell;
     struct Static;
     struct StaticCollection;
     struct Terminal;
@@ -186,7 +190,7 @@ namespace MWWorld
             Store<ESM4::Reference>, Store<ESM4::Reputation>, Store<ESM4::Sound>, Store<ESM4::SoundReference>, Store<ESM4::Static>,
             Store<ESM4::StaticCollection>, Store<ESM4::Terminal>, Store<ESM4::TextureSet>, Store<ESM4::Tree>,
             Store<ESM4::Weapon>, Store<ESM4::Weather>, Store<ESM4::World>, Store<ESM4::Explosion>, Store<ESM4::ImpactDataSet>,
-            Store<ESM4::ImpactData>>;
+            Store<ESM4::ImpactData>, Store<ESM4::MagicEffect>, Store<ESM4::Spell>>;
 
     private:
         template <typename T>

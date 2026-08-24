@@ -51,6 +51,7 @@
 #include <components/esm4/loadlvlc.hpp>
 #include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadlvln.hpp>
+#include <components/esm4/loadmgef.hpp>
 #include <components/esm4/loadmato.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadmset.hpp>
@@ -80,6 +81,7 @@
 #include <components/esm4/loadslgm.hpp>
 #include <components/esm4/loadsndr.hpp>
 #include <components/esm4/loadsoun.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadterm.hpp>

@@ -12,7 +12,9 @@
 #include <components/esm4/loadavif.hpp>
 #include <components/esm4/loadamef.hpp>
 #include <components/esm4/loadclmt.hpp>
+#include <components/esm4/loadmgef.hpp>
 #include <components/esm4/loadrepu.hpp>
+#include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadwthr.hpp>
 
 #include <components/loadinglistener/loadinglistener.hpp>
@@ -1272,6 +1274,7 @@ template class MWWorld::TypedDynamicStore<ESM4::LevelledItem>;
 template class MWWorld::TypedDynamicStore<ESM4::LevelledNpc>;
 template class MWWorld::TypedDynamicStore<ESM4::Light>;
 template class MWWorld::TypedDynamicStore<ESM4::MiscItem>;
+template class MWWorld::TypedDynamicStore<ESM4::MagicEffect>;
 template class MWWorld::TypedDynamicStore<ESM4::MovableStatic>;
 template class MWWorld::TypedDynamicStore<ESM4::Npc>;
 template class MWWorld::TypedDynamicStore<ESM4::Outfit>;
@@ -1281,6 +1284,7 @@ template class MWWorld::TypedDynamicStore<ESM4::Race>;
 template class MWWorld::TypedDynamicStore<ESM4::Reputation>;
 template class MWWorld::TypedDynamicStore<ESM4::Sound>;
 template class MWWorld::TypedDynamicStore<ESM4::SoundReference>;
+template class MWWorld::TypedDynamicStore<ESM4::Spell>;
 template class MWWorld::TypedDynamicStore<ESM4::Static>;
 template class MWWorld::TypedDynamicStore<ESM4::StaticCollection>;
 template class MWWorld::TypedDynamicStore<ESM4::Terminal>;
