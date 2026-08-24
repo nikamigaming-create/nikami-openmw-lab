@@ -194,8 +194,6 @@ void ESM4::Weather::load(Reader& reader)
                 mSounds.push_back(sound);
                 break;
             }
-            case sMaxCloudLayers:
-            case sImageSpace:
             case sModelBounds:
             case sModelTexture:
             case sModelAlternateTextures:
