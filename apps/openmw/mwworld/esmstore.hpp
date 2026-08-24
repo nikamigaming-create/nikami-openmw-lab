@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
+#include <span>
+#include <string>
 #include <tuple>
 #include <unordered_map>
 
@@ -124,6 +126,23 @@ namespace MWWorld
 {
     struct ESMStoreImp;
 
+    enum class ESM4Game
+    {
+        Unknown,
+        Oblivion,
+        Fallout3,
+        FalloutNewVegas,
+        Skyrim,
+        Fallout4,
+        Starfield,
+    };
+
+    ESM4Game detectESM4Game(const std::filesystem::path& path);
+
+    /// Detect the first recognized base game in configured content order.
+    /// Unknown content files, including built-in scripts and add-ons, are ignored.
+    ESM4Game detectESM4Game(std::span<const std::string> contentFiles);
+
     class ESMStore
     {
         friend struct ESMStoreImp; // This allows StoreImp to extend esmstore without beeing included everywhere
@@ -192,6 +211,7 @@ namespace MWWorld
         std::vector<LuaContent> mLuaContent;
 
         bool mIsSetUpDone = false;
+        ESM4Game mESM4Game = ESM4Game::Unknown;
 
     public:
         void addOMWScripts(std::filesystem::path filePath) { mLuaContent.push_back(std::move(filePath)); }
@@ -223,6 +243,8 @@ namespace MWWorld
 
         void load(ESM::ESMReader& esm, Loading::Listener* listener, ESM::Dialogue*& dialogue);
         void loadESM4(ESM4::Reader& esm, Loading::Listener* listener);
+
+        ESM4Game getESM4Game() const { return mESM4Game; }
 
         template <class T>
         const Store<T>& get() const

@@ -1,6 +1,7 @@
 #include "esmstore.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <tuple>
 
@@ -19,6 +20,39 @@
 #include <components/misc/algorithm.hpp>
 
 #include "../mwmechanics/spelllist.hpp"
+
+MWWorld::ESM4Game MWWorld::detectESM4Game(const std::filesystem::path& path)
+{
+    std::string filename = path.filename().string();
+    std::transform(filename.begin(), filename.end(), filename.begin(), [](unsigned char value) {
+        return static_cast<char>(std::tolower(value));
+    });
+
+    if (filename == "oblivion.esm")
+        return ESM4Game::Oblivion;
+    if (filename == "fallout3.esm")
+        return ESM4Game::Fallout3;
+    if (filename == "falloutnv.esm")
+        return ESM4Game::FalloutNewVegas;
+    if (filename == "skyrim.esm" || filename == "skyrimvr.esm")
+        return ESM4Game::Skyrim;
+    if (filename == "fallout4.esm")
+        return ESM4Game::Fallout4;
+    if (filename == "starfield.esm")
+        return ESM4Game::Starfield;
+    return ESM4Game::Unknown;
+}
+
+MWWorld::ESM4Game MWWorld::detectESM4Game(std::span<const std::string> contentFiles)
+{
+    for (const std::string& contentFile : contentFiles)
+    {
+        const ESM4Game game = detectESM4Game(std::filesystem::path(contentFile));
+        if (game != ESM4Game::Unknown)
+            return game;
+    }
+    return ESM4Game::Unknown;
+}
 
 namespace
 {
@@ -474,6 +508,21 @@ namespace MWWorld
 
     void ESMStore::loadESM4(ESM4::Reader& reader, Loading::Listener* listener)
     {
+        const ESM4Game detectedGame = detectESM4Game(reader.getFileName());
+        if (detectedGame != ESM4Game::Unknown && detectedGame != mESM4Game)
+        {
+            if (mESM4Game == ESM4Game::Unknown)
+            {
+                mESM4Game = detectedGame;
+                Log(Debug::Info) << "Loaded ESM4 base game content from " << reader.getFileName().filename().string();
+            }
+            else
+            {
+                Log(Debug::Warning) << "Ignoring conflicting ESM4 base game content from "
+                                    << reader.getFileName().filename().string();
+            }
+        }
+
         if (listener != nullptr)
             listener->setProgressRange(::EsmLoader::fileProgress);
         auto visitorRec = [this, listener](ESM4::Reader& r) {

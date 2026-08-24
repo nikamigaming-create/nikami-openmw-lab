@@ -138,6 +138,12 @@ namespace MWBase
             assert(sThis != nullptr);
             return *sThis;
         }
+
+        /// Return the active World, or nullptr before the environment/world is initialized.
+        static World* tryGetWorld() noexcept
+        {
+            return sThis != nullptr ? sThis->mWorld : nullptr;
+        }
     };
 }
 
