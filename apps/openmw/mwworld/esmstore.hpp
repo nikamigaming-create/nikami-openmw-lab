@@ -14,6 +14,7 @@
 #include <components/esm3/loadgmst.hpp>
 #include <components/esm4/loadavif.hpp>
 #include <components/esm4/loadclmt.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadwthr.hpp>
 #include <components/misc/tuplemeta.hpp>
 
@@ -116,6 +117,7 @@ namespace ESM4
     struct Projectile;
     struct Race;
     struct Reference;
+    struct Reputation;
     struct Sound;
     struct SoundReference;
     struct Static;
@@ -179,7 +181,7 @@ namespace MWWorld
             Store<ESM4::Land>, Store<ESM4::LandTexture>, Store<ESM4::LevelledCreature>, Store<ESM4::LevelledItem>,
             Store<ESM4::LevelledNpc>, Store<ESM4::Light>, Store<ESM4::MiscItem>, Store<ESM4::MovableStatic>,
             Store<ESM4::Npc>, Store<ESM4::Outfit>, Store<ESM4::Potion>, Store<ESM4::Projectile>, Store<ESM4::Race>,
-            Store<ESM4::Reference>, Store<ESM4::Sound>, Store<ESM4::SoundReference>, Store<ESM4::Static>,
+            Store<ESM4::Reference>, Store<ESM4::Reputation>, Store<ESM4::Sound>, Store<ESM4::SoundReference>, Store<ESM4::Static>,
             Store<ESM4::StaticCollection>, Store<ESM4::Terminal>, Store<ESM4::TextureSet>, Store<ESM4::Tree>,
             Store<ESM4::Weapon>, Store<ESM4::Weather>, Store<ESM4::World>, Store<ESM4::Explosion>, Store<ESM4::ImpactDataSet>,
             Store<ESM4::ImpactData>>;

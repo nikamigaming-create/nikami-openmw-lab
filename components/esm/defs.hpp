@@ -243,6 +243,7 @@ namespace ESM
         REC_PROJ4 = esm4Recname(ESM4::REC_PROJ), // Projectile
         REC_QUST4 = esm4Recname(ESM4::REC_QUST), // Quest
         REC_RACE4 = esm4Recname(ESM4::REC_RACE), // Race / Creature type
+        REC_REPU4 = esm4Recname(ESM4::REC_REPU), // Reputation (Fallout: New Vegas)
         REC_REFR4 = esm4Recname(ESM4::REC_REFR), // Object Reference
         REC_REGN4 = esm4Recname(ESM4::REC_REGN), // Region (Audio/Weather)
         REC_RELA4 = esm4Recname(ESM4::REC_RELA), // Relationship

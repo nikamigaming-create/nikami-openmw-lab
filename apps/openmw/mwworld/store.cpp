@@ -11,6 +11,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadavif.hpp>
 #include <components/esm4/loadclmt.hpp>
+#include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadwthr.hpp>
 
 #include <components/loadinglistener/loadinglistener.hpp>
@@ -1275,6 +1276,7 @@ template class MWWorld::TypedDynamicStore<ESM4::Outfit>;
 template class MWWorld::TypedDynamicStore<ESM4::Potion>;
 template class MWWorld::TypedDynamicStore<ESM4::Projectile>;
 template class MWWorld::TypedDynamicStore<ESM4::Race>;
+template class MWWorld::TypedDynamicStore<ESM4::Reputation>;
 template class MWWorld::TypedDynamicStore<ESM4::Sound>;
 template class MWWorld::TypedDynamicStore<ESM4::SoundReference>;
 template class MWWorld::TypedDynamicStore<ESM4::Static>;

@@ -131,6 +131,7 @@ namespace ESM4
         REC_PROJ = fourCC("PROJ"), // Projectile
         REC_QUST = fourCC("QUST"), // Quest
         REC_RACE = fourCC("RACE"), // Race / Creature type
+        REC_REPU = fourCC("REPU"), // Reputation (Fallout: New Vegas)
         REC_REFR = fourCC("REFR"), // Object Reference
         REC_REGN = fourCC("REGN"), // Region (Audio/Weather)
         REC_RELA = fourCC("RELA"), // Relationship
