@@ -9,6 +9,7 @@
 #include <components/esm/records.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+#include <components/esm4/loadavif.hpp>
 #include <components/esm4/loadclmt.hpp>
 #include <components/esm4/loadwthr.hpp>
 
@@ -1243,6 +1244,7 @@ template class MWWorld::TypedDynamicStore<ESM4::ActorCharacter, ESM::FormId>;
 template class MWWorld::TypedDynamicStore<ESM4::ActorCreature, ESM::FormId>;
 
 template class MWWorld::TypedDynamicStore<ESM4::Activator>;
+template class MWWorld::TypedDynamicStore<ESM4::ActorValueInformation>;
 template class MWWorld::TypedDynamicStore<ESM4::Ammunition>;
 template class MWWorld::TypedDynamicStore<ESM4::Armor>;
 template class MWWorld::TypedDynamicStore<ESM4::ArmorAddon>;

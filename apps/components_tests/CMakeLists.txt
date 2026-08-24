@@ -70,6 +70,7 @@ file(GLOB UNITTEST_SRC_FILES
     toutf8/toutf8.cpp
 
     esm4/includes.cpp
+    esm4/testloadavif.cpp
     esm4/testloadammo.cpp
     esm4/testloadclimate.cpp
     esm4/testloadexpl.cpp
