@@ -49,8 +49,8 @@ namespace MWPhysics
 
         bool getHitWater() const { return mHitWater; }
 
-        void hit(const btCollisionObject* target, btVector3 pos, btVector3 normal, int shapePart = -1,
-            int triangleIndex = -1);
+        void hit(const btCollisionObject* target, btVector3 pos, btVector3 normal,
+            int shapePart = sInvalidCollisionIndex, int triangleIndex = sInvalidCollisionIndex);
 
         void setValidTargets(const std::vector<MWWorld::Ptr>& targets);
         bool isValidTarget(const btCollisionObject* target) const;
@@ -69,8 +69,8 @@ namespace MWPhysics
         const btCollisionObject* mHitTarget;
         btVector3 mHitPosition;
         btVector3 mHitNormal;
-        int mHitShapePart = -1;
-        int mHitTriangleIndex = -1;
+        int mHitShapePart = sInvalidCollisionIndex;
+        int mHitTriangleIndex = sInvalidCollisionIndex;
 
         std::vector<const btCollisionObject*> mValidTargets;
 

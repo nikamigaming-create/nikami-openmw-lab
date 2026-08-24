@@ -17,7 +17,8 @@ namespace MWPhysics
         CollisionType_AnyPhysical = CollisionType_World | CollisionType_HeightMap | CollisionType_Actor
             | CollisionType_Door | CollisionType_Projectile | CollisionType_Water,
         CollisionType_CameraOnly = 1 << 6,
-        CollisionType_VisualOnly = 1 << 7
+        CollisionType_VisualOnly = 1 << 7,
+        CollisionType_All = 0xff
     };
 
 }

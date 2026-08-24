@@ -63,7 +63,8 @@ namespace
     std::size_t getCollisionBodyIndex(const btCollisionObject& object)
     {
         const int index = object.getUserIndex();
-        return index >= 0 ? static_cast<std::size_t>(index) : 0;
+        return index >= MWPhysics::sFirstValidCollisionIndex ? static_cast<std::size_t>(index)
+            : MWPhysics::sPrimaryCollisionBodyIndex;
     }
 
     void handleJump(const MWWorld::Ptr& ptr)

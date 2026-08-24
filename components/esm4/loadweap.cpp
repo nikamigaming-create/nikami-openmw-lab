@@ -28,6 +28,7 @@
 
 #include <stdexcept>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 //#include "writer.hpp"
 
@@ -35,7 +36,7 @@ namespace
 {
     void loadFalloutDnam(ESM4::Reader& reader, ESM4::Weapon::FalloutData& data, std::uint32_t size)
     {
-        if (size < 16)
+        if (size < ESM4::Fallout::kWeaponDnamAnimationBytes)
         {
             reader.skipSubRecordData();
             return;
@@ -51,18 +52,18 @@ namespace
         reader.get(data.mReloadAnimation);
         data.mPresent = true;
 
-        if (size < 68)
+        if (size < ESM4::Fallout::kWeaponDnamBallisticsBytes)
         {
-            if (size > 16)
-                reader.skipSubRecordData(size - 16);
+            if (size > ESM4::Fallout::kWeaponDnamAnimationBytes)
+                reader.skipSubRecordData(size - ESM4::Fallout::kWeaponDnamAnimationBytes);
             return;
         }
 
         reader.get(data.mMinSpread);
         reader.get(data.mSpread);
-        reader.skipSubRecordData(4);
+        reader.skipSubRecordData(ESM4::Fallout::kWeaponDnamPaddingBytes);
         reader.get(data.mSightFov);
-        reader.skipSubRecordData(4);
+        reader.skipSubRecordData(ESM4::Fallout::kWeaponDnamPaddingBytes);
         reader.getFormId(data.mProjectile);
         reader.get(data.mBaseVatsChance);
         reader.get(data.mAttackAnimation);
@@ -76,8 +77,8 @@ namespace
         reader.get(data.mFireRate);
         data.mBallisticsPresent = true;
 
-        if (size > 68)
-            reader.skipSubRecordData(size - 68);
+        if (size > ESM4::Fallout::kWeaponDnamBallisticsBytes)
+            reader.skipSubRecordData(size - ESM4::Fallout::kWeaponDnamBallisticsBytes);
     }
 }
 
@@ -86,7 +87,7 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
     const std::uint32_t esmVer = reader.esmVersion();
-    const bool isFONV = esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
+    const bool isFONV = ESM4::Fallout::isNewVegasVersion(esmVer);
 
     while (reader.getSubRecordHeader())
     {
@@ -102,13 +103,13 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("DATA"):
             {
                 // if (reader.esmVersion() == ESM::VER_094 || reader.esmVersion() == ESM::VER_170)
-                if (subHdr.dataSize == 10) // FO3 has 15 bytes even though VER_094
+                if (subHdr.dataSize == ESM4::Fallout::kWeaponTes4DataBytes) // FO3 has 15 bytes even though VER_094
                 {
                     reader.get(mData.value);
                     reader.get(mData.weight);
                     reader.get(mData.damage);
                 }
-                else if (isFONV || subHdr.dataSize == 15)
+                else if (subHdr.dataSize == ESM4::Fallout::kWeaponFalloutDataBytes)
                 {
                     reader.get(mData.value);
                     reader.get(mData.health);
@@ -116,7 +117,7 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
                     reader.get(mData.damage);
                     reader.get(mData.clipSize);
                 }
-                else
+                else if (subHdr.dataSize == ESM4::Fallout::kWeaponTes5DataBytes)
                 {
                     reader.get(mData.type);
                     reader.get(mData.speed);
@@ -127,6 +128,8 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
                     reader.get(mData.weight);
                     reader.get(mData.damage);
                 }
+                else
+                    reader.skipSubRecordData();
                 break;
             }
             case ESM::fourCC("MODL"):

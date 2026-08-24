@@ -21,8 +21,12 @@ namespace MWPhysics
                 return 1.f;
         }
 
+        const bool accepted = rayResult.m_hitFraction < m_closestHitFraction;
         const btScalar result
             = btCollisionWorld::ClosestRayResultCallback::addSingleResult(rayResult, normalInWorldSpace);
+        if (!accepted)
+            return result;
+
         if (rayResult.m_localShapeInfo != nullptr)
         {
             mHitShapePart = rayResult.m_localShapeInfo->m_shapePart;
@@ -30,8 +34,8 @@ namespace MWPhysics
         }
         else
         {
-            mHitShapePart = -1;
-            mHitTriangleIndex = -1;
+            mHitShapePart = sInvalidCollisionIndex;
+            mHitTriangleIndex = sInvalidCollisionIndex;
         }
         return result;
     }

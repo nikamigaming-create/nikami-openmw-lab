@@ -69,8 +69,12 @@ namespace
             EXPECT_EQ(collisionObjects[1]->getUserPointer(), &object);
             EXPECT_EQ(collisionObjects[0]->getUserIndex(), 0);
             EXPECT_EQ(collisionObjects[1]->getUserIndex(), 1);
-            EXPECT_EQ(object.getHavokMaterial(0, -1, -1), 4u);
-            EXPECT_EQ(object.getHavokMaterial(1, -1, -1), 9u);
+            EXPECT_EQ(object.getHavokMaterial(Resource::kPrimaryCollisionBodyIndex, Resource::kInvalidCollisionIndex,
+                           Resource::kInvalidCollisionIndex),
+                4u);
+            EXPECT_EQ(object.getHavokMaterial(Resource::kFirstCollisionBodyCount, Resource::kInvalidCollisionIndex,
+                           Resource::kInvalidCollisionIndex),
+                9u);
 
             const btVector3 rayFrom(10.f, 0.f, 10.f);
             const btVector3 rayTo(10.f, 0.f, -10.f);
@@ -82,7 +86,8 @@ namespace
             ASSERT_NE(callback.m_collisionObject, nullptr);
             EXPECT_EQ(callback.m_collisionObject->getUserIndex(), 1);
             EXPECT_EQ(
-                object.getHavokMaterial(static_cast<std::size_t>(callback.m_collisionObject->getUserIndex()), -1, -1),
+                object.getHavokMaterial(static_cast<std::size_t>(callback.m_collisionObject->getUserIndex()),
+                    Resource::kInvalidCollisionIndex, Resource::kInvalidCollisionIndex),
                 9u);
 
             object.setScale(2.f);

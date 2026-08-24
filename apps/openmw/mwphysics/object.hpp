@@ -38,7 +38,8 @@ namespace MWPhysics
         ~Object() override;
 
         const Resource::BulletShapeInstance* getShapeInstance() const;
-        std::optional<std::uint32_t> getHavokMaterial(int shapePart = -1, int triangleIndex = -1) const override;
+        std::optional<std::uint32_t> getHavokMaterial(
+            int shapePart = sInvalidCollisionIndex, int triangleIndex = sInvalidCollisionIndex) const override;
         std::optional<std::uint32_t> getHavokMaterial(
             std::size_t bodyIndex, int shapePart, int triangleIndex) const override;
         std::span<btCollisionObject* const> getCollisionObjects() const { return mCollisionObjects; }

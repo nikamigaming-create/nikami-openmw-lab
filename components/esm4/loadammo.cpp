@@ -28,6 +28,7 @@
 
 #include <stdexcept>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 //#include "writer.hpp"
 
@@ -50,14 +51,14 @@ void ESM4::Ammunition::load(ESM4::Reader& reader)
             case ESM::fourCC("DATA"):
                 switch (subHdr.dataSize)
                 {
-                    case 18: // TES4
-                    case 13: // FO3/FNV
+                    case ESM4::Fallout::kAmmunitionTes4DataBytes: // TES4
+                    case ESM4::Fallout::kAmmunitionFalloutDataBytes: // FO3/FNV
                     {
                         reader.get(mData.mSpeed);
                         reader.get(mData.mFlags);
-                        mData.mFlags &= 0xFF;
+                        mData.mFlags &= ESM4::Fallout::kAmmunitionFlagsByteMask;
                         reader.get(mData.mValue);
-                        if (subHdr.dataSize == 13)
+                        if (subHdr.dataSize == ESM4::Fallout::kAmmunitionFalloutDataBytes)
                             reader.get(mData.mClipRounds);
                         else
                         {
@@ -68,16 +69,16 @@ void ESM4::Ammunition::load(ESM4::Reader& reader)
                         }
                         break;
                     }
-                    case 16: // TES5
-                    case 20: // SSE
+                    case ESM4::Fallout::kAmmunitionTes5DataBytes: // TES5
+                    case ESM4::Fallout::kAmmunitionSseDataBytes: // SSE
                         reader.getFormId(mData.mProjectile);
                         reader.get(mData.mFlags);
                         reader.get(mData.mDamage);
                         reader.get(mData.mValue);
-                        if (subHdr.dataSize == 20)
+                        if (subHdr.dataSize == ESM4::Fallout::kAmmunitionSseDataBytes)
                             reader.get(mData.mWeight);
                         break;
-                    case 8:
+                    case ESM4::Fallout::kAmmunitionShortDataBytes:
                         reader.get(mData.mValue);
                         reader.get(mData.mWeight);
                         break;
@@ -87,14 +88,15 @@ void ESM4::Ammunition::load(ESM4::Reader& reader)
                 }
                 break;
             case ESM::fourCC("DAT2"):
-                if (subHdr.dataSize == 12 || subHdr.dataSize == 20)
+                if (subHdr.dataSize == ESM4::Fallout::kAmmunitionDat2BaseBytes
+                    || subHdr.dataSize == ESM4::Fallout::kAmmunitionDat2FullBytes)
                 {
                     reader.get(mData.mProjPerShot);
                     reader.getFormId(mData.mProjectile);
                     reader.get(mData.mWeight);
                     mData.mConsumedAmmo = {};
                     mData.mConsumedPercentage = 0.f;
-                    if (subHdr.dataSize == 20)
+                    if (subHdr.dataSize == ESM4::Fallout::kAmmunitionDat2FullBytes)
                     {
                         reader.getFormId(mData.mConsumedAmmo);
                         reader.get(mData.mConsumedPercentage);
@@ -108,7 +110,7 @@ void ESM4::Ammunition::load(ESM4::Reader& reader)
             case ESM::fourCC("DNAM"):
                 reader.getFormId(mData.mProjectile);
                 reader.get(mData.mFlags);
-                mData.mFlags &= 0xFF;
+                mData.mFlags &= ESM4::Fallout::kAmmunitionFlagsByteMask;
                 reader.get(mData.mDamage);
                 reader.get(mData.mHealth);
                 break;

@@ -1,6 +1,8 @@
 #ifndef OPENMW_MWPHYSICS_CONSTANTS_H
 #define OPENMW_MWPHYSICS_CONSTANTS_H
 
+#include <cstddef>
+
 namespace MWPhysics
 {
     static constexpr float sStepSizeDown = 62.0f;
@@ -21,6 +23,14 @@ namespace MWPhysics
     // to run unnecessarily Currently set to 0 because having the "unstuck"ing code run whenever possible prevents some
     // glitchy snagging issues
     static constexpr float sAllowedPenetration = 0.0f;
+
+    // Collision query sentinels are API values, not game policy. Keeping them named avoids
+    // making a missing shape part or the compatibility primary body ambiguous at call sites.
+    static constexpr int sInvalidCollisionIndex = -1;
+    static constexpr int sFirstValidCollisionIndex = 0;
+    static constexpr std::size_t sNoCollisionBodyCount = 0;
+    static constexpr std::size_t sFirstCollisionBodyCount = 1;
+    static constexpr std::size_t sPrimaryCollisionBodyIndex = 0;
 }
 
 #endif

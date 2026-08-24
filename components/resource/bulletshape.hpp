@@ -28,6 +28,14 @@ namespace NifBullet
 
 namespace Resource
 {
+    // Material lookup sentinels and body ordinals are part of the resource API, not
+    // Fallout collision policy. They are named here so callers share one contract.
+    inline constexpr int kInvalidCollisionIndex = -1;
+    inline constexpr int kFirstValidCollisionIndex = 0;
+    inline constexpr std::size_t kNoCollisionBodyCount = 0;
+    inline constexpr std::size_t kFirstCollisionBodyCount = 1;
+    inline constexpr std::size_t kPrimaryCollisionBodyIndex = 0;
+
     struct DeleteCollisionShape
     {
         void operator()(btCollisionShape* shape) const;
@@ -82,8 +90,6 @@ namespace Resource
         bool operator==(const CollisionShapeMaterialTable&) const = default;
 
     private:
-        static constexpr int sWildcard = -1;
-
         bool addMaterial(int shapePart, int triangleIndex, std::uint32_t material);
         std::optional<std::uint32_t> findMaterial(int shapePart, int triangleIndex) const;
 

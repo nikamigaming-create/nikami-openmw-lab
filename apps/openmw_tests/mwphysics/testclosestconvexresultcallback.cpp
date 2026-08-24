@@ -3,6 +3,7 @@
 #include <BulletCollision/CollisionDispatch/btCollisionObject.h>
 
 #include "apps/openmw/mwphysics/closestconvexresultcallback.hpp"
+#include "apps/openmw/mwphysics/constants.hpp"
 
 namespace
 {
@@ -33,7 +34,26 @@ namespace
         callback.addSingleResult(first, true);
         callback.addSingleResult(closer, true);
 
-        EXPECT_EQ(callback.getHitShapePart(), -1);
-        EXPECT_EQ(callback.getHitTriangleIndex(), -1);
+        EXPECT_EQ(callback.getHitShapePart(), MWPhysics::sInvalidCollisionIndex);
+        EXPECT_EQ(callback.getHitTriangleIndex(), MWPhysics::sInvalidCollisionIndex);
+    }
+
+    TEST(ClosestConvexResultCallbackTest, FartherHitDoesNotOverwriteClosestShapeIdentity)
+    {
+        btCollisionObject closestTarget;
+        btCollisionObject fartherTarget;
+        MWPhysics::ClosestConvexResultCallback callback(btVector3(0, 0, 0), btVector3(0, 1, 0));
+        btCollisionWorld::LocalShapeInfo closestInfo{ 3, 9 };
+        btCollisionWorld::LocalShapeInfo fartherInfo{ 8, 13 };
+        btCollisionWorld::LocalConvexResult closest(
+            &closestTarget, &closestInfo, btVector3(0, -1, 0), btVector3(0, 0.25f, 0), 0.25f);
+        btCollisionWorld::LocalConvexResult farther(
+            &fartherTarget, &fartherInfo, btVector3(0, -1, 0), btVector3(0, 0.75f, 0), 0.75f);
+
+        callback.addSingleResult(closest, true);
+        callback.addSingleResult(farther, true);
+
+        EXPECT_EQ(callback.getHitShapePart(), 3);
+        EXPECT_EQ(callback.getHitTriangleIndex(), 9);
     }
 }

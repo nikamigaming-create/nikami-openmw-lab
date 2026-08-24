@@ -5,6 +5,8 @@
 
 #include <BulletCollision/CollisionDispatch/btCollisionWorld.h>
 
+#include "constants.hpp"
+
 class btCollisionObject;
 
 namespace MWPhysics
@@ -30,8 +32,8 @@ namespace MWPhysics
     private:
         const std::span<const btCollisionObject*> mIgnoreList;
         const std::span<const btCollisionObject*> mTargets;
-        int mHitShapePart = -1;
-        int mHitTriangleIndex = -1;
+        int mHitShapePart = sInvalidCollisionIndex;
+        int mHitTriangleIndex = sInvalidCollisionIndex;
     };
 }
 

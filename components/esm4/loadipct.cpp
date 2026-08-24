@@ -2,13 +2,14 @@
 
 #include <stdexcept>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 
 namespace
 {
     void loadFalloutData(ESM4::Reader& reader, ESM4::ImpactData::Data& data, std::uint32_t size, bool isFONV)
     {
-        if (!isFONV || size != 24)
+        if (!isFONV || size != ESM4::Fallout::kImpactDataBytes)
         {
             reader.skipSubRecordData();
             return;
@@ -30,7 +31,7 @@ void ESM4::ImpactData::load(Reader& reader)
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
     const std::uint32_t esmVer = reader.esmVersion();
-    const bool isFONV = esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
+    const bool isFONV = ESM4::Fallout::isNewVegasVersion(esmVer);
 
     while (reader.getSubRecordHeader())
     {

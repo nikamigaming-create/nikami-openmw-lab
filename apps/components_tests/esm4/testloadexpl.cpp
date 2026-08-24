@@ -12,6 +12,8 @@ namespace
 {
     using namespace std::literals;
 
+    constexpr std::size_t kUnsupportedExplosionDataBytes = ESM4::Fallout::kExplosionDataBytes - sizeof(std::uint32_t);
+
     std::string zString(std::string_view value)
     {
         std::string result(value);
@@ -38,7 +40,7 @@ namespace
         return result;
     }
 
-    ESM4::Explosion loadExplosion(std::string data, float version = 1.34f)
+    ESM4::Explosion loadExplosion(std::string data, float version = ESM4Test::kFalloutPluginVersion)
     {
         std::string recordData;
         ESM4Test::appendSubRecord(recordData, "EDID", zString("SyntheticExplosion"));
@@ -54,7 +56,7 @@ namespace
         ESM4Test::appendPod(placedImpactObject, std::uint32_t{ 0x707 });
         ESM4Test::appendSubRecord(recordData, "INAM", placedImpactObject);
 
-        auto reader = ESM4Test::makeReader("EXPL", std::move(recordData), 2, version);
+        auto reader = ESM4Test::makeReader("EXPL", std::move(recordData), ESM4Test::kSyntheticModIndex, version);
         ESM4::Explosion explosion;
         explosion.load(*reader);
         return explosion;
@@ -88,7 +90,7 @@ namespace
 
     TEST(Esm4ExplosionTest, skipsUnknownDataSizeWithoutLosingSubrecordAlignment)
     {
-        const ESM4::Explosion explosion = loadExplosion(std::string(48, '\0'));
+        const ESM4::Explosion explosion = loadExplosion(std::string(kUnsupportedExplosionDataBytes, '\0'));
 
         EXPECT_FALSE(explosion.mData.mPresent);
         EXPECT_EQ(explosion.mPlacedImpactObject, ESM::FormId::fromUint32(0x02000707));
@@ -96,7 +98,7 @@ namespace
 
     TEST(Esm4ExplosionTest, leavesFalloutDataAbsentForOtherPluginVersions)
     {
-        const ESM4::Explosion explosion = loadExplosion(makeExplosionData(), 1.f);
+        const ESM4::Explosion explosion = loadExplosion(makeExplosionData(), ESM4Test::kOtherPluginVersion);
 
         EXPECT_FALSE(explosion.mData.mPresent);
         EXPECT_EQ(explosion.mModel.getOriginal(), "effects/explosion.nif");

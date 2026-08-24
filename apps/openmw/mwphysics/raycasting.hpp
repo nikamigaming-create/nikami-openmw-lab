@@ -10,6 +10,7 @@
 #include "../mwworld/ptr.hpp"
 
 #include "collisiontype.hpp"
+#include "constants.hpp"
 
 namespace MWPhysics
 {
@@ -21,9 +22,9 @@ namespace MWPhysics
         osg::Vec3f mHitNormal;
         MWWorld::Ptr mHitObject;
         std::optional<std::uint32_t> mHitHavokMaterial;
-        std::size_t mHitBodyIndex = 0;
-        int mHitShapePart = -1;
-        int mHitTriangleIndex = -1;
+        std::size_t mHitBodyIndex = sPrimaryCollisionBodyIndex;
+        int mHitShapePart = sInvalidCollisionIndex;
+        int mHitTriangleIndex = sInvalidCollisionIndex;
     };
 
     class RayCastingInterface
@@ -35,7 +36,7 @@ namespace MWPhysics
         /// ignoring all other actors.
         virtual RayCastingResult castRay(const osg::Vec3f& from, const osg::Vec3f& to,
             const std::vector<MWWorld::ConstPtr>& ignore = {}, const std::vector<MWWorld::Ptr>& targets = {},
-            int mask = CollisionType_Default, int group = 0xff) const = 0;
+            int mask = CollisionType_Default, int group = CollisionType_All) const = 0;
 
         RayCastingResult castRay(const osg::Vec3f& from, const osg::Vec3f& to, int mask) const
         {
@@ -43,7 +44,7 @@ namespace MWPhysics
         }
 
         virtual RayCastingResult castSphere(const osg::Vec3f& from, const osg::Vec3f& to, float radius,
-            int mask = CollisionType_Default, int group = 0xff) const = 0;
+            int mask = CollisionType_Default, int group = CollisionType_All) const = 0;
 
         /// Return true if actor1 can see actor2.
         virtual bool getLineOfSight(const MWWorld::ConstPtr& actor1, const MWWorld::ConstPtr& actor2) const = 0;

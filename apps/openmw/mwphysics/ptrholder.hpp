@@ -13,6 +13,7 @@
 #include <BulletCollision/CollisionDispatch/btCollisionObject.h>
 
 #include "../mwworld/ptr.hpp"
+#include "constants.hpp"
 
 namespace MWPhysics
 {
@@ -35,11 +36,15 @@ namespace MWPhysics
 
         btCollisionObject* getCollisionObject() const { return mCollisionObject.get(); }
 
-        virtual std::optional<std::uint32_t> getHavokMaterial(int = -1, int = -1) const { return std::nullopt; }
+        virtual std::optional<std::uint32_t> getHavokMaterial(
+            int = sInvalidCollisionIndex, int = sInvalidCollisionIndex) const
+        {
+            return std::nullopt;
+        }
         virtual std::optional<std::uint32_t> getHavokMaterial(
             std::size_t bodyIndex, int shapePart, int triangleIndex) const
         {
-            return bodyIndex == 0 ? getHavokMaterial(shapePart, triangleIndex) : std::nullopt;
+            return bodyIndex == sPrimaryCollisionBodyIndex ? getHavokMaterial(shapePart, triangleIndex) : std::nullopt;
         }
 
         void setVelocity(osg::Vec3f velocity) { mVelocity = velocity; }

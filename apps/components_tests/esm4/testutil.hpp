@@ -1,8 +1,10 @@
 #ifndef OPENMW_APPS_COMPONENTS_TESTS_ESM4_TESTUTIL_H
 #define OPENMW_APPS_COMPONENTS_TESTS_ESM4_TESTUTIL_H
 
+#include <components/esm4/falloutformat.hpp>
 #include <components/esm4/reader.hpp>
 
+#include <bit>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -14,6 +16,12 @@
 
 namespace ESM4Test
 {
+    // Synthetic fixture metadata is derived from the same version words the reader consumes.
+    inline constexpr std::uint32_t kSyntheticModIndex = 2;
+    inline constexpr float kFalloutPluginVersion
+        = std::bit_cast<float>(static_cast<std::uint32_t>(ESM::VER_134));
+    inline constexpr float kOtherPluginVersion = std::bit_cast<float>(static_cast<std::uint32_t>(ESM::VER_100));
+
     template <class T>
     void appendPod(std::string& output, const T& value)
     {
@@ -45,7 +53,8 @@ namespace ESM4Test
     }
 
     inline std::unique_ptr<ESM4::Reader> makeReader(
-        std::string_view recordType, std::string recordData, std::uint32_t modIndex = 2, float version = 1.34f)
+        std::string_view recordType, std::string recordData, std::uint32_t modIndex = kSyntheticModIndex,
+        float version = kFalloutPluginVersion)
     {
         std::string hedr;
         appendPod(hedr, version);

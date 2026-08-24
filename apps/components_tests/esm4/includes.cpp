@@ -26,6 +26,7 @@
 #include <components/esm4/loaddobj.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadeyes.hpp>
+#include <components/esm4/loadexpl.hpp>
 #include <components/esm4/loadflor.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadfurn.hpp>
@@ -38,6 +39,8 @@
 #include <components/esm4/loadidlm.hpp>
 #include <components/esm4/loadimod.hpp>
 #include <components/esm4/loadinfo.hpp>
+#include <components/esm4/loadipct.hpp>
+#include <components/esm4/loadipds.hpp>
 #include <components/esm4/loadingr.hpp>
 #include <components/esm4/loadkeym.hpp>
 #include <components/esm4/loadland.hpp>
@@ -61,6 +64,7 @@
 #include <components/esm4/loadpgrd.hpp>
 #include <components/esm4/loadpgre.hpp>
 #include <components/esm4/loadpwat.hpp>
+#include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadrefr.hpp>

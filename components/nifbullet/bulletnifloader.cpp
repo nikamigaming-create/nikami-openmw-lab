@@ -23,6 +23,7 @@
 #include <components/nif/node.hpp>
 #include <components/nif/parent.hpp>
 #include <components/nif/physics.hpp>
+#include <components/nifbullet/falloutphysicsconstants.hpp>
 
 #include <BulletCollision/CollisionShapes/btBoxShape.h>
 #include <BulletCollision/CollisionShapes/btCapsuleShape.h>
@@ -33,9 +34,6 @@
 
 namespace
 {
-
-    // Fallout 3 / New Vegas bhk positions use Havok units at a 1:7 ratio to scene-graph units.
-    constexpr float sHavokToGameUnits = 7.f;
 
     struct TriangleMeshPart
     {
@@ -131,7 +129,7 @@ namespace
         std::vector<TriangleMeshPart> mParts;
         CollisionSemantics mSemantics;
         bool mAnimated = false;
-        int mRecordIndex = -1;
+        int mRecordIndex = Resource::kInvalidCollisionIndex;
         osg::Matrixf mNodeTransform = osg::Matrixf::identity();
     };
 
@@ -143,7 +141,7 @@ namespace
         Resource::CollisionShapeMaterialTable mMaterials;
         CollisionSemantics mSemantics;
         bool mAnimated = false;
-        int mRecordIndex = -1;
+        int mRecordIndex = Resource::kInvalidCollisionIndex;
     };
 
     CollisionSemantics getCollisionSemantics(const Nif::bhkRigidBody& body, const Nif::bhkCollisionObject& collision,
@@ -202,7 +200,8 @@ namespace
             = data.mSubshapes.empty() ? packed.mSubshapes : data.mSubshapes;
         std::vector<SubshapeRange> ranges;
         if (subshapes.empty())
-            ranges.push_back({ 0, data.mVertices.size(), std::nullopt });
+            ranges.push_back(
+                { Resource::kFirstValidCollisionIndex, data.mVertices.size(), std::nullopt });
         else
         {
             ranges.reserve(subshapes.size());
@@ -212,7 +211,8 @@ namespace
                 const std::size_t end = begin + subshape.mNumVertices;
                 if (end > data.mVertices.size())
                     return std::nullopt;
-                ranges.push_back({ begin, end, subshape.mHavokMaterial.mMaterial & 0x1f });
+                ranges.push_back(
+                    { begin, end, subshape.mHavokMaterial.mMaterial & NifBullet::FalloutPhysics::kHavokMaterialMask });
                 begin = end;
             }
             if (begin != data.mVertices.size())
@@ -220,13 +220,13 @@ namespace
         }
 
         const auto transformVertex = [&](const osg::Vec3f& source) {
-            osg::Vec3f result = source * sHavokToGameUnits;
+            osg::Vec3f result = source * NifBullet::FalloutPhysics::kHavokToGameUnits;
             if (body.mRecordType == Nif::RC_bhkRigidBodyT)
             {
                 result = body.mInfo.mRotation * result;
                 result
                     += osg::Vec3f(body.mInfo.mTranslation.x(), body.mInfo.mTranslation.y(), body.mInfo.mTranslation.z())
-                    * sHavokToGameUnits;
+                    * NifBullet::FalloutPhysics::kHavokToGameUnits;
             }
             return nodeTransform.preMult(result);
         };
@@ -283,10 +283,10 @@ namespace
 
     bool canMergePackedCollisions(const std::vector<PackedCollisionData>& collisions)
     {
-        if (collisions.size() < 2)
+        if (collisions.size() < NifBullet::FalloutPhysics::kMultipleCollisionCount)
             return false;
         if (collisions.front().mAnimated || collisions.front().mSemantics.mMotionType != Nif::HkMotionType::Motion_Fixed
-            || collisions.front().mSemantics.mSubshapeFilters.size() > 1)
+            || collisions.front().mSemantics.mSubshapeFilters.size() > NifBullet::FalloutPhysics::kSingleCollisionCount)
             return false;
         return std::ranges::all_of(collisions.begin() + 1, collisions.end(), [&](const PackedCollisionData& collision) {
             return !collision.mAnimated && collision.mSemantics == collisions.front().mSemantics;
@@ -342,15 +342,14 @@ namespace
 
     bool packedScaleMirrorsNode(const Nif::bhkPackedNiTriStripsShape& packed, const Nif::NiAVObject& node)
     {
-        constexpr float tolerance = 1e-5f;
         const float nodeScale = node.mTransform.mScale;
         if (!std::isfinite(nodeScale))
             return false;
-        for (unsigned int component = 0; component < 4; ++component)
+        for (unsigned int component = 0; component < NifBullet::FalloutPhysics::kHomogeneousComponentCount; ++component)
         {
             const float value = packed.mScale[component];
-            const float expected = component == 3 ? 0.f : nodeScale;
-            if (!std::isfinite(value) || std::abs(value - expected) > tolerance)
+            const float expected = component == NifBullet::FalloutPhysics::kVectorComponentCount ? 0.f : nodeScale;
+            if (!std::isfinite(value) || std::abs(value - expected) > NifBullet::FalloutPhysics::kShapeComparisonTolerance)
                 return false;
         }
         return true;
@@ -377,8 +376,8 @@ namespace
 
         btTransform rigidTransform;
         rigidTransform.setOrigin(Misc::Convert::toBullet(transform.getTrans()));
-        for (int row = 0; row < 3; ++row)
-            for (int column = 0; column < 3; ++column)
+        for (int row = 0; row < NifBullet::FalloutPhysics::kVectorComponentCount; ++row)
+            for (int column = 0; column < NifBullet::FalloutPhysics::kVectorComponentCount; ++column)
                 rigidTransform.getBasis()[row][column] = transform(column, row);
         return { rigidTransform, scale };
     }
@@ -390,8 +389,8 @@ namespace
 
     bool isFinite(const osg::Matrixf& value)
     {
-        for (int row = 0; row < 4; ++row)
-            for (int column = 0; column < 4; ++column)
+        for (int row = 0; row < NifBullet::FalloutPhysics::kHomogeneousComponentCount; ++row)
+            for (int column = 0; column < NifBullet::FalloutPhysics::kHomogeneousComponentCount; ++column)
                 if (!std::isfinite(value(row, column)))
                     return false;
         return true;
@@ -406,7 +405,7 @@ namespace
         result.makeRotate(body.mInfo.mRotation);
         result.setTrans(
             osg::Vec3f(body.mInfo.mTranslation.x(), body.mInfo.mTranslation.y(), body.mInfo.mTranslation.z())
-            * sHavokToGameUnits);
+            * NifBullet::FalloutPhysics::kHavokToGameUnits);
         return result;
     }
 
@@ -429,7 +428,7 @@ namespace
     std::optional<PrimitiveShapeData> makePrimitiveShape(
         const Nif::bhkShape& source, std::set<const Nif::bhkShape*>& stack)
     {
-        if (stack.size() >= 64 || !stack.insert(&source).second)
+        if (stack.size() >= NifBullet::FalloutPhysics::kMaximumShapeTraversalDepth || !stack.insert(&source).second)
             return std::nullopt;
         const ShapeStackGuard guard{ stack, &source };
 
@@ -450,10 +449,11 @@ namespace
             osg::Matrixf transform = transformed->mTransform;
             if (!isFinite(transform))
                 return std::nullopt;
-            transform.setTrans(transform.getTrans() * sHavokToGameUnits);
+            transform.setTrans(transform.getTrans() * NifBullet::FalloutPhysics::kHavokToGameUnits);
             child->mTransform *= transform;
             child->mMaterials = {};
-            if (!child->mMaterials.addUniformMaterial(transformed->mHavokMaterial.mMaterial & 0x1f))
+            if (!child->mMaterials.addUniformMaterial(
+                    transformed->mHavokMaterial.mMaterial & NifBullet::FalloutPhysics::kHavokMaterialMask))
                 return std::nullopt;
             return child;
         }
@@ -479,7 +479,8 @@ namespace
                 if (!child)
                     return std::nullopt;
                 childFilters.insert(child->mChildFilters.begin(), child->mChildFilters.end());
-                const std::optional<std::uint32_t> material = child->mMaterials.getMaterial(-1, -1);
+                const std::optional<std::uint32_t> material = child->mMaterials.getMaterial(
+                    Resource::kInvalidCollisionIndex, Resource::kInvalidCollisionIndex);
                 if (!material)
                     return std::nullopt;
 
@@ -496,7 +497,7 @@ namespace
             }
             for (const Nif::HavokFilter& filter : list->mHavokFilters)
                 childFilters.insert(getFilterKey(filter));
-            if (childFilters.size() > 1)
+            if (childFilters.size() > NifBullet::FalloutPhysics::kSingleCollisionCount)
                 return std::nullopt;
             if (uniformMaterial && hasUniformMaterial && !materials.addUniformMaterial(*uniformMaterial))
                 return std::nullopt;
@@ -511,7 +512,7 @@ namespace
         if (const auto* stripsShape = dynamic_cast<const Nif::bhkNiTriStripsShape*>(&source))
         {
             if (stripsShape->mData.empty()
-                || !std::ranges::equal(stripsShape->mScale._v, std::array{ 1.f, 1.f, 1.f, 0.f }))
+                || !std::ranges::equal(stripsShape->mScale._v, NifBullet::FalloutPhysics::kIdentityPackedScale))
                 return std::nullopt;
 
             std::size_t totalVertices = 0;
@@ -539,20 +540,22 @@ namespace
                 }
                 for (const std::vector<unsigned short>& strip : data.mStrips)
                 {
-                    if (strip.size() < 3 || std::ranges::any_of(strip, [&](unsigned short index) {
+                    if (strip.size() < NifBullet::FalloutPhysics::kMinimumTriangleVertexCount
+                        || std::ranges::any_of(strip, [&](unsigned short index) {
                             return index >= data.mVertices.size();
                         }))
                         continue;
                     unsigned short second = strip[0];
                     unsigned short third = strip[1];
-                    for (std::size_t index = 2; index < strip.size(); ++index)
+                    for (std::size_t index = NifBullet::FalloutPhysics::kTriangleStripInitialIndex;
+                        index < strip.size(); ++index)
                     {
                         const unsigned short first = second;
                         second = third;
                         third = strip[index];
                         if (first == second || second == third || first == third)
                             continue;
-                        if (index % 2 == 0)
+                        if (index % NifBullet::FalloutPhysics::kTriangleParityPeriod == 0)
                             mesh->addTriangleIndices(baseVertex + first, baseVertex + second, baseVertex + third);
                         else
                             mesh->addTriangleIndices(baseVertex + first, baseVertex + third, baseVertex + second);
@@ -565,7 +568,8 @@ namespace
 
             PrimitiveShapeData result;
             result.mShape.reset(new Resource::TriangleMeshShape(mesh.release(), true));
-            if (!result.mMaterials.addUniformMaterial(stripsShape->mHavokMaterial.mMaterial & 0x1f))
+            if (!result.mMaterials.addUniformMaterial(
+                    stripsShape->mHavokMaterial.mMaterial & NifBullet::FalloutPhysics::kHavokMaterialMask))
                 return std::nullopt;
             return result;
         }
@@ -585,8 +589,9 @@ namespace
                     || std::ranges::any_of(box.mExtents._v, [](float value) { return value <= 0.f; })
                     || !std::isfinite(box.mRadius) || box.mRadius < 0.f)
                     return std::nullopt;
-                const btVector3 halfExtents = Misc::Convert::toBullet(box.mExtents * sHavokToGameUnits);
-                const btScalar margin = box.mRadius * sHavokToGameUnits;
+                const btVector3 halfExtents
+                    = Misc::Convert::toBullet(box.mExtents * NifBullet::FalloutPhysics::kHavokToGameUnits);
+                const btScalar margin = box.mRadius * NifBullet::FalloutPhysics::kHavokToGameUnits;
                 auto result = std::make_unique<btBoxShape>(halfExtents + btVector3(margin, margin, margin));
                 result->setMargin(margin);
                 shape.reset(result.release());
@@ -597,25 +602,29 @@ namespace
                 const auto& sphere = static_cast<const Nif::bhkSphereShape&>(source);
                 if (!std::isfinite(sphere.mRadius) || sphere.mRadius <= 0.f)
                     return std::nullopt;
-                shape.reset(new btSphereShape(sphere.mRadius * sHavokToGameUnits));
+                shape.reset(new btSphereShape(sphere.mRadius * NifBullet::FalloutPhysics::kHavokToGameUnits));
                 break;
             }
             case Nif::RC_bhkCapsuleShape:
             {
                 const auto& capsule = static_cast<const Nif::bhkCapsuleShape&>(source);
-                constexpr float tolerance = 1e-5f;
                 if (!isFinite(capsule.mPoint1) || !isFinite(capsule.mPoint2) || !std::isfinite(capsule.mRadius)
-                    || capsule.mRadius <= 0.f || std::abs(capsule.mRadius1 - capsule.mRadius) > tolerance
-                    || std::abs(capsule.mRadius2 - capsule.mRadius) > tolerance)
+                    || capsule.mRadius <= 0.f
+                    || std::abs(capsule.mRadius1 - capsule.mRadius)
+                        > NifBullet::FalloutPhysics::kShapeComparisonTolerance
+                    || std::abs(capsule.mRadius2 - capsule.mRadius)
+                        > NifBullet::FalloutPhysics::kShapeComparisonTolerance)
                     return std::nullopt;
                 const osg::Vec3f axis = capsule.mPoint2 - capsule.mPoint1;
                 const float height = axis.length();
-                const osg::Vec3f center = (capsule.mPoint1 + capsule.mPoint2) * (0.5f * sHavokToGameUnits);
-                if (height <= tolerance)
-                    shape.reset(new btSphereShape(capsule.mRadius * sHavokToGameUnits));
+                const osg::Vec3f center = (capsule.mPoint1 + capsule.mPoint2)
+                    * (NifBullet::FalloutPhysics::kHalf * NifBullet::FalloutPhysics::kHavokToGameUnits);
+                if (height <= NifBullet::FalloutPhysics::kShapeComparisonTolerance)
+                    shape.reset(new btSphereShape(capsule.mRadius * NifBullet::FalloutPhysics::kHavokToGameUnits));
                 else
                 {
-                    shape.reset(new btCapsuleShape(capsule.mRadius * sHavokToGameUnits, height * sHavokToGameUnits));
+                    shape.reset(new btCapsuleShape(capsule.mRadius * NifBullet::FalloutPhysics::kHavokToGameUnits,
+                        height * NifBullet::FalloutPhysics::kHavokToGameUnits));
                     osg::Quat rotation;
                     rotation.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), axis);
                     localTransform.makeRotate(rotation);
@@ -626,7 +635,7 @@ namespace
             case Nif::RC_bhkConvexVerticesShape:
             {
                 const auto& convex = static_cast<const Nif::bhkConvexVerticesShape&>(source);
-                if (convex.mVertices.size() < 4
+                if (convex.mVertices.size() < NifBullet::FalloutPhysics::kMinimumConvexVertexCount
                     || convex.mVertices.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())
                     || !std::isfinite(convex.mRadius) || convex.mRadius < 0.f)
                     return std::nullopt;
@@ -636,9 +645,10 @@ namespace
                     const osg::Vec3f point(vertex.x(), vertex.y(), vertex.z());
                     if (!isFinite(point))
                         return std::nullopt;
-                    result->addPoint(Misc::Convert::toBullet(point * sHavokToGameUnits), false);
+                    result->addPoint(
+                        Misc::Convert::toBullet(point * NifBullet::FalloutPhysics::kHavokToGameUnits), false);
                 }
-                result->setMargin(convex.mRadius * sHavokToGameUnits);
+                result->setMargin(convex.mRadius * NifBullet::FalloutPhysics::kHavokToGameUnits);
                 result->recalcLocalAabb();
                 shape.reset(result.release());
                 break;
@@ -650,7 +660,8 @@ namespace
         PrimitiveShapeData result;
         result.mShape = std::move(shape);
         result.mTransform = localTransform;
-        if (!result.mMaterials.addUniformMaterial(materialShape->mHavokMaterial.mMaterial & 0x1f))
+        if (!result.mMaterials.addUniformMaterial(
+                materialShape->mHavokMaterial.mMaterial & NifBullet::FalloutPhysics::kHavokMaterialMask))
             return std::nullopt;
         return result;
     }
@@ -696,14 +707,16 @@ namespace
 
     bool canMergePrimitiveCollisions(const std::vector<PrimitiveCollisionData>& collisions)
     {
-        if (collisions.size() < 2 || collisions.front().mAnimated
+        if (collisions.size() < NifBullet::FalloutPhysics::kMultipleCollisionCount || collisions.front().mAnimated
             || collisions.front().mSemantics.mMotionType != Nif::HkMotionType::Motion_Fixed
-            || collisions.front().mSemantics.mSubshapeFilters.size() > 1)
+            || collisions.front().mSemantics.mSubshapeFilters.size() > NifBullet::FalloutPhysics::kSingleCollisionCount)
             return false;
         return std::ranges::all_of(collisions, [&](const PrimitiveCollisionData& collision) {
             return !collision.mAnimated && !collision.mShape->isCompound()
                 && collision.mSemantics == collisions.front().mSemantics
-                && collision.mMaterials.getMaterial(-1, -1).has_value();
+                && collision.mMaterials
+                       .getMaterial(Resource::kInvalidCollisionIndex, Resource::kInvalidCollisionIndex)
+                       .has_value();
         });
     }
 
@@ -727,7 +740,8 @@ namespace
             const int childIndex = compound->getNumChildShapes();
             compound->addChildShape(transform.mRigidTransform, collision.mShape.release());
 
-            const std::uint32_t material = *collision.mMaterials.getMaterial(-1, -1);
+            const std::uint32_t material = *collision.mMaterials.getMaterial(
+                Resource::kInvalidCollisionIndex, Resource::kInvalidCollisionIndex);
             if (!materials.addCompoundChildMaterial(childIndex, material))
                 return std::nullopt;
             if (!uniformMaterial)
@@ -870,7 +884,9 @@ namespace
     {
         for (const auto& extra : root.getExtraList())
             if (!extra.empty() && extra->mRecordType == Nif::RC_BSXFlags
-                && (static_cast<const Nif::NiIntegerExtraData&>(extra.get()).mData & 2) != 0)
+                && (static_cast<const Nif::NiIntegerExtraData&>(extra.get()).mData
+                        & NifBullet::FalloutPhysics::kBethesdaCollisionFlag)
+                    != 0)
                 return true;
         return false;
     }
@@ -928,7 +944,8 @@ namespace NifBullet
                 if (search.mRejected)
                     break;
             }
-            if (foundCollisionRoot && !search.mRejected && search.mPrimitives.size() == 1
+            if (foundCollisionRoot && !search.mRejected
+                && search.mPrimitives.size() == NifBullet::FalloutPhysics::kSingleCollisionCount
                 && search.mCollisions.empty())
             {
                 PrimitiveCollisionData primitive = std::move(search.mPrimitives.front());
@@ -947,7 +964,8 @@ namespace NifBullet
                         localShape->setLocalScaling(node.mScale);
                         compound->addChildShape(node.mRigidTransform, localShape.release());
                         mShape->mCollisionShape.reset(compound.release());
-                        mShape->mAnimatedShapes.emplace(primitive.mRecordIndex, 0);
+                        mShape->mAnimatedShapes.emplace(
+                            primitive.mRecordIndex, Resource::kPrimaryCollisionBodyIndex);
                     }
                     else if (primitive.mShape->isCompound())
                     {
@@ -989,11 +1007,14 @@ namespace NifBullet
                 }
             }
             const bool supportedBodyCount
-                = search.mCollisions.size() == 1 || canMergePackedCollisions(search.mCollisions);
+                = search.mCollisions.size() == NifBullet::FalloutPhysics::kSingleCollisionCount
+                || canMergePackedCollisions(search.mCollisions);
             if (foundCollisionRoot && !search.mRejected && supportedBodyCount)
             {
-                const bool animated = search.mCollisions.size() == 1 && search.mCollisions.front().mAnimated;
-                const int animatedRecordIndex = animated ? search.mCollisions.front().mRecordIndex : -1;
+                const bool animated = search.mCollisions.size() == NifBullet::FalloutPhysics::kSingleCollisionCount
+                    && search.mCollisions.front().mAnimated;
+                const int animatedRecordIndex
+                    = animated ? search.mCollisions.front().mRecordIndex : Resource::kInvalidCollisionIndex;
                 const osg::Matrixf animatedTransform
                     = animated ? search.mCollisions.front().mNodeTransform : osg::Matrixf::identity();
                 if (auto collision = makePackedCollision(std::move(search.mCollisions)))
@@ -1008,7 +1029,8 @@ namespace NifBullet
                         auto compound = std::make_unique<btCompoundShape>();
                         compound->addChildShape(transform.mRigidTransform, child.release());
                         mShape->mCollisionShape.reset(compound.release());
-                        mShape->mAnimatedShapes.emplace(animatedRecordIndex, 0);
+                        mShape->mAnimatedShapes.emplace(
+                            animatedRecordIndex, Resource::kPrimaryCollisionBodyIndex);
                     }
                     else
                         mShape->mCollisionShape = std::move(collision->mShape);
@@ -1079,11 +1101,11 @@ namespace NifBullet
             }
 
             // Collision flag
-            if (!bsxFlags || !(bsxFlags->mData & 2))
+            if (!bsxFlags || !(bsxFlags->mData & NifBullet::FalloutPhysics::kBethesdaCollisionFlag))
                 return;
 
             // Editor marker flag
-            if (bsxFlags->mData & 32)
+            if (bsxFlags->mData & NifBullet::FalloutPhysics::kBethesdaMarkerFlag)
                 args.mHasMarkers = true;
 
             // FIXME: hack, using rendered geometry instead of Bethesda Havok data
@@ -1110,7 +1132,8 @@ namespace NifBullet
                         // NC prefix is case-insensitive but the second C in NCC flag needs be uppercase.
 
                         // Collide only with camera.
-                        if (sd->mData.length() > 2 && sd->mData[2] == 'C')
+                        if (sd->mData.length() > NifBullet::FalloutPhysics::kCollisionMarkerPrefixLength
+                            && sd->mData[NifBullet::FalloutPhysics::kCollisionMarkerPrefixLength] == 'C')
                             mShape->mVisualCollisionType = Resource::VisualCollisionType::Camera;
                         // No collision.
                         else
@@ -1257,8 +1280,8 @@ namespace NifBullet
 
         btTransform trans;
         trans.setOrigin(Misc::Convert::toBullet(transform.getTrans()));
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
+        for (int i = 0; i < NifBullet::FalloutPhysics::kVectorComponentCount; ++i)
+            for (int j = 0; j < NifBullet::FalloutPhysics::kVectorComponentCount; ++j)
                 trans.getBasis()[i][j] = transform(j, i);
 
         if (!args.mAvoid)

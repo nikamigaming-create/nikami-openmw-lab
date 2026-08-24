@@ -12,6 +12,8 @@ namespace
 {
     using namespace std::literals;
 
+    constexpr std::size_t kUnsupportedData2Bytes = ESM4::Fallout::kAmmunitionDat2BaseBytes + sizeof(std::uint32_t);
+
     std::string makeData2(std::uint32_t projectilesPerShot, std::uint32_t projectile, float weight,
         std::uint32_t consumedAmmo = 0, float consumedPercentage = 0.f, bool includeConsumedAmmo = false)
     {
@@ -64,7 +66,7 @@ namespace
 
     TEST(Esm4AmmunitionTest, skipsUnknownData2SizeWithoutLosingSubrecordAlignment)
     {
-        const ESM4::Ammunition ammunition = loadAmmunition(std::string(16, '\0'));
+        const ESM4::Ammunition ammunition = loadAmmunition(std::string(kUnsupportedData2Bytes, '\0'));
 
         EXPECT_EQ(ammunition.mData.mProjPerShot, 0u);
         EXPECT_TRUE(ammunition.mData.mProjectile.isZeroOrUnset());

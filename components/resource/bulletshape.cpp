@@ -122,22 +122,23 @@ namespace Resource
 
     bool CollisionShapeMaterialTable::addUniformMaterial(std::uint32_t material)
     {
-        return addMaterial(sWildcard, sWildcard, material);
+        return addMaterial(kInvalidCollisionIndex, kInvalidCollisionIndex, material);
     }
 
     bool CollisionShapeMaterialTable::addShapePartMaterial(int shapePart, std::uint32_t material)
     {
-        return shapePart >= 0 && addMaterial(shapePart, sWildcard, material);
+        return shapePart >= kFirstValidCollisionIndex && addMaterial(shapePart, kInvalidCollisionIndex, material);
     }
 
     bool CollisionShapeMaterialTable::addTriangleMaterial(int shapePart, int triangleIndex, std::uint32_t material)
     {
-        return shapePart >= 0 && triangleIndex >= 0 && addMaterial(shapePart, triangleIndex, material);
+        return shapePart >= kFirstValidCollisionIndex && triangleIndex >= kFirstValidCollisionIndex
+            && addMaterial(shapePart, triangleIndex, material);
     }
 
     bool CollisionShapeMaterialTable::addCompoundChildMaterial(int childIndex, std::uint32_t material)
     {
-        return childIndex >= 0 && addMaterial(sWildcard, childIndex, material);
+        return childIndex >= kFirstValidCollisionIndex && addMaterial(kInvalidCollisionIndex, childIndex, material);
     }
 
     std::optional<std::uint32_t> CollisionShapeMaterialTable::findMaterial(int shapePart, int triangleIndex) const
@@ -150,11 +151,11 @@ namespace Resource
     {
         if (const auto exact = findMaterial(shapePart, triangleIndex))
             return exact;
-        if (shapePart >= 0 && triangleIndex >= 0)
-            if (const auto shapePartDefault = findMaterial(shapePart, sWildcard))
+        if (shapePart >= kFirstValidCollisionIndex && triangleIndex >= kFirstValidCollisionIndex)
+            if (const auto shapePartDefault = findMaterial(shapePart, kInvalidCollisionIndex))
                 return shapePartDefault;
-        if (shapePart >= 0 || triangleIndex >= 0)
-            return findMaterial(sWildcard, sWildcard);
+        if (shapePart >= kFirstValidCollisionIndex || triangleIndex >= kFirstValidCollisionIndex)
+            return findMaterial(kInvalidCollisionIndex, kInvalidCollisionIndex);
         return std::nullopt;
     }
 
@@ -224,7 +225,8 @@ namespace Resource
 
     std::size_t BulletShape::getCollisionBodyCount() const
     {
-        return (mCollisionShape != nullptr ? 1 : 0) + mAdditionalCollisionBodies.size();
+        return (mCollisionShape != nullptr ? kFirstCollisionBodyCount : kNoCollisionBodyCount)
+            + mAdditionalCollisionBodies.size();
     }
 
     CollisionBody* BulletShape::getCollisionBody(std::size_t index)
@@ -236,7 +238,7 @@ namespace Resource
     {
         if (mCollisionShape != nullptr)
         {
-            if (index == 0)
+            if (index == kPrimaryCollisionBodyIndex)
                 return this;
             --index;
         }

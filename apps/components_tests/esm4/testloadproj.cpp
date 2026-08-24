@@ -1,4 +1,5 @@
 #include <components/esm4/loadproj.hpp>
+#include <components/esm4/falloutformat.hpp>
 
 #include <gtest/gtest.h>
 
@@ -50,7 +51,7 @@ namespace
         return result;
     }
 
-    ESM4::Projectile loadProjectile(std::string data)
+    ESM4::Projectile loadProjectile(std::string data, float version = ESM4Test::kFalloutPluginVersion)
     {
         std::string recordData;
         ESM4Test::appendSubRecord(recordData, "EDID", zString("SyntheticProjectile"));
@@ -61,7 +62,7 @@ namespace
         ESM4Test::appendPod(soundLevel, std::uint32_t{ 2 });
         ESM4Test::appendSubRecord(recordData, "VNAM", soundLevel);
 
-        auto reader = ESM4Test::makeReader("PROJ", std::move(recordData));
+        auto reader = ESM4Test::makeReader("PROJ", std::move(recordData), ESM4Test::kSyntheticModIndex, version);
         ESM4::Projectile projectile;
         projectile.load(*reader);
         return projectile;
@@ -114,7 +115,17 @@ namespace
 
     TEST(Esm4ProjectileTest, skipsUnknownDataSizeWithoutLosingSubrecordAlignment)
     {
-        const ESM4::Projectile projectile = loadProjectile(std::string(80, '\0'));
+        const ESM4::Projectile projectile
+            = loadProjectile(std::string(ESM4::Fallout::kProjectileDataBytes + sizeof(std::uint32_t) * 3, '\0'));
+
+        EXPECT_FALSE(projectile.mData.mPresent);
+        EXPECT_EQ(projectile.mMuzzleFlashModel.getOriginal(), "projectiles/muzzle.nif");
+        EXPECT_EQ(projectile.mSoundLevel, 2u);
+    }
+
+    TEST(Esm4ProjectileTest, leavesFalloutDataAbsentForOtherPluginVersions)
+    {
+        const ESM4::Projectile projectile = loadProjectile(makeProjectileData(false), ESM4Test::kOtherPluginVersion);
 
         EXPECT_FALSE(projectile.mData.mPresent);
         EXPECT_EQ(projectile.mMuzzleFlashModel.getOriginal(), "projectiles/muzzle.nif");

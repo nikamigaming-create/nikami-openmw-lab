@@ -213,11 +213,11 @@ namespace MWPhysics
         /// ignoring all other actors.
         RayCastingResult castRay(const osg::Vec3f& from, const osg::Vec3f& to,
             const std::vector<MWWorld::ConstPtr>& ignore = {}, const std::vector<MWWorld::Ptr>& targets = {},
-            int mask = CollisionType_Default, int group = 0xff) const override;
+            int mask = CollisionType_Default, int group = CollisionType_All) const override;
         using RayCastingInterface::castRay;
 
         RayCastingResult castSphere(const osg::Vec3f& from, const osg::Vec3f& to, float radius,
-            int mask = CollisionType_Default, int group = 0xff) const override;
+            int mask = CollisionType_Default, int group = CollisionType_All) const override;
 
         /// Return true if actor1 can see actor2.
         bool getLineOfSight(const MWWorld::ConstPtr& actor1, const MWWorld::ConstPtr& actor2) const override;

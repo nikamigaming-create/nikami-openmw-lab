@@ -7,6 +7,7 @@
 
 #include "apps/openmw/mwphysics/closestnotmerayresultcallback.hpp"
 #include "apps/openmw/mwphysics/collisiontype.hpp"
+#include "apps/openmw/mwphysics/constants.hpp"
 
 namespace
 {
@@ -47,8 +48,8 @@ namespace
         callback.addSingleResult(first, true);
         callback.addSingleResult(closer, true);
 
-        EXPECT_EQ(callback.getHitShapePart(), -1);
-        EXPECT_EQ(callback.getHitTriangleIndex(), -1);
+        EXPECT_EQ(callback.getHitShapePart(), MWPhysics::sInvalidCollisionIndex);
+        EXPECT_EQ(callback.getHitTriangleIndex(), MWPhysics::sInvalidCollisionIndex);
     }
 
     TEST(ClosestNotMeRayResultCallbackTest, IgnoredHitDoesNotOverwriteAcceptedIdentity)
@@ -69,5 +70,24 @@ namespace
         EXPECT_EQ(callback.m_closestHitFraction, btScalar(0.75f));
         EXPECT_EQ(callback.getHitShapePart(), 1);
         EXPECT_EQ(callback.getHitTriangleIndex(), 2);
+    }
+
+    TEST(ClosestNotMeRayResultCallbackTest, FartherHitDoesNotOverwriteClosestShapeIdentity)
+    {
+        CollisionObject closestTarget;
+        CollisionObject fartherTarget;
+        MWPhysics::ClosestNotMeRayResultCallback callback({}, {}, btVector3(0, 0, 0), btVector3(0, 1, 0));
+        btCollisionWorld::LocalShapeInfo closestInfo{ 3, 9 };
+        btCollisionWorld::LocalShapeInfo fartherInfo{ 8, 13 };
+        btCollisionWorld::LocalRayResult closest(
+            &closestTarget.mObject, &closestInfo, btVector3(0, -1, 0), 0.25f);
+        btCollisionWorld::LocalRayResult farther(
+            &fartherTarget.mObject, &fartherInfo, btVector3(0, -1, 0), 0.75f);
+
+        callback.addSingleResult(closest, true);
+        callback.addSingleResult(farther, true);
+
+        EXPECT_EQ(callback.getHitShapePart(), 3);
+        EXPECT_EQ(callback.getHitTriangleIndex(), 9);
     }
 }

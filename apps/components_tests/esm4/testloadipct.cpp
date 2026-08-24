@@ -12,6 +12,9 @@ namespace
 {
     using namespace std::literals;
 
+    constexpr std::size_t kDecalPayloadBytes = 36;
+    constexpr std::size_t kUnsupportedImpactDataBytes = ESM4::Fallout::kImpactDataBytes - sizeof(std::uint32_t);
+
     std::string zString(std::string_view value)
     {
         std::string result(value);
@@ -31,7 +34,7 @@ namespace
         return result;
     }
 
-    ESM4::ImpactData loadImpactData(std::string data, float version = 1.34f)
+    ESM4::ImpactData loadImpactData(std::string data, float version = ESM4Test::kFalloutPluginVersion)
     {
         std::string recordData;
         ESM4Test::appendSubRecord(recordData, "EDID", zString("SyntheticImpact"));
@@ -46,9 +49,9 @@ namespace
         std::string sound2;
         ESM4Test::appendPod(sound2, std::uint32_t{ 0x303 });
         ESM4Test::appendSubRecord(recordData, "NAM1", sound2);
-        ESM4Test::appendSubRecord(recordData, "DODT", std::string(36, '\0'));
+        ESM4Test::appendSubRecord(recordData, "DODT", std::string(kDecalPayloadBytes, '\0'));
 
-        auto reader = ESM4Test::makeReader("IPCT", std::move(recordData), 2, version);
+        auto reader = ESM4Test::makeReader("IPCT", std::move(recordData), ESM4Test::kSyntheticModIndex, version);
         ESM4::ImpactData impactData;
         impactData.load(*reader);
         return impactData;
@@ -75,7 +78,7 @@ namespace
 
     TEST(Esm4ImpactDataTest, skipsUnknownDataSizeWithoutLosingReferenceAlignment)
     {
-        const ESM4::ImpactData impactData = loadImpactData(std::string(20, '\0'));
+        const ESM4::ImpactData impactData = loadImpactData(std::string(kUnsupportedImpactDataBytes, '\0'));
 
         EXPECT_FALSE(impactData.mData.mPresent);
         EXPECT_EQ(impactData.mSound2, ESM::FormId::fromUint32(0x02000303));
@@ -83,7 +86,7 @@ namespace
 
     TEST(Esm4ImpactDataTest, leavesFalloutCoreAbsentForOtherPluginVersions)
     {
-        const ESM4::ImpactData impactData = loadImpactData(makeImpactData(), 1.f);
+        const ESM4::ImpactData impactData = loadImpactData(makeImpactData(), ESM4Test::kOtherPluginVersion);
 
         EXPECT_FALSE(impactData.mData.mPresent);
         EXPECT_TRUE(impactData.mTextureSet.isZeroOrUnset());

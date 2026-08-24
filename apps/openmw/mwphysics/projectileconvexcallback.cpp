@@ -20,7 +20,8 @@ namespace MWPhysics
         if (hitObject == mMe)
             return 1.f;
 
-        btCollisionWorld::ClosestConvexResultCallback::addSingleResult(result, normalInWorldSpace);
+        bool hitsProjectile = false;
+        Projectile* projectileTarget = nullptr;
         switch (hitObject->getBroadphaseHandle()->m_collisionFilterGroup)
         {
             case CollisionType_Actor:
@@ -31,20 +32,28 @@ namespace MWPhysics
             }
             case CollisionType_Projectile:
             {
-                auto* target = static_cast<Projectile*>(hitObject->getUserPointer());
-                if (!mProjectile.isAnyValidTarget(target->getCasterCollisionObjects()))
+                projectileTarget = static_cast<Projectile*>(hitObject->getUserPointer());
+                if (projectileTarget == nullptr
+                    || !mProjectile.isAnyValidTarget(projectileTarget->getCasterCollisionObjects()))
                     return 1.f;
-                target->hit(mMe, m_hitPointWorld, m_hitNormalWorld);
-                break;
-            }
-            case CollisionType_Water:
-            {
-                mProjectile.setHitWater();
+                hitsProjectile = true;
                 break;
             }
         }
-        int shapePart = -1;
-        int triangleIndex = -1;
+
+        const bool accepted = result.m_hitFraction < m_closestHitFraction;
+        const btScalar hitFraction
+            = btCollisionWorld::ClosestConvexResultCallback::addSingleResult(result, normalInWorldSpace);
+        if (!accepted)
+            return hitFraction;
+
+        if (hitsProjectile)
+            projectileTarget->hit(mMe, m_hitPointWorld, m_hitNormalWorld);
+        else if (hitObject->getBroadphaseHandle()->m_collisionFilterGroup == CollisionType_Water)
+            mProjectile.setHitWater();
+
+        int shapePart = sInvalidCollisionIndex;
+        int triangleIndex = sInvalidCollisionIndex;
         if (result.m_localShapeInfo != nullptr)
         {
             shapePart = result.m_localShapeInfo->m_shapePart;
@@ -52,7 +61,7 @@ namespace MWPhysics
         }
         mProjectile.hit(hitObject, m_hitPointWorld, m_hitNormalWorld, shapePart, triangleIndex);
 
-        return result.m_hitFraction;
+        return hitFraction;
     }
 
 }

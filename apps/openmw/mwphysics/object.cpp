@@ -30,10 +30,10 @@ namespace MWPhysics
     {
         mShapeInstance->setLocalScaling(mScale);
         const std::size_t bodyCount = mShapeInstance->getCollisionBodyCount();
-        if (bodyCount == 0 || bodyCount > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        if (bodyCount == sNoCollisionBodyCount || bodyCount > static_cast<std::size_t>(std::numeric_limits<int>::max()))
             throw std::logic_error("Physics object requires a representable collision body");
 
-        mAdditionalCollisionObjects.reserve(bodyCount - 1);
+        mAdditionalCollisionObjects.reserve(bodyCount - sFirstCollisionBodyCount);
         mCollisionObjects.reserve(bodyCount);
         for (std::size_t bodyIndex = 0; bodyIndex < bodyCount; ++bodyIndex)
         {
@@ -46,7 +46,7 @@ namespace MWPhysics
             object->setUserPointer(this);
             object->setUserIndex(static_cast<int>(bodyIndex));
             btCollisionObject* const view = object.get();
-            if (bodyIndex == 0)
+            if (bodyIndex == sPrimaryCollisionBodyIndex)
                 mCollisionObject = std::move(object);
             else
                 mAdditionalCollisionObjects.push_back(std::move(object));
@@ -71,7 +71,7 @@ namespace MWPhysics
 
     std::optional<std::uint32_t> Object::getHavokMaterial(int shapePart, int triangleIndex) const
     {
-        return getHavokMaterial(0, shapePart, triangleIndex);
+        return getHavokMaterial(sPrimaryCollisionBodyIndex, shapePart, triangleIndex);
     }
 
     std::optional<std::uint32_t> Object::getHavokMaterial(std::size_t bodyIndex, int shapePart, int triangleIndex) const

@@ -85,7 +85,8 @@ namespace MWPhysics
         assert(!mActive);
         const auto* target = static_cast<const PtrHolder*>(mHitTarget->getUserPointer());
         const int index = mHitTarget->getUserIndex();
-        const std::size_t bodyIndex = index >= 0 ? static_cast<std::size_t>(index) : 0;
+        const std::size_t bodyIndex
+            = index >= sFirstValidCollisionIndex ? static_cast<std::size_t>(index) : sPrimaryCollisionBodyIndex;
         return target != nullptr ? target->getHavokMaterial(bodyIndex, mHitShapePart, mHitTriangleIndex) : std::nullopt;
     }
 

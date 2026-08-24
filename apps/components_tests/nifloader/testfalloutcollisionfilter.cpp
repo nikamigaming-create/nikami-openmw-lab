@@ -2,97 +2,123 @@
 
 #include <gtest/gtest.h>
 
-#include <array>
-#include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <optional>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+
+#ifndef OPENMW_PROJECT_SOURCE_DIR
+#define OPENMW_PROJECT_SOURCE_DIR "."
+#endif
 
 namespace
 {
-    constexpr std::array<std::uint64_t, 43> sExpectedPrimaryMasks{
-        0xfffffffbff9ffff7ULL,
-        0xfffffff97e1b6fffULL,
-        0xfffffffdfe1b6fffULL,
-        0xfffffdd9fc134f3eULL,
-        0xfffffbb97e1b7effULL,
-        0xfffffbb1761b7effULL,
-        0xfffffbb17d927f77ULL,
-        0xfffffd8168127f37ULL,
-        0xffffffb91c037bcfULL,
-        0xfffffff97e1b6fffULL,
-        0xffffffb97e1b6effULL,
-        0xfffff9c37c036fffULL,
-        0xfffff980e81041f1ULL,
-        0xfffffff97e1b6ff7ULL,
-        0xffffffb9fe1b7fffULL,
-        0xfffffc1108000001ULL,
-        0xffffffb9fc036f3fULL,
-        0xfffffff97e1b6fffULL,
-        0xfffffc1308200001ULL,
-        0xfffffb81223a6637ULL,
-        0xffffffdbfe3a76ffULL,
-        0xfffffc1342dc0000ULL,
-        0xfffff98050200000ULL,
-        0xfffff98008200041ULL,
-        0xfffffb8048000041ULL,
-        0xfffffb83223a6637ULL,
-        0xfffffdd9fc136f7fULL,
-        0xfffffbd07d97ffdfULL,
-        0xfffffdddfc536f7fULL,
-        0xfffffbb93e1b7effULL,
-        0xffffff99dd737effULL,
-        0xfffff9815411500dULL,
-        0xfffffffbf63fefffULL,
-        0xfffffc1102340801ULL,
-        0x0000000010000004ULL,
-        0xfffff9b17413671fULL,
-        0xfffffdbb7c37e77fULL,
-        0xfffff9b920036777ULL,
-        0xfffff9c11c122a0fULL,
-        0xfffffdf9ffdb7fffULL,
-        0xfffffdf9ffdb7fffULL,
-        0xfffff8016b1b6777ULL,
-        0xfffffd935437e78fULL,
-    };
+    constexpr std::uint32_t kNoSystemGroup = 0U;
+    constexpr std::uint32_t kFirstSystemGroup = 1U;
+    constexpr std::uint32_t kSecondSystemGroup = 2U;
+    constexpr std::uint32_t kSharedSystemGroup = 3U;
+    constexpr std::uint32_t kFirstSubfield = 1U;
+    constexpr std::uint32_t kSecondSubfield = 6U;
+    constexpr std::uint32_t kAlternateFirstSubfield = 7U;
+    constexpr std::uint32_t kAlternateSecondSubfield = 8U;
+    constexpr std::uint32_t kNoSubfield = 0U;
+    constexpr std::uint32_t kOrdinaryLayer = 1U;
+    constexpr std::uint32_t kSetBit = 1U;
 
-    constexpr std::array<std::uint32_t, 32> sExpectedBipedMasks{
-        0x00000000U,
-        0x004230c0U,
-        0x014030c0U,
-        0x014030c0U,
-        0x014230c0U,
-        0x00403000U,
-        0x0042791eU,
-        0x0041ff1eU,
-        0x0145f0c0U,
-        0x0145e080U,
-        0x0144e080U,
-        0x004000c0U,
-        0x004241feU,
-        0x0045c7feU,
-        0x014437c0U,
-        0x01442780U,
-        0x01442380U,
-        0x00401052U,
-        0x0041e700U,
-        0x00000000U,
-        0x00400000U,
-        0x00400000U,
-        0x0037fffeU,
-        0x00000000U,
-        0x0001c71cU,
-        0x00000000U,
-        0x00000000U,
-        0x00000000U,
-        0x00000000U,
-        0x00000000U,
-        0x00000000U,
-        0x00000000U,
-    };
-
-    void expectResult(std::uint32_t first, std::uint32_t second, bool expected)
+    std::uint64_t parseUnsigned(const std::string& token)
     {
-        const std::optional<bool> result = NifBullet::evaluateFalloutCollisionFilter(first, second);
+        std::size_t consumed = 0;
+        const std::uint64_t result = std::stoull(token, &consumed, 0);
+        if (consumed != token.size())
+            throw std::runtime_error("invalid Fallout collision-filter value: " + token);
+        return result;
+    }
+
+    NifBullet::FalloutCollisionFilterConfig loadConfig()
+    {
+        const std::filesystem::path path
+            = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "apps" / "components_tests" / "data"
+            / "fallout_collision_filter.cfg";
+        std::ifstream input(path);
+        if (!input)
+            throw std::runtime_error("unable to open Fallout collision-filter config: " + path.string());
+
+        NifBullet::FalloutCollisionFilterConfig config;
+        std::string line;
+        while (std::getline(input, line))
+        {
+            const std::size_t comment = line.find('#');
+            if (comment != std::string::npos)
+                line.resize(comment);
+
+            std::istringstream values(line);
+            std::string key;
+            std::string token;
+            if (!(values >> key))
+                continue;
+            if (!(values >> token))
+                throw std::runtime_error("missing Fallout collision-filter value for: " + key);
+
+            const std::uint64_t value = parseUnsigned(token);
+            const auto asWord = [&]() {
+                if (value > std::numeric_limits<std::uint32_t>::max())
+                    throw std::runtime_error("Fallout collision-filter value exceeds 32 bits: " + token);
+                return static_cast<std::uint32_t>(value);
+            };
+            if (key == "layer_mask")
+                config.mLayerMask = asWord();
+            else if (key == "subfield_mask")
+                config.mSubfieldMask = asWord();
+            else if (key == "disable_bit")
+                config.mDisableBit = asWord();
+            else if (key == "alternate_rule_bit")
+                config.mAlternateRuleBit = asWord();
+            else if (key == "biped_layer")
+                config.mBipedLayer = asWord();
+            else if (key == "dead_biped_layer")
+                config.mDeadBipedLayer = asWord();
+            else if (key == "ordered_disable_exception_layer")
+                config.mOrderedDisableExceptionLayer = asWord();
+            else if (key == "group_shift")
+                config.mGroupShift = asWord();
+            else if (key == "subfield_shift")
+                config.mSubfieldShift = asWord();
+            else if (key == "adjacent_subfield_distance")
+                config.mAdjacentSubfieldDistance = asWord();
+            else if (key == "primary_layer_mask")
+                config.mPrimaryLayerMasks.push_back(value);
+            else if (key == "biped_subfield_mask")
+                config.mBipedSubfieldMasks.push_back(asWord());
+            else
+                throw std::runtime_error("unknown Fallout collision-filter setting: " + key);
+        }
+
+        if (config.mPrimaryLayerMasks.empty() || config.mBipedSubfieldMasks.empty())
+            throw std::runtime_error("Fallout collision-filter config has no lookup tables");
+        return config;
+    }
+
+    const NifBullet::FalloutCollisionFilterConfig& collisionConfig()
+    {
+        static const NifBullet::FalloutCollisionFilterConfig config = loadConfig();
+        return config;
+    }
+
+    std::uint32_t makeWord(const NifBullet::FalloutCollisionFilterConfig& config, std::uint32_t group,
+        std::uint32_t subfield, std::uint32_t layer, std::uint32_t flags = {})
+    {
+        return (group << config.mGroupShift) | (subfield << config.mSubfieldShift)
+            | (layer & config.mLayerMask) | flags;
+    }
+
+    void expectResult(const NifBullet::FalloutCollisionFilterConfig& config, std::uint32_t first,
+        std::uint32_t second, bool expected)
+    {
+        const std::optional<bool> result = NifBullet::evaluateFalloutCollisionFilter(first, second, config);
         ASSERT_TRUE(result.has_value());
         EXPECT_EQ(*result, expected);
     }
@@ -100,72 +126,115 @@ namespace
 
 TEST(FalloutCollisionFilterTest, matchesEveryPrimaryLayerPair)
 {
-    for (std::uint32_t firstLayer = 0; firstLayer < sExpectedPrimaryMasks.size(); ++firstLayer)
+    const auto& config = collisionConfig();
+    for (std::size_t firstLayer = 0; firstLayer < config.mPrimaryLayerMasks.size(); ++firstLayer)
     {
-        for (std::uint32_t secondLayer = 0; secondLayer < sExpectedPrimaryMasks.size(); ++secondLayer)
+        for (std::size_t secondLayer = 0; secondLayer < config.mPrimaryLayerMasks.size(); ++secondLayer)
         {
             SCOPED_TRACE(::testing::Message() << "firstLayer=" << firstLayer << " secondLayer=" << secondLayer);
-            const bool expected = ((sExpectedPrimaryMasks[firstLayer] >> secondLayer) & 1) != 0;
-            expectResult((1U << 16) | firstLayer, (2U << 16) | secondLayer, expected);
+            const bool expected = ((config.mPrimaryLayerMasks[firstLayer] >> secondLayer) & kSetBit) != 0;
+            expectResult(config, makeWord(config, kFirstSystemGroup, {}, static_cast<std::uint32_t>(firstLayer)),
+                makeWord(config, kSecondSystemGroup, {}, static_cast<std::uint32_t>(secondLayer)), expected);
         }
     }
 }
 
 TEST(FalloutCollisionFilterTest, matchesEveryBipedSubfieldPair)
 {
-    for (std::uint32_t firstSubfield = 0; firstSubfield < sExpectedBipedMasks.size(); ++firstSubfield)
+    const auto& config = collisionConfig();
+    for (std::size_t firstSubfield = 0; firstSubfield < config.mBipedSubfieldMasks.size(); ++firstSubfield)
     {
-        for (std::uint32_t secondSubfield = 0; secondSubfield < sExpectedBipedMasks.size(); ++secondSubfield)
+        for (std::size_t secondSubfield = 0; secondSubfield < config.mBipedSubfieldMasks.size(); ++secondSubfield)
         {
             SCOPED_TRACE(
                 ::testing::Message() << "firstSubfield=" << firstSubfield << " secondSubfield=" << secondSubfield);
-            const bool expected = ((sExpectedBipedMasks[firstSubfield] >> secondSubfield) & 1) != 0;
-            expectResult((3U << 16) | (firstSubfield << 8) | 8U, (3U << 16) | (secondSubfield << 8) | 8U, expected);
+            const bool expected = ((config.mBipedSubfieldMasks[firstSubfield] >> secondSubfield) & kSetBit) != 0;
+            expectResult(config,
+                makeWord(config, kSharedSystemGroup, static_cast<std::uint32_t>(firstSubfield), config.mBipedLayer),
+                makeWord(config, kSharedSystemGroup, static_cast<std::uint32_t>(secondSubfield), config.mBipedLayer),
+                expected);
         }
     }
 }
 
 TEST(FalloutCollisionFilterTest, capturedMatricesAreSymmetric)
 {
-    for (std::size_t first = 0; first < sExpectedPrimaryMasks.size(); ++first)
-        for (std::size_t second = 0; second < sExpectedPrimaryMasks.size(); ++second)
-            EXPECT_EQ((sExpectedPrimaryMasks[first] >> second) & 1, (sExpectedPrimaryMasks[second] >> first) & 1);
+    const auto& config = collisionConfig();
+    for (std::size_t first = 0; first < config.mPrimaryLayerMasks.size(); ++first)
+        for (std::size_t second = 0; second < config.mPrimaryLayerMasks.size(); ++second)
+            EXPECT_EQ((config.mPrimaryLayerMasks[first] >> second) & kSetBit,
+                (config.mPrimaryLayerMasks[second] >> first) & kSetBit);
 
-    for (std::size_t first = 0; first < sExpectedBipedMasks.size(); ++first)
-        for (std::size_t second = 0; second < sExpectedBipedMasks.size(); ++second)
-            EXPECT_EQ((sExpectedBipedMasks[first] >> second) & 1, (sExpectedBipedMasks[second] >> first) & 1);
+    for (std::size_t first = 0; first < config.mBipedSubfieldMasks.size(); ++first)
+        for (std::size_t second = 0; second < config.mBipedSubfieldMasks.size(); ++second)
+            EXPECT_EQ((config.mBipedSubfieldMasks[first] >> second) & kSetBit,
+                (config.mBipedSubfieldMasks[second] >> first) & kSetBit);
 }
 
 TEST(FalloutCollisionFilterTest, acceptsBeforeMatrixLookupWhenEitherSystemGroupIsZero)
 {
-    expectResult(1U, (2U << 16) | 15U, true);
-    expectResult((1U << 16) | 15U, 1U, true);
-    expectResult(0x4000U | 1U, (2U << 16) | 15U, false);
+    const auto& config = collisionConfig();
+    expectResult(config, makeWord(config, kNoSystemGroup, kFirstSubfield, kOrdinaryLayer),
+        makeWord(config, kSecondSystemGroup, kSecondSubfield, kOrdinaryLayer), true);
+    expectResult(config, makeWord(config, kFirstSystemGroup, kFirstSubfield, kOrdinaryLayer),
+        makeWord(config, kNoSystemGroup, kSecondSubfield, kOrdinaryLayer), true);
+    expectResult(config, makeWord(config, kNoSystemGroup, {}, kOrdinaryLayer, config.mDisableBit),
+        makeWord(config, kSecondSystemGroup, kSecondSubfield, kOrdinaryLayer), false);
 }
 
-TEST(FalloutCollisionFilterTest, appliesTheOrderedBit14ExceptionOnlyToFirstLayer40)
+TEST(FalloutCollisionFilterTest, appliesTheOrderedBit14ExceptionOnlyToFirstLayer)
 {
-    expectResult((1U << 16) | 1U, (2U << 16) | 0x4000U | 40U, false);
-    expectResult((1U << 16) | 40U, (2U << 16) | 0x4000U, true);
+    const auto& config = collisionConfig();
+    expectResult(config, makeWord(config, kFirstSystemGroup, {}, kOrdinaryLayer),
+        makeWord(config, kSecondSystemGroup, {}, config.mOrderedDisableExceptionLayer, config.mDisableBit), false);
+    expectResult(config, makeWord(config, kFirstSystemGroup, {}, config.mOrderedDisableExceptionLayer),
+        makeWord(config, kSecondSystemGroup, {}, kOrdinaryLayer, config.mDisableBit), true);
 }
 
-TEST(FalloutCollisionFilterTest, appliesSameGroupBit15SubfieldDifferenceRule)
+TEST(FalloutCollisionFilterTest, appliesSameGroupAlternateSubfieldRule)
 {
-    expectResult((1U << 16) | 0x8000U | 1U, (1U << 16) | 0x8000U | 1U, true);
-    expectResult((1U << 16) | 0x8000U | 1U, (1U << 16) | 0x8100U | 1U, false);
-    expectResult((1U << 16) | 0x8000U | 1U, (1U << 16) | 0x8200U | 1U, true);
-    expectResult((1U << 16) | 0x8000U | 1U, (1U << 16) | 0x8000U | 15U, false);
+    const auto& config = collisionConfig();
+    expectResult(config,
+        makeWord(config, kFirstSystemGroup, kNoSubfield, kOrdinaryLayer, config.mAlternateRuleBit),
+        makeWord(config, kFirstSystemGroup, kNoSubfield, kOrdinaryLayer, config.mAlternateRuleBit), true);
+    expectResult(config,
+        makeWord(config, kFirstSystemGroup, kNoSubfield, kOrdinaryLayer, config.mAlternateRuleBit),
+        makeWord(config, kFirstSystemGroup, kNoSubfield + config.mAdjacentSubfieldDistance, kOrdinaryLayer,
+            config.mAlternateRuleBit),
+        false);
+    expectResult(config,
+        makeWord(config, kFirstSystemGroup, kNoSubfield, kOrdinaryLayer, config.mAlternateRuleBit),
+        makeWord(config, kFirstSystemGroup,
+            kNoSubfield + config.mAdjacentSubfieldDistance + config.mAdjacentSubfieldDistance, kOrdinaryLayer,
+            config.mAlternateRuleBit),
+        true);
 }
 
 TEST(FalloutCollisionFilterTest, restrictsOrdinarySameGroupPairsToBipedLayers)
 {
-    expectResult((1U << 16) | (1U << 8) | 29U, (1U << 16) | (6U << 8) | 8U, true);
-    expectResult((1U << 16) | (1U << 8) | 1U, (1U << 16) | (6U << 8) | 29U, false);
-    expectResult((1U << 16) | 0x8000U | (7U << 8) | 8U, (1U << 16) | 0x8000U | (8U << 8) | 8U, true);
+    const auto& config = collisionConfig();
+    expectResult(config,
+        makeWord(config, kFirstSystemGroup, kFirstSubfield, config.mDeadBipedLayer),
+        makeWord(config, kFirstSystemGroup, kSecondSubfield, config.mBipedLayer), true);
+    expectResult(config,
+        makeWord(config, kFirstSystemGroup, kFirstSubfield, kOrdinaryLayer),
+        makeWord(config, kFirstSystemGroup, kSecondSubfield, config.mDeadBipedLayer), false);
+    expectResult(config,
+        makeWord(config, kFirstSystemGroup, kAlternateFirstSubfield, config.mBipedLayer, config.mAlternateRuleBit),
+        makeWord(config, kFirstSystemGroup, kAlternateSecondSubfield, config.mBipedLayer, config.mAlternateRuleBit),
+        true);
 }
 
-TEST(FalloutCollisionFilterTest, reportsLayersOutsideTheRetailTableAsUnsupported)
+TEST(FalloutCollisionFilterTest, reportsLayersOutsideTheInjectedTableAsUnsupported)
 {
-    EXPECT_EQ(NifBullet::evaluateFalloutCollisionFilter(43U, 0U), std::nullopt);
-    EXPECT_EQ(NifBullet::evaluateFalloutCollisionFilter(0U, 127U), std::nullopt);
+    const auto& config = collisionConfig();
+    const auto firstOutside = static_cast<std::uint32_t>(config.mPrimaryLayerMasks.size());
+    EXPECT_EQ(NifBullet::evaluateFalloutCollisionFilter(firstOutside, {}, config), std::nullopt);
+    EXPECT_EQ(NifBullet::evaluateFalloutCollisionFilter({}, config.mLayerMask, config), std::nullopt);
+}
+
+TEST(FalloutCollisionFilterTest, rejectsAnIncompleteInjectedPolicy)
+{
+    const NifBullet::FalloutCollisionFilterConfig incomplete;
+    EXPECT_EQ(NifBullet::evaluateFalloutCollisionFilter({}, {}, incomplete), std::nullopt);
 }

@@ -2,13 +2,17 @@
 
 #include <stdexcept>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 
 namespace
 {
-    void loadFalloutData(ESM4::Reader& reader, ESM4::Projectile::Data& data, std::uint32_t size)
+    void loadFalloutData(
+        ESM4::Reader& reader, ESM4::Projectile::Data& data, std::uint32_t size, bool isFONV)
     {
-        if (size != 68 && size != 84)
+        if (!isFONV
+            || (size != ESM4::Fallout::kProjectileDataBytes
+                && size != ESM4::Fallout::kProjectileDataWithRotationBytes))
         {
             reader.skipSubRecordData();
             return;
@@ -33,7 +37,7 @@ namespace
         reader.getFormId(data.mCountdownSound);
         reader.getFormId(data.mDisableSound);
         reader.getFormId(data.mDefaultWeapon);
-        if (size == 84)
+        if (size == ESM4::Fallout::kProjectileDataWithRotationBytes)
         {
             for (float& value : data.mRotation)
                 reader.get(value);
@@ -47,6 +51,7 @@ void ESM4::Projectile::load(Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
+    const bool isFONV = ESM4::Fallout::isNewVegasVersion(reader.esmVersion());
 
     while (reader.getSubRecordHeader())
     {
@@ -63,7 +68,7 @@ void ESM4::Projectile::load(Reader& reader)
                 reader.getZString(mModel);
                 break;
             case ESM::fourCC("DATA"):
-                loadFalloutData(reader, mData, subRecord.dataSize);
+                loadFalloutData(reader, mData, subRecord.dataSize, isFONV);
                 break;
             case ESM::fourCC("NAM1"):
                 reader.getZString(mMuzzleFlashModel);

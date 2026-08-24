@@ -3,6 +3,8 @@
 
 #include <BulletCollision/CollisionDispatch/btCollisionWorld.h>
 
+#include "constants.hpp"
+
 namespace MWPhysics
 {
     class ClosestConvexResultCallback : public btCollisionWorld::ClosestConvexResultCallback
@@ -19,8 +21,8 @@ namespace MWPhysics
         int getHitTriangleIndex() const { return mHitTriangleIndex; }
 
     private:
-        int mHitShapePart = -1;
-        int mHitTriangleIndex = -1;
+        int mHitShapePart = sInvalidCollisionIndex;
+        int mHitTriangleIndex = sInvalidCollisionIndex;
     };
 }
 

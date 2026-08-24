@@ -13,6 +13,11 @@ namespace
 {
     using namespace std::literals;
 
+    constexpr std::size_t kUnsupportedTruncatedDnamBytes = ESM4::Fallout::kWeaponDnamAnimationBytes - sizeof(std::uint32_t);
+    constexpr std::size_t kExtendedDnamFixturePaddingBytes = sizeof(std::uint32_t) * 3;
+    constexpr std::size_t kExtendedDnamFixtureBytes
+        = ESM4::Fallout::kWeaponDnamBallisticsBytes + kExtendedDnamFixturePaddingBytes;
+
     std::string zString(std::string_view value)
     {
         std::string result(value);
@@ -30,7 +35,7 @@ namespace
         ESM4Test::appendPod(result, std::uint8_t{ 0xe6 });
         ESM4Test::appendPod(result, std::uint8_t{ 2 });
         ESM4Test::appendPod(result, std::uint8_t{ 7 });
-        if (size >= 68)
+        if (size >= ESM4::Fallout::kWeaponDnamBallisticsBytes)
         {
             ESM4Test::appendPod(result, 0.1f);
             ESM4Test::appendPod(result, 0.2f);
@@ -55,12 +60,12 @@ namespace
         return result;
     }
 
-    ESM4::Weapon loadWeapon(std::string dnam, float version = 1.34f)
+    ESM4::Weapon loadWeapon(std::string dnam, float version = ESM4Test::kFalloutPluginVersion)
     {
         std::string recordData;
         ESM4Test::appendSubRecord(recordData, "DNAM", dnam);
         ESM4Test::appendSubRecord(recordData, "ICON", "icons/weapon.dds\0"sv);
-        auto reader = ESM4Test::makeReader("WEAP", std::move(recordData), 2, version);
+        auto reader = ESM4Test::makeReader("WEAP", std::move(recordData), ESM4Test::kSyntheticModIndex, version);
         ESM4::Weapon weapon;
         weapon.load(*reader);
         return weapon;
@@ -92,7 +97,7 @@ namespace
 
     TEST(Esm4WeaponTest, loadsFalloutDnamBallisticPrefixAndAdjustsProjectile)
     {
-        const ESM4::Weapon weapon = loadWeapon(makeFalloutDnam(80));
+        const ESM4::Weapon weapon = loadWeapon(makeFalloutDnam(kExtendedDnamFixtureBytes));
 
         ASSERT_TRUE(weapon.mFalloutData.mPresent);
         ASSERT_TRUE(weapon.mFalloutData.mBallisticsPresent);
@@ -122,7 +127,7 @@ namespace
 
     TEST(Esm4WeaponTest, loadsSixteenByteFalloutPrefixWithoutInventingBallistics)
     {
-        const ESM4::Weapon weapon = loadWeapon(makeFalloutDnam(16));
+        const ESM4::Weapon weapon = loadWeapon(makeFalloutDnam(ESM4::Fallout::kWeaponDnamAnimationBytes));
 
         ASSERT_TRUE(weapon.mFalloutData.mPresent);
         EXPECT_FALSE(weapon.mFalloutData.mBallisticsPresent);
@@ -134,11 +139,12 @@ namespace
 
     TEST(Esm4WeaponTest, skipsTruncatedAndNonFalloutDnamWithoutLosingAlignment)
     {
-        const ESM4::Weapon truncated = loadWeapon(std::string(12, '\0'));
+        const ESM4::Weapon truncated = loadWeapon(std::string(kUnsupportedTruncatedDnamBytes, '\0'));
         EXPECT_FALSE(truncated.mFalloutData.mPresent);
         EXPECT_EQ(truncated.mIcon, "icons/weapon.dds");
 
-        const ESM4::Weapon otherGame = loadWeapon(makeFalloutDnam(80), 1.f);
+        const ESM4::Weapon otherGame
+            = loadWeapon(makeFalloutDnam(kExtendedDnamFixtureBytes), ESM4Test::kOtherPluginVersion);
         EXPECT_FALSE(otherGame.mFalloutData.mPresent);
         EXPECT_EQ(otherGame.mIcon, "icons/weapon.dds");
     }

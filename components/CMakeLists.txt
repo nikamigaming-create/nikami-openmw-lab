@@ -155,6 +155,7 @@ add_component_dir (nifosg
 add_component_dir (nifbullet
     bulletnifloader
     falloutcollisionfilter
+    falloutphysicsconstants
     )
 
 add_component_dir (toutf8
@@ -204,6 +205,7 @@ add_component_dir (esm4
     common
     dialogue
     effect
+    falloutformat
     grid
     grouptype
     inventory
