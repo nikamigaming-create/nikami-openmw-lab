@@ -9,6 +9,7 @@
 #include <components/esm/records.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+#include <components/esm4/loadwthr.hpp>
 
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/misc/rng.hpp>
@@ -1278,6 +1279,7 @@ template class MWWorld::TypedDynamicStore<ESM4::Terminal>;
 template class MWWorld::TypedDynamicStore<ESM4::TextureSet>;
 template class MWWorld::TypedDynamicStore<ESM4::Tree>;
 template class MWWorld::TypedDynamicStore<ESM4::Weapon>;
+template class MWWorld::TypedDynamicStore<ESM4::Weather>;
 template class MWWorld::TypedDynamicStore<ESM4::World>;
 template class MWWorld::TypedDynamicStore<ESM4::ImpactDataSet>;
 template class MWWorld::TypedDynamicStore<ESM4::ImpactData>;

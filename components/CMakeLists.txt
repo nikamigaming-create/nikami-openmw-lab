@@ -293,6 +293,7 @@ add_component_dir (esm4
     loadtxst
     loadweap
     loadwrld
+    loadwthr
     magiceffectid
     reader
     readerutils

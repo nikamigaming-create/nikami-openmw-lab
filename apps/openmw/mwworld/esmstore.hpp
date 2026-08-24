@@ -12,6 +12,7 @@
 #include <components/esm/luascripts.hpp>
 #include <components/esm/refid.hpp>
 #include <components/esm3/loadgmst.hpp>
+#include <components/esm4/loadwthr.hpp>
 #include <components/misc/tuplemeta.hpp>
 
 #include "store.hpp"
@@ -119,6 +120,7 @@ namespace ESM4
     struct TextureSet;
     struct Tree;
     struct Weapon;
+    struct Weather;
     struct World;
 }
 
@@ -174,7 +176,7 @@ namespace MWWorld
             Store<ESM4::Npc>, Store<ESM4::Outfit>, Store<ESM4::Potion>, Store<ESM4::Projectile>, Store<ESM4::Race>,
             Store<ESM4::Reference>, Store<ESM4::Sound>, Store<ESM4::SoundReference>, Store<ESM4::Static>,
             Store<ESM4::StaticCollection>, Store<ESM4::Terminal>, Store<ESM4::TextureSet>, Store<ESM4::Tree>,
-            Store<ESM4::Weapon>, Store<ESM4::World>, Store<ESM4::Explosion>, Store<ESM4::ImpactDataSet>,
+            Store<ESM4::Weapon>, Store<ESM4::Weather>, Store<ESM4::World>, Store<ESM4::Explosion>, Store<ESM4::ImpactDataSet>,
             Store<ESM4::ImpactData>>;
 
     private:
