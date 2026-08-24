@@ -21,7 +21,9 @@ namespace ESM4
         static constexpr std::size_t sTimeCount = 6;
         static constexpr std::size_t sColorTypeCount = 10;
         static constexpr std::size_t sCloudLayerCount = 4;
-        static constexpr std::size_t sFogDistanceCount = 6;
+        static constexpr std::size_t sFogDistanceCount = sTimeCount;
+        static constexpr std::size_t sUnusedImageSpaceDataSize = 304;
+        static constexpr std::size_t sUnusedImageSpaceBytes = sUnusedImageSpaceDataSize;
         // DATA serializes the twelve scalar channels and lightning RGB; Color::unused is in-memory padding.
         static constexpr std::size_t sDataSerializedSize = 15;
 
@@ -47,14 +49,16 @@ namespace ESM4
         {
             Color_SkyUpper,
             Color_Fog,
-            Color_Unused2,
+            Color_Unused = 2,
+            Color_Unused2 = Color_Unused,
             Color_Ambient,
             Color_Sunlight,
             Color_Sun,
             Color_Stars,
             Color_SkyLower,
             Color_Horizon,
-            Color_Unused9,
+            Color_EffectLighting,
+            Color_Unused9 = Color_EffectLighting,
         };
 
         struct Color
@@ -91,15 +95,27 @@ namespace ESM4
         ESM::FormId mId;
         std::uint32_t mFlags = 0;
         std::string mEditorId;
-        std::array<ESM::FormId, sTimeCount> mImageSpaceModifiers;
-        std::array<std::string, sCloudLayerCount> mCloudTextures;
+        std::array<ESM::FormId, sTimeCount> mImageSpaceModifiers{};
+        std::array<std::string, sCloudLayerCount> mCloudTextures{};
         std::string mModel;
+        std::uint32_t mMaxCloudLayers = 0;
         std::array<std::uint8_t, sCloudLayerCount> mCloudSpeeds{};
         std::array<std::array<Color, sTimeCount>, sCloudLayerCount> mCloudColors{};
+        std::size_t mCloudColorSampleCount = 0;
         std::array<std::array<Color, sTimeCount>, sColorTypeCount> mColors{};
+        std::size_t mColorSampleCount = 0;
         std::array<float, sFogDistanceCount> mFogDistance{};
+        std::array<std::uint8_t, sUnusedImageSpaceDataSize> mUnusedImageSpaceData{};
         Data mData;
         std::vector<Sound> mSounds;
+
+        bool mHasMaxCloudLayers = false;
+        bool mHasCloudSpeeds = false;
+        bool mHasCloudColors = false;
+        bool mHasColors = false;
+        bool mHasFogDistance = false;
+        bool mHasUnusedImageSpaceData = false;
+        bool mHasData = false;
 
         void load(Reader& reader);
 

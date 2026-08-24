@@ -1,7 +1,8 @@
 #include "loadwthr.hpp"
 
-#include <algorithm>
-#include <stdexcept>
+#include <array>
+#include <sstream>
+#include <string_view>
 
 #include <components/esm/fourcc.hpp>
 
@@ -9,11 +10,6 @@
 
 namespace
 {
-    constexpr std::size_t sColorChannelCount = sizeof(ESM4::Weather::Color);
-    constexpr std::size_t sFullColorDataSize
-        = ESM4::Weather::sTimeCount * ESM4::Weather::sColorTypeCount * sColorChannelCount;
-    constexpr std::size_t sLegacyColorDataSize
-        = ESM4::Weather::sLegacyTimeCount * ESM4::Weather::sColorTypeCount * sColorChannelCount;
     // SNAM stores a compact ESM4 FormID, not the in-memory adjusted FormId pair.
     constexpr std::size_t sSoundDataSize = sizeof(ESM::FormId32) + sizeof(std::uint32_t);
 
@@ -42,13 +38,62 @@ namespace
     constexpr std::uint32_t sModelAlternateTextures = ESM::fourCC("MODS");
     constexpr std::uint32_t sModelData = ESM::fourCC("MODD");
 
-    template <class T>
-    void readFixedOrSkip(ESM4::Reader& reader, const ESM4::SubRecordHeader& header, T& value)
+    [[noreturn]] void failSize(
+        ESM4::Reader& reader, std::string_view field, std::string_view expected, std::size_t actual)
     {
-        if (header.dataSize == sizeof(value))
-            reader.get(value);
+        std::ostringstream message;
+        message << "WTHR " << field << " has " << actual << " bytes; expected " << expected;
+        reader.fail(message.str());
+    }
+
+    void requireSize(
+        ESM4::Reader& reader, const ESM4::SubRecordHeader& header, std::string_view field, std::size_t expected)
+    {
+        if (header.dataSize != expected)
+            failSize(reader, field, std::to_string(expected), header.dataSize);
+    }
+
+    template <std::size_t Rows>
+    std::size_t readColors(ESM4::Reader& reader, const ESM4::SubRecordHeader& header, std::string_view field,
+        std::array<std::array<ESM4::Weather::Color, ESM4::Weather::sTimeCount>, Rows>& output)
+    {
+        constexpr std::size_t legacySize
+            = Rows * ESM4::Weather::sLegacyTimeCount * sizeof(ESM4::Weather::Color);
+        constexpr std::size_t currentSize = Rows * ESM4::Weather::sTimeCount * sizeof(ESM4::Weather::Color);
+
+        std::size_t sampleCount = 0;
+        if (header.dataSize == legacySize)
+            sampleCount = ESM4::Weather::sLegacyTimeCount;
+        else if (header.dataSize == currentSize)
+            sampleCount = ESM4::Weather::sTimeCount;
         else
-            reader.skipSubRecordData();
+            failSize(reader, field, std::to_string(legacySize) + " or " + std::to_string(currentSize),
+                header.dataSize);
+
+        for (auto& row : output)
+            row.fill(ESM4::Weather::Color{});
+        for (auto& row : output)
+            reader.get(row.data(), sampleCount * sizeof(ESM4::Weather::Color));
+        return sampleCount;
+    }
+
+    void readData(ESM4::Reader& reader, ESM4::Weather::Data& output)
+    {
+        std::array<std::uint8_t, ESM4::Weather::sDataSerializedSize> raw{};
+        reader.get(raw.data(), raw.size());
+        output.windSpeed = raw[0];
+        output.lowerCloudSpeed = raw[1];
+        output.upperCloudSpeed = raw[2];
+        output.transitionDelta = raw[3];
+        output.sunGlare = raw[4];
+        output.sunDamage = raw[5];
+        output.precipitationBeginFadeIn = raw[6];
+        output.precipitationEndFadeOut = raw[7];
+        output.lightningBeginFadeIn = raw[8];
+        output.lightningEndFadeOut = raw[9];
+        output.lightningFrequency = raw[10];
+        output.classification = raw[11];
+        output.lightningColor = { raw[12], raw[13], raw[14], 0 };
     }
 }
 
@@ -66,22 +111,13 @@ void ESM4::Weather::load(Reader& reader)
                 reader.getZString(mEditorId);
                 break;
             case sSunriseImageSpace:
-                reader.getFormId(mImageSpaceModifiers[Time_Sunrise]);
-                break;
             case sDayImageSpace:
-                reader.getFormId(mImageSpaceModifiers[Time_Day]);
-                break;
             case sSunsetImageSpace:
-                reader.getFormId(mImageSpaceModifiers[Time_Sunset]);
-                break;
             case sNightImageSpace:
-                reader.getFormId(mImageSpaceModifiers[Time_Night]);
-                break;
             case sHighNoonImageSpace:
-                reader.getFormId(mImageSpaceModifiers[Time_HighNoon]);
-                break;
             case sMidnightImageSpace:
-                reader.getFormId(mImageSpaceModifiers[Time_Midnight]);
+                requireSize(reader, subHdr, "image-space modifier", sizeof(ESM::FormId32));
+                reader.getFormId(mImageSpaceModifiers[subHdr.typeId & 0xffu]);
                 break;
             case sLowerCloudTexture:
                 reader.getZString(mCloudTextures[CloudLayer_Lower]);
@@ -98,41 +134,42 @@ void ESM4::Weather::load(Reader& reader)
             case sModel:
                 reader.getZString(mModel);
                 break;
+            case sMaxCloudLayers:
+                requireSize(reader, subHdr, "LNAM", sizeof(mMaxCloudLayers));
+                reader.get(mMaxCloudLayers);
+                mHasMaxCloudLayers = true;
+                break;
             case sCloudSpeeds:
-                readFixedOrSkip(reader, subHdr, mCloudSpeeds);
+                requireSize(reader, subHdr, "ONAM", sizeof(mCloudSpeeds));
+                reader.get(mCloudSpeeds);
+                mHasCloudSpeeds = true;
                 break;
             case sCloudColors:
-                readFixedOrSkip(reader, subHdr, mCloudColors);
+                mCloudColorSampleCount = readColors(reader, subHdr, "PNAM", mCloudColors);
+                mHasCloudColors = true;
                 break;
             case sColors:
-                if (subHdr.dataSize == sFullColorDataSize)
-                    reader.get(mColors);
-                else if (subHdr.dataSize == sLegacyColorDataSize)
-                {
-                    std::array<std::array<Color, sLegacyTimeCount>, sColorTypeCount> legacyColors{};
-                    reader.get(legacyColors);
-                    for (std::size_t type = 0; type < sColorTypeCount; ++type)
-                        std::copy(legacyColors[type].begin(), legacyColors[type].end(), mColors[type].begin());
-                }
-                else
-                    reader.skipSubRecordData();
+                mColorSampleCount = readColors(reader, subHdr, "NAM0", mColors);
+                mHasColors = true;
                 break;
             case sFogDistance:
-                readFixedOrSkip(reader, subHdr, mFogDistance);
+                requireSize(reader, subHdr, "FNAM", sizeof(mFogDistance));
+                reader.get(mFogDistance);
+                mHasFogDistance = true;
+                break;
+            case sImageSpace:
+                requireSize(reader, subHdr, "INAM", mUnusedImageSpaceData.size());
+                reader.get(mUnusedImageSpaceData.data(), mUnusedImageSpaceData.size());
+                mHasUnusedImageSpaceData = true;
                 break;
             case sData:
-                if (subHdr.dataSize == sDataSerializedSize)
-                    reader.get(&mData, sDataSerializedSize);
-                else
-                    reader.skipSubRecordData();
+                requireSize(reader, subHdr, "DATA", sDataSerializedSize);
+                readData(reader, mData);
+                mHasData = true;
                 break;
             case sSound:
             {
-                if (subHdr.dataSize != sSoundDataSize)
-                {
-                    reader.skipSubRecordData();
-                    break;
-                }
+                requireSize(reader, subHdr, "SNAM", sSoundDataSize);
                 Sound sound;
                 reader.getFormId(sound.sound);
                 reader.get(sound.type);
@@ -148,7 +185,7 @@ void ESM4::Weather::load(Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
-                throw std::runtime_error("ESM4::WTHR::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
+                reader.fail("Unknown WTHR subrecord " + ESM::printName(subHdr.typeId));
         }
     }
 }
