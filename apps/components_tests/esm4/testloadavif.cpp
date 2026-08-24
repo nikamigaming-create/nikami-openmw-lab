@@ -51,7 +51,8 @@ namespace
     {
         std::string payload;
         ESM4Test::appendSubRecord(payload, "EDID", zString("Health"));
-        ESM4Test::appendSubRecord(payload, "XXXX", std::string(1, '\0'));
+        // XXXX is a reader extension marker, so use a plain unknown tag here.
+        ESM4Test::appendSubRecord(payload, "ZZZZ", std::string(1, '\0'));
         EXPECT_THROW(loadActorValueInformation(std::move(payload)), std::runtime_error);
     }
 }
