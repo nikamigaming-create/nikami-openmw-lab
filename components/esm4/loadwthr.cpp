@@ -12,6 +12,23 @@ namespace
 {
     // SNAM stores a compact ESM4 FormID, not the in-memory adjusted FormId pair.
     constexpr std::size_t sSoundDataSize = sizeof(ESM::FormId32) + sizeof(std::uint32_t);
+    constexpr std::uint32_t sImageSpaceIndexMask = 0xffu;
+
+    constexpr std::size_t sDataWindSpeed = 0;
+    constexpr std::size_t sDataLowerCloudSpeed = 1;
+    constexpr std::size_t sDataUpperCloudSpeed = 2;
+    constexpr std::size_t sDataTransitionDelta = 3;
+    constexpr std::size_t sDataSunGlare = 4;
+    constexpr std::size_t sDataSunDamage = 5;
+    constexpr std::size_t sDataPrecipitationBeginFadeIn = 6;
+    constexpr std::size_t sDataPrecipitationEndFadeOut = 7;
+    constexpr std::size_t sDataLightningBeginFadeIn = 8;
+    constexpr std::size_t sDataLightningEndFadeOut = 9;
+    constexpr std::size_t sDataLightningFrequency = 10;
+    constexpr std::size_t sDataClassification = 11;
+    constexpr std::size_t sDataLightningColorRed = 12;
+    constexpr std::size_t sDataLightningColorGreen = 13;
+    constexpr std::size_t sDataLightningColorBlue = 14;
 
     constexpr std::uint32_t sEditorId = ESM::fourCC("EDID");
     constexpr std::uint32_t sSunriseImageSpace = ESM::fourCC("\0IAD");
@@ -81,19 +98,20 @@ namespace
     {
         std::array<std::uint8_t, ESM4::Weather::sDataSerializedSize> raw{};
         reader.get(raw.data(), raw.size());
-        output.windSpeed = raw[0];
-        output.lowerCloudSpeed = raw[1];
-        output.upperCloudSpeed = raw[2];
-        output.transitionDelta = raw[3];
-        output.sunGlare = raw[4];
-        output.sunDamage = raw[5];
-        output.precipitationBeginFadeIn = raw[6];
-        output.precipitationEndFadeOut = raw[7];
-        output.lightningBeginFadeIn = raw[8];
-        output.lightningEndFadeOut = raw[9];
-        output.lightningFrequency = raw[10];
-        output.classification = raw[11];
-        output.lightningColor = { raw[12], raw[13], raw[14], 0 };
+        output.windSpeed = raw[sDataWindSpeed];
+        output.lowerCloudSpeed = raw[sDataLowerCloudSpeed];
+        output.upperCloudSpeed = raw[sDataUpperCloudSpeed];
+        output.transitionDelta = raw[sDataTransitionDelta];
+        output.sunGlare = raw[sDataSunGlare];
+        output.sunDamage = raw[sDataSunDamage];
+        output.precipitationBeginFadeIn = raw[sDataPrecipitationBeginFadeIn];
+        output.precipitationEndFadeOut = raw[sDataPrecipitationEndFadeOut];
+        output.lightningBeginFadeIn = raw[sDataLightningBeginFadeIn];
+        output.lightningEndFadeOut = raw[sDataLightningEndFadeOut];
+        output.lightningFrequency = raw[sDataLightningFrequency];
+        output.classification = raw[sDataClassification];
+        output.lightningColor
+            = { raw[sDataLightningColorRed], raw[sDataLightningColorGreen], raw[sDataLightningColorBlue], 0 };
     }
 }
 
@@ -117,7 +135,7 @@ void ESM4::Weather::load(Reader& reader)
             case sHighNoonImageSpace:
             case sMidnightImageSpace:
                 requireSize(reader, subHdr, "image-space modifier", sizeof(ESM::FormId32));
-                reader.getFormId(mImageSpaceModifiers[subHdr.typeId & 0xffu]);
+                reader.getFormId(mImageSpaceModifiers[subHdr.typeId & sImageSpaceIndexMask]);
                 break;
             case sLowerCloudTexture:
                 reader.getZString(mCloudTextures[CloudLayer_Lower]);
