@@ -152,6 +152,7 @@ namespace ESM
         REC_ACTI4 = esm4Recname(ESM4::REC_ACTI), // Activator
         REC_ADDN4 = esm4Recname(ESM4::REC_ADDN), // Addon Node
         REC_ALCH4 = esm4Recname(ESM4::REC_ALCH), // Potion
+        REC_AMEF4 = esm4Recname(ESM4::REC_AMEF), // Ammo Effect (Fallout: New Vegas)
         REC_AMMO4 = esm4Recname(ESM4::REC_AMMO), // Ammo
         REC_ANIO4 = esm4Recname(ESM4::REC_ANIO), // Animated Object
         REC_APPA4 = esm4Recname(ESM4::REC_APPA), // Apparatus (probably unused)
