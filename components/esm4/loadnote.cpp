@@ -106,7 +106,8 @@ namespace
         if (reader.subRecordHeader().dataSize != ESM4::Fallout::kNoteFormIdBytes)
             fail("unsupported " + std::string(field) + " FormID size");
         ESM::FormId value;
-        if (!reader.getFormId(value) || value.isZeroOrUnset())
+        if (!reader.getFormId(value) || value.mIndex == ESM4::Fallout::kNoteNullFormIdIndex
+            || value.isZeroOrUnset())
             fail("could not read nonzero " + std::string(field) + " FormID");
         return value;
     }

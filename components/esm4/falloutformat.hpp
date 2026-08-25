@@ -71,6 +71,7 @@ namespace ESM4::Fallout
     inline constexpr std::uint8_t kNoteDataVoice = 3;
     inline constexpr std::uint8_t kNoteDataMaximum = kNoteDataVoice;
     inline constexpr std::uint32_t kNoteFormIdBytes = kOnDiskFormIdBytes;
+    inline constexpr std::uint32_t kNoteNullFormIdIndex = 0;
     inline constexpr std::size_t kNoteMaximumQuestReferences = 4;
     inline constexpr std::uint32_t kNoteBoundRadiusBytes = sizeof(float);
     inline constexpr std::uint32_t kNoteAllowedRecordFlags = 0;
