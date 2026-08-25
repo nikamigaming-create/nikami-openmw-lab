@@ -678,7 +678,12 @@ void ESM4::Race::load(ESM4::Reader& reader)
             case ESM::fourCC("MTNM"): // movement type
             case ESM::fourCC("ATKD"): // attack data
             case ESM::fourCC("ATKE"): // attach event
-            case ESM::fourCC("GNAM"): // body part data
+            case ESM::fourCC("GNAM"): // body part data (FO3/FNV)
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                    reader.getFormId(mBodyPartData);
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("NAM4"): // material type
             case ESM::fourCC("NAM5"): // unarmed impact?
             case ESM::fourCC("LNAM"): // close loot sound
