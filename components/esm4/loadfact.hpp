@@ -56,7 +56,8 @@ namespace ESM4
             std::uint8_t mSerializedSize = 0;
         };
 
-        static_assert(sizeof(Relation) == Fallout::kFactionRelationBytes);
+        static_assert(Fallout::kOnDiskFormIdBytes + sizeof(std::int32_t) + sizeof(std::uint32_t)
+            == Fallout::kFactionRelationBytes);
         static_assert(sizeof(Data)
             == Fallout::kFactionDataFlagBytes + Fallout::kFactionDataUnusedBytes
                 + Fallout::kFactionDataSerializedSizeBytes);
