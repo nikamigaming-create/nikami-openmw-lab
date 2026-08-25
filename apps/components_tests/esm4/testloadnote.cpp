@@ -381,8 +381,13 @@ namespace
         appendPod(truncated, std::uint16_t{ 1 });
         malformed.push_back(std::move(truncated));
 
+        std::size_t malformedIndex = 0;
         for (const std::string& payload : malformed)
+        {
+            SCOPED_TRACE("malformed payload " + std::to_string(malformedIndex));
             expectRejectedWithoutMutation(payload);
+            ++malformedIndex;
+        }
     }
 
     TEST(Esm4NoteTest, rejectsEveryRepresentativeNonzeroHeaderFlagAtomically)
