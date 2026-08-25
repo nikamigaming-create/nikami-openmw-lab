@@ -89,6 +89,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testloadweap.cpp
     esm4/testloadweather.cpp
     esm4/testutil.hpp
+    esm4/testloadnote.cpp
     esm4/testloadterm.cpp
 
     fx/lexer.cpp

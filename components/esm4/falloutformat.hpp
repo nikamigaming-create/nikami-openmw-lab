@@ -1,6 +1,7 @@
 #ifndef OPENMW_COMPONENTS_ESM4_FALLOUTFORMAT_H
 #define OPENMW_COMPONENTS_ESM4_FALLOUTFORMAT_H
 
+#include <cstddef>
 #include <cstdint>
 
 #include <components/esm/common.hpp>
@@ -61,6 +62,18 @@ namespace ESM4::Fallout
     inline constexpr std::uint32_t kFactionCrimeGoldMultiplierBytes = sizeof(float);
     inline constexpr std::uint32_t kFactionReputationBytes = kOnDiskFormIdBytes;
     inline constexpr std::uint32_t kEmptySubrecordBytes = 0;
+
+    inline constexpr std::uint32_t kNoteObjectBoundsBytes = 12;
+    inline constexpr std::uint32_t kNoteDataBytes = 1;
+    inline constexpr std::uint8_t kNoteDataEmpty = 0;
+    inline constexpr std::uint8_t kNoteDataText = 1;
+    inline constexpr std::uint8_t kNoteDataImage = 2;
+    inline constexpr std::uint8_t kNoteDataVoice = 3;
+    inline constexpr std::uint8_t kNoteDataMaximum = kNoteDataVoice;
+    inline constexpr std::uint32_t kNoteFormIdBytes = kOnDiskFormIdBytes;
+    inline constexpr std::size_t kNoteMaximumQuestReferences = 4;
+    inline constexpr std::uint32_t kNoteBoundRadiusBytes = sizeof(float);
+    inline constexpr std::uint32_t kNoteAllowedRecordFlags = 0;
 
     inline constexpr bool isNewVegasVersion(std::uint32_t version)
     {
