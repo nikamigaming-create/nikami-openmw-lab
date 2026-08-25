@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -69,5 +70,44 @@ namespace
         const ESM4::Reference reference = loadReference(std::move(recordData));
 
         EXPECT_TRUE(reference.mLinkedReference.isZeroOrUnset());
+    }
+
+    TEST(Esm4ReferenceTest, loadsFalloutTriggerPrimitiveMetadata)
+    {
+        const std::array<float, 3> bounds{ 80.414f, 104.688f, 140.f };
+        const std::array<float, 4> color{ 0.25f, 0.5f, 0.75f, 0.4f };
+        const std::uint32_t type = ESM4::Primitive::Box;
+
+        std::string primitive;
+        ESM4Test::appendPod(primitive, bounds);
+        ESM4Test::appendPod(primitive, color);
+        ESM4Test::appendPod(primitive, type);
+
+        std::string recordData;
+        ESM4Test::appendSubRecord(recordData, "XPRM", primitive);
+
+        const ESM4::Reference reference = loadReference(std::move(recordData));
+
+        ASSERT_TRUE(reference.mHasPrimitive);
+        EXPECT_EQ(reference.mPrimitive.mBounds, bounds);
+        EXPECT_EQ(reference.mPrimitive.mColor, color);
+        EXPECT_EQ(reference.mPrimitive.mType, type);
+    }
+
+    TEST(Esm4ReferenceTest, rejectsMalformedTriggerPrimitiveWithoutLosingAlignment)
+    {
+        std::string recordData;
+        ESM4Test::appendSubRecord(recordData, "XPRM", std::string(sizeof(float), '\0'));
+
+        ESM::Position position{};
+        position.pos[0] = 101.f;
+        std::string positionData;
+        ESM4Test::appendPod(positionData, position);
+        ESM4Test::appendSubRecord(recordData, "DATA", positionData);
+
+        const ESM4::Reference reference = loadReference(std::move(recordData));
+
+        EXPECT_FALSE(reference.mHasPrimitive);
+        EXPECT_FLOAT_EQ(reference.mPos.pos[0], position.pos[0]);
     }
 }

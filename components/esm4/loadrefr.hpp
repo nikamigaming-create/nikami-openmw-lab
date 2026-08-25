@@ -27,6 +27,7 @@
 #ifndef ESM4_REFR_H
 #define ESM4_REFR_H
 
+#include <array>
 #include <cstdint>
 
 #include "reference.hpp" // EnableParent
@@ -72,6 +73,24 @@ namespace ESM4
         std::uint32_t broadcastRange;
         float staticPercentage;
         ESM::FormId posReference; // only used if broadcastRange == 0
+    };
+
+    // Fallout XPRM stores the authored primitive used by model-less
+    // references such as trigger volumes. These values are file-format enum
+    // values; runtime dispatch is intentionally outside this data contract.
+    struct Primitive
+    {
+        enum Type : std::uint32_t
+        {
+            None = 0,
+            Box = 1,
+            Sphere = 2,
+            PortalBox = 3,
+        };
+
+        std::array<float, 3> mBounds{};
+        std::array<float, 4> mColor{};
+        std::uint32_t mType = None;
     };
 
     struct Reference
@@ -120,6 +139,9 @@ namespace ESM4
         float mPatrolIdleTime = sDefaultPatrolIdleTime;
         bool mHasPatrolIdleTime = false;
         bool mIsPatrolIdleScriptMarker = false;
+
+        Primitive mPrimitive;
+        bool mHasPrimitive = false;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

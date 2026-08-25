@@ -26,6 +26,7 @@
 */
 #include "loadrefr.hpp"
 
+#include <array>
 #include <cstddef>
 #include <stdexcept>
 
@@ -37,6 +38,8 @@ namespace
     constexpr auto kPatrolLinkedReferenceBytes = sizeof(ESM::FormId32);
     constexpr auto kPatrolIdleTimeBytes = sizeof(float);
     constexpr auto kPatrolIdleScriptMarkerBytes = std::size_t{ 0 };
+    constexpr auto kFalloutPrimitiveBytes
+        = sizeof(std::array<float, 3>) + sizeof(std::array<float, 4>) + sizeof(std::uint32_t);
 }
 
 void ESM4::Reference::load(ESM4::Reader& reader)
@@ -268,6 +271,24 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                     reader.skipSubRecordData();
                 break;
             }
+            case ESM::fourCC("XPRM"):
+            {
+                if (subHdr.dataSize == kFalloutPrimitiveBytes)
+                {
+                    Primitive primitive{};
+                    const bool read = reader.get(primitive.mBounds.data(), sizeof(primitive.mBounds))
+                        && reader.get(primitive.mColor.data(), sizeof(primitive.mColor))
+                        && reader.getExact(primitive.mType);
+                    if (read)
+                    {
+                        mPrimitive = primitive;
+                        mHasPrimitive = true;
+                    }
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
             case ESM::fourCC("CNAM"):
                 reader.getFormId(mAudioLocation);
                 break; // FONV
@@ -329,7 +350,6 @@ void ESM4::Reference::load(ESM4::Reader& reader)
             case ESM::fourCC("XLCM"):
             case ESM::fourCC("ONAM"):
             case ESM::fourCC("VMAD"):
-            case ESM::fourCC("XPRM"):
             case ESM::fourCC("INAM"):
             case ESM::fourCC("PDTO"):
             case ESM::fourCC("SCHR"):
