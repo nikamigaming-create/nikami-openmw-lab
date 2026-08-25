@@ -12,6 +12,7 @@
 #include <components/esm4/loadavif.hpp>
 #include <components/esm4/loadamef.hpp>
 #include <components/esm4/loadclmt.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadmgef.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadspel.hpp>
