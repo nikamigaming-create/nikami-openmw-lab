@@ -28,11 +28,14 @@
 #define ESM4_RACE
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <map>
+#include <span>
 #include <vector>
 
 #include "actor.hpp" // AttributeValues, BodyTemplate
+#include "falloutformat.hpp"
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
 #include <components/esm/path.hpp>
@@ -47,9 +50,28 @@ namespace ESM4
 #pragma pack(push, 1)
         struct Data
         {
-            std::uint8_t flags; // 0x01 = not playable, 0x02 = not male, 0x04 = not female, ?? = fixed
+            std::uint8_t flags = 0; // 0x01 = not playable, 0x02 = not male, 0x04 = not female, ?? = fixed
         };
 #pragma pack(pop)
+
+        struct FalloutSkillBoost
+        {
+            std::uint8_t mRawActorValue = 0;
+            std::int8_t mBoost = 0;
+        };
+
+        struct FalloutData
+        {
+            std::array<FalloutSkillBoost, Fallout::kRaceFalloutSkillBoostCount> mSkillBoosts{};
+            std::array<std::uint8_t, Fallout::kRaceFalloutReservedBytes> mReserved{};
+            float mHeightMale = 1.0f;
+            float mHeightFemale = 1.0f;
+            float mWeightMale = 1.0f;
+            float mWeightFemale = 1.0f;
+            std::uint32_t mRawFlags = 0;
+        };
+
+        static_assert(sizeof(FalloutData) == Fallout::kRaceFalloutDataBytes);
 
         enum SkillIndex
         {
@@ -108,8 +130,8 @@ namespace ESM4
             std::string texture; // can be empty e.g. eye left, eye right
         };
 
-        ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
         bool mIsTES5 = false;
 
@@ -128,7 +150,10 @@ namespace ESM4
         float mHeightFemale = 1.0f;
         float mWeightMale = 1.0f;
         float mWeightFemale = 1.0f;
-        std::uint32_t mRaceFlags; // 0x0001 = playable?
+        std::uint32_t mRaceFlags = 0; // raw Fallout race flags; do not map to TES3 flags
+
+        FalloutData mFalloutData{};
+        bool mHasFalloutData = false;
 
         std::vector<BodyPart> mHeadParts; // see HeadPartIndex
         std::vector<BodyPart> mHeadPartsFemale; // see HeadPartIndex
@@ -139,8 +164,8 @@ namespace ESM4
         std::vector<ESM::FormId> mEyeChoices; // texture only
         std::vector<ESM::FormId> mHairChoices; // not for TES5
 
-        float mFaceGenMainClamp;
-        float mFaceGenFaceClamp;
+        float mFaceGenMainClamp = 0.0f;
+        float mFaceGenFaceClamp = 0.0f;
         std::vector<float> mSymShapeModeCoefficients; // should be 50
         std::vector<float> mSymShapeModeCoeffFemale; // should be 50
         std::vector<float> mAsymShapeModeCoefficients; // should be 30
@@ -154,7 +179,7 @@ namespace ESM4
         std::array<ESM::FormId, 2> mDefaultHair; // male/female (HAIR FormId for TES4)
         ESM::FormId mBodyPartData{}; // FO3/FNV GNAM
 
-        std::uint32_t mNumKeywords;
+        std::uint32_t mNumKeywords = 0;
 
         ESM::FormId mSkin; // TES5
         BodyTemplate mBodyTemplate; // TES5
@@ -163,6 +188,8 @@ namespace ESM4
         // head, mouth, eyes, brow, hair
         std::vector<ESM::FormId> mHeadPartIdsMale; // TES5
         std::vector<ESM::FormId> mHeadPartIdsFemale; // TES5
+
+        [[nodiscard]] static FalloutData decodeFalloutData(std::span<const std::uint8_t> payload);
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

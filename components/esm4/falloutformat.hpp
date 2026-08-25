@@ -41,6 +41,14 @@ namespace ESM4::Fallout
     inline constexpr std::uint32_t kWeaponDnamBallisticsBytes = 68;
     inline constexpr std::uint32_t kWeaponDnamPaddingBytes = kOnDiskFormIdBytes;
 
+    inline constexpr std::uint32_t kClassFalloutDataBytes = 28;
+    inline constexpr std::uint32_t kClassFalloutAttributesBytes = 7;
+    inline constexpr std::uint32_t kClassFalloutTagActorValueCount = 4;
+    inline constexpr std::uint32_t kClassFalloutReservedBytes = 2;
+    inline constexpr std::uint32_t kRaceFalloutDataBytes = 36;
+    inline constexpr std::uint32_t kRaceFalloutSkillBoostCount = 7;
+    inline constexpr std::uint32_t kRaceFalloutReservedBytes = 2;
+
     inline constexpr bool isNewVegasVersion(std::uint32_t version)
     {
         return version == ESM::VER_132 || version == ESM::VER_133 || version == ESM::VER_134;

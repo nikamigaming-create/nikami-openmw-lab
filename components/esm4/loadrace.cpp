@@ -30,18 +30,55 @@
 #include <format>
 #include <optional>
 #include <stdexcept>
+#include <vector>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 //#include "writer.hpp"
 
 namespace
 {
+    template <typename T>
+    T readFalloutValue(std::span<const std::uint8_t> payload, std::size_t& offset)
+    {
+        if (offset > payload.size() || payload.size() - offset < sizeof(T))
+            throw std::runtime_error("ESM4 Fallout fixed payload ended before its declared fields");
+
+        T value{};
+        std::memcpy(&value, payload.data() + offset, sizeof(value));
+        offset += sizeof(value);
+        return value;
+    }
+
     decltype(auto) at(auto& values, std::uint32_t index, std::string_view name, ESM4::Reader& reader)
     {
         if (index >= values.size())
             reader.fail(std::format("{} index is out of range: {} >= {}", name, index, values.size()));
         return values[index];
     }
+}
+
+ESM4::Race::FalloutData ESM4::Race::decodeFalloutData(std::span<const std::uint8_t> payload)
+{
+    if (payload.size() != Fallout::kRaceFalloutDataBytes)
+        throw std::runtime_error(
+            std::format("ESM4::RACE Fallout DATA must be exactly {} bytes", Fallout::kRaceFalloutDataBytes));
+
+    FalloutData result{};
+    std::size_t offset = 0;
+    for (auto& skillBoost : result.mSkillBoosts)
+    {
+        skillBoost.mRawActorValue = readFalloutValue<std::uint8_t>(payload, offset);
+        skillBoost.mBoost = readFalloutValue<std::int8_t>(payload, offset);
+    }
+    for (auto& reserved : result.mReserved)
+        reserved = readFalloutValue<std::uint8_t>(payload, offset);
+    result.mHeightMale = readFalloutValue<float>(payload, offset);
+    result.mHeightFemale = readFalloutValue<float>(payload, offset);
+    result.mWeightMale = readFalloutValue<float>(payload, offset);
+    result.mWeightFemale = readFalloutValue<float>(payload, offset);
+    result.mRawFlags = readFalloutValue<std::uint32_t>(payload, offset);
+    return result;
 }
 
 void ESM4::Race::load(ESM4::Reader& reader)
@@ -104,6 +141,23 @@ void ESM4::Race::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("DATA"): // ?? different length for TES5
             {
+                if (isFONV)
+                {
+                    if (mHasFalloutData)
+                        throw std::runtime_error("ESM4::RACE contains duplicate Fallout DATA");
+                    std::vector<std::uint8_t> payload(subHdr.dataSize);
+                    if (!reader.get(payload.data(), payload.size()))
+                        throw std::runtime_error("ESM4::RACE Fallout DATA read failed");
+                    mFalloutData = decodeFalloutData(payload);
+                    mHeightMale = mFalloutData.mHeightMale;
+                    mHeightFemale = mFalloutData.mHeightFemale;
+                    mWeightMale = mFalloutData.mWeightMale;
+                    mWeightFemale = mFalloutData.mWeightFemale;
+                    mRaceFlags = mFalloutData.mRawFlags;
+                    mHasFalloutData = true;
+                    break;
+                }
+
 // DATA:size 128
 // 0f 0f ff 00 ff 00 ff 00 ff 00 ff 00 ff 00 00 00
 // 9a 99 99 3f 00 00 80 3f 00 00 80 3f 00 00 80 3f

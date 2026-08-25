@@ -27,11 +27,16 @@
 #ifndef ESM4_CLAS_H
 #define ESM4_CLAS_H
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
+
+#include "falloutformat.hpp"
 
 namespace ESM4
 {
@@ -42,17 +47,35 @@ namespace ESM4
     {
         struct Data
         {
-            std::uint32_t attr;
+            std::uint32_t attr = 0;
         };
 
-        ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        struct FalloutData
+        {
+            std::array<std::int32_t, Fallout::kClassFalloutTagActorValueCount> mTagActorValues{};
+            std::uint32_t mRawFlags = 0;
+            std::uint32_t mRawServices = 0;
+            std::uint8_t mRawTeaches = 0;
+            std::uint8_t mTrainingLevel = 0;
+            std::array<std::uint8_t, Fallout::kClassFalloutReservedBytes> mReserved{};
+        };
+
+        static_assert(sizeof(FalloutData) == Fallout::kClassFalloutDataBytes);
+
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
         std::string mEditorId;
         std::string mFullName;
         std::string mDesc;
         std::string mIcon;
-        Data mData;
+        Data mData{};
+        FalloutData mFalloutData{};
+        std::array<std::uint8_t, Fallout::kClassFalloutAttributesBytes> mFalloutAttributes{};
+        bool mHasFalloutData = false;
+        bool mHasFalloutAttributes = false;
+
+        [[nodiscard]] static FalloutData decodeFalloutData(std::span<const std::uint8_t> payload);
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& reader) const;
