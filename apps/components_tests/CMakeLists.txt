@@ -80,6 +80,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testloadipct.cpp
     esm4/testloadipds.cpp
     esm4/testloadproj.cpp
+    esm4/testloadrefr.cpp
     esm4/testloadrepu.cpp
     esm4/testloadweap.cpp
     esm4/testloadweather.cpp

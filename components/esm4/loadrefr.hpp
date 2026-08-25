@@ -76,6 +76,8 @@ namespace ESM4
 
     struct Reference
     {
+        static constexpr float sDefaultPatrolIdleTime = 0.f;
+
         ESM::FormId mId; // from the header
 
         ESM::RefId mParent; // cell FormId, from the loading sequence
@@ -110,6 +112,14 @@ namespace ESM4
         ESM::FormId mKey;
 
         ESM::FormId mTargetRef;
+
+        // Fallout patrol routes are linked REFR chains. XLKR points at the
+        // next marker, XPRD stores the authored idle time, and an empty XPPA
+        // marks a patrol-idle/script point.
+        ESM::FormId mLinkedReference{};
+        float mPatrolIdleTime = sDefaultPatrolIdleTime;
+        bool mHasPatrolIdleTime = false;
+        bool mIsPatrolIdleScriptMarker = false;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

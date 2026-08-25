@@ -26,10 +26,18 @@
 */
 #include "loadrefr.hpp"
 
+#include <cstddef>
 #include <stdexcept>
 
 #include "reader.hpp"
 // #include "writer.hpp"
+
+namespace
+{
+    constexpr auto kPatrolLinkedReferenceBytes = sizeof(ESM::FormId32);
+    constexpr auto kPatrolIdleTimeBytes = sizeof(float);
+    constexpr auto kPatrolIdleScriptMarkerBytes = std::size_t{ 0 };
+}
 
 void ESM4::Reference::load(ESM4::Reader& reader)
 {
@@ -225,6 +233,41 @@ void ESM4::Reference::load(ESM4::Reader& reader)
                 // std::cout << "REFR XRTG : " << formIdToString(id) << std::endl;// FIXME
                 break;
             }
+            case ESM::fourCC("XLKR"):
+            {
+                if (subHdr.dataSize == kPatrolLinkedReferenceBytes)
+                {
+                    ESM::FormId32 rawLinkedReference{};
+                    if (reader.getExact(rawLinkedReference))
+                    {
+                        mLinkedReference = ESM::FormId::fromUint32(rawLinkedReference);
+                        if (!mLinkedReference.isZeroOrUnset())
+                            reader.adjustFormId(mLinkedReference);
+                    }
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("XPRD"):
+            {
+                if (subHdr.dataSize == kPatrolIdleTimeBytes)
+                {
+                    reader.get(mPatrolIdleTime);
+                    mHasPatrolIdleTime = true;
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("XPPA"):
+            {
+                if (subHdr.dataSize == kPatrolIdleScriptMarkerBytes)
+                    mIsPatrolIdleScriptMarker = true;
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
             case ESM::fourCC("CNAM"):
                 reader.getFormId(mAudioLocation);
                 break; // FONV
@@ -302,7 +345,6 @@ void ESM4::Reference::load(ESM4::Reader& reader)
             case ESM::fourCC("XIS2"):
             case ESM::fourCC("XLCN"):
             case ESM::fourCC("XLIB"):
-            case ESM::fourCC("XLKR"):
             case ESM::fourCC("XLRM"):
             case ESM::fourCC("XLRT"):
             case ESM::fourCC("XLTW"):
@@ -313,8 +355,6 @@ void ESM4::Reference::load(ESM4::Reader& reader)
             case ESM::fourCC("XOCP"):
             case ESM::fourCC("XPOD"):
             case ESM::fourCC("XPTL"):
-            case ESM::fourCC("XPPA"):
-            case ESM::fourCC("XPRD"):
             case ESM::fourCC("XPWR"):
             case ESM::fourCC("XRMR"):
             case ESM::fourCC("XSPC"):
