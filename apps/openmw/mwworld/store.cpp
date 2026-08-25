@@ -1295,3 +1295,4 @@ template class MWWorld::TypedDynamicStore<ESM4::Weather>;
 template class MWWorld::TypedDynamicStore<ESM4::World>;
 template class MWWorld::TypedDynamicStore<ESM4::ImpactDataSet>;
 template class MWWorld::TypedDynamicStore<ESM4::ImpactData>;
+template class MWWorld::TypedDynamicStore<ESM4::Faction>;

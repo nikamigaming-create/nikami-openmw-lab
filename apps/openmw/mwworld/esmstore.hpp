@@ -190,7 +190,7 @@ namespace MWWorld
             Store<ESM4::Reference>, Store<ESM4::Reputation>, Store<ESM4::Sound>, Store<ESM4::SoundReference>, Store<ESM4::Static>,
             Store<ESM4::StaticCollection>, Store<ESM4::Terminal>, Store<ESM4::TextureSet>, Store<ESM4::Tree>,
             Store<ESM4::Weapon>, Store<ESM4::Weather>, Store<ESM4::World>, Store<ESM4::Explosion>, Store<ESM4::ImpactDataSet>,
-            Store<ESM4::ImpactData>, Store<ESM4::MagicEffect>, Store<ESM4::Spell>>;
+            Store<ESM4::ImpactData>, Store<ESM4::MagicEffect>, Store<ESM4::Spell>, Store<ESM4::Faction>>;
 
     private:
         template <typename T>

@@ -321,6 +321,10 @@ namespace MWWorld
 
         static bool readRecord(ESM4::Reader& reader, ESMStore& store)
         {
+            const auto recordType = static_cast<ESM4::RecordTypes>(reader.hdr().record.typeId);
+            if (recordType == ESM4::REC_FACT && store.mESM4Game != ESM4Game::FalloutNewVegas)
+                return false;
+
             return std::apply(
                 [&reader](auto&... x) { return (typedReadRecordESM4(reader, x) || ...); }, store.mStoreImp->mStores);
         }

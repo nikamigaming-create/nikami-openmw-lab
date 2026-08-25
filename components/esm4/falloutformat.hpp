@@ -49,6 +49,19 @@ namespace ESM4::Fallout
     inline constexpr std::uint32_t kRaceFalloutSkillBoostCount = 7;
     inline constexpr std::uint32_t kRaceFalloutReservedBytes = 2;
 
+    inline constexpr std::uint32_t kFactionRelationBytes = 12;
+    inline constexpr std::uint32_t kFactionDataFlagBytes = 2;
+    inline constexpr std::uint32_t kFactionDataShortBytes = 1;
+    inline constexpr std::uint32_t kFactionDataLongBytes = 4;
+    inline constexpr std::uint32_t kFactionDataUnusedBytes = 2;
+    inline constexpr std::uint32_t kFactionDataSerializedSizeBytes = 1;
+    inline constexpr std::uint32_t kFactionDataUnusedFirstIndex = 0;
+    inline constexpr std::uint32_t kFactionDataUnusedSecondIndex = 1;
+    inline constexpr std::uint32_t kFactionRankBytes = 4;
+    inline constexpr std::uint32_t kFactionCrimeGoldMultiplierBytes = sizeof(float);
+    inline constexpr std::uint32_t kFactionReputationBytes = kOnDiskFormIdBytes;
+    inline constexpr std::uint32_t kEmptySubrecordBytes = 0;
+
     inline constexpr bool isNewVegasVersion(std::uint32_t version)
     {
         return version == ESM::VER_132 || version == ESM::VER_133 || version == ESM::VER_134;
