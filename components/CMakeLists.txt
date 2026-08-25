@@ -280,6 +280,7 @@ add_component_dir (esm4
     loadproj
     loadqust
     loadrace
+    loadrcct
     loadrefr
     loadregn
     loadrepu

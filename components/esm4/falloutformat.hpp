@@ -63,6 +63,8 @@ namespace ESM4::Fallout
     inline constexpr std::uint32_t kFactionReputationBytes = kOnDiskFormIdBytes;
     inline constexpr std::uint32_t kEmptySubrecordBytes = 0;
 
+    inline constexpr std::uint32_t kRecipeCategoryDataBytes = sizeof(std::uint8_t);
+
     inline constexpr std::uint32_t kNoteObjectBoundsBytes = 12;
     inline constexpr std::uint32_t kNoteDataBytes = 1;
     inline constexpr std::uint8_t kNoteDataEmpty = 0;
