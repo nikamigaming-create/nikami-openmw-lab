@@ -322,7 +322,8 @@ namespace MWWorld
         static bool readRecord(ESM4::Reader& reader, ESMStore& store)
         {
             const auto recordType = static_cast<ESM4::RecordTypes>(reader.hdr().record.typeId);
-            if ((recordType == ESM4::REC_FACT || recordType == ESM4::REC_NOTE || recordType == ESM4::REC_RCCT)
+            if ((recordType == ESM4::REC_FACT || recordType == ESM4::REC_NOTE || recordType == ESM4::REC_RCCT
+                    || recordType == ESM4::REC_RCPE)
                 && store.mESM4Game != ESM4Game::FalloutNewVegas)
                 return false;
 

@@ -16,6 +16,7 @@
 #include <components/esm4/loadmgef.hpp>
 #include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadrcct.hpp>
+#include <components/esm4/loadrcpe.hpp>
 #include <components/esm4/loadrepu.hpp>
 #include <components/esm4/loadspel.hpp>
 #include <components/esm4/loadwthr.hpp>
@@ -1301,3 +1302,4 @@ template class MWWorld::TypedDynamicStore<ESM4::ImpactDataSet>;
 template class MWWorld::TypedDynamicStore<ESM4::ImpactData>;
 template class MWWorld::TypedDynamicStore<ESM4::Faction>;
 template class MWWorld::TypedDynamicStore<ESM4::RecipeCategory>;
+template class MWWorld::TypedDynamicStore<ESM4::Recipe>;

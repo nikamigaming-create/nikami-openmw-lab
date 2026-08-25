@@ -86,6 +86,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testloadrace.cpp
     esm4/testloadclasrace.cpp
     esm4/testloadrcct.cpp
+    esm4/testloadrcpe.cpp
     esm4/testloadrepu.cpp
     esm4/testloadweap.cpp
     esm4/testloadweather.cpp

@@ -133,6 +133,7 @@ namespace ESM4
         REC_QUST = fourCC("QUST"), // Quest
         REC_RACE = fourCC("RACE"), // Race / Creature type
         REC_RCCT = fourCC("RCCT"), // Recipe category (Fallout: New Vegas)
+        REC_RCPE = fourCC("RCPE"), // Recipe (Fallout: New Vegas)
         REC_REPU = fourCC("REPU"), // Reputation (Fallout: New Vegas)
         REC_REFR = fourCC("REFR"), // Object Reference
         REC_REGN = fourCC("REGN"), // Region (Audio/Weather)

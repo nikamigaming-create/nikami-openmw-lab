@@ -64,6 +64,16 @@ namespace ESM4::Fallout
     inline constexpr std::uint32_t kEmptySubrecordBytes = 0;
 
     inline constexpr std::uint32_t kRecipeCategoryDataBytes = sizeof(std::uint8_t);
+    inline constexpr std::uint32_t kRecipeDataFormIdCount = 2;
+    inline constexpr std::uint32_t kRecipeDataBytes = sizeof(std::int32_t) + sizeof(std::uint32_t)
+        + kRecipeDataFormIdCount * kOnDiskFormIdBytes;
+    inline constexpr std::uint32_t kRecipeItemBytes = kOnDiskFormIdBytes;
+    inline constexpr std::uint32_t kRecipeQuantityBytes = sizeof(std::uint32_t);
+    inline constexpr std::uint32_t kRecipeNullFormId = 0;
+    inline constexpr std::int32_t kRecipeDefaultRequiredSkill = -1;
+    inline constexpr std::uint32_t kRecipeDefaultRequiredSkillLevel = 0;
+    inline constexpr std::uint32_t kRecipeDefaultQuantity = 0;
+    inline constexpr std::uint32_t kRecipeMinimumQuantity = 1;
 
     inline constexpr std::uint32_t kNoteObjectBoundsBytes = 12;
     inline constexpr std::uint32_t kNoteDataBytes = 1;
