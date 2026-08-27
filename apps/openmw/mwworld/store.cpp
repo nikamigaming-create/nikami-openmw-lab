@@ -13,6 +13,7 @@
 #include <components/esm4/loadamef.hpp>
 #include <components/esm4/loadclmt.hpp>
 #include <components/esm4/loadfact.hpp>
+#include <components/esm4/loadkeym.hpp>
 #include <components/esm4/loadmgef.hpp>
 #include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadrcct.hpp>
