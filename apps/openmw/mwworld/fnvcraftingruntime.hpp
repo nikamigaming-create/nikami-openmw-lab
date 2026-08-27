@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -92,6 +93,55 @@ namespace MWWorld
 
         bool operator==(const FnvCraftingItemDelta&) const = default;
     };
+
+    struct FnvCraftingCatalogSource
+    {
+        ESM4Game mGame;
+        const ESMStore* mStore = nullptr;
+        const ESM4::Activator* mStation = nullptr;
+        std::span<const FnvCraftingStationRule> mStationRules;
+    };
+
+    struct PreparedFnvCraftingCatalogItem
+    {
+        FnvCraftingItemDelta mDelta;
+        std::string mName;
+    };
+
+    struct PreparedFnvCraftingCatalogEntry
+    {
+        ESM::FormId mRecipe;
+        std::string mName;
+        ESM::FormId mSubCategory;
+        std::string mSubCategoryName;
+        std::int32_t mRequiredSkill = 0;
+        std::uint32_t mRequiredSkillLevel = 0;
+        std::vector<PreparedFnvCraftingCatalogItem> mIngredients;
+        std::vector<PreparedFnvCraftingCatalogItem> mOutputs;
+        FnvCraftingPreparationError mStaticBlocker = FnvCraftingPreparationError::None;
+
+        bool isStaticallySupported() const { return mStaticBlocker == FnvCraftingPreparationError::None; }
+    };
+
+    struct PreparedFnvCraftingCatalog
+    {
+        ESM::FormId mStation;
+        ESM::FormId mCategory;
+        std::string mCategoryName;
+        std::vector<PreparedFnvCraftingCatalogEntry> mEntries;
+    };
+
+    /// Resolve an authored station through the injected Fallout mapping. No
+    /// base, script, or category FormIDs are embedded in the engine code.
+    [[nodiscard]] std::optional<ESM::FormId> getFnvCraftingStationCategory(
+        const ESM4::Activator& station, std::span<const FnvCraftingStationRule> rules);
+
+    /// Freeze all live recipes authored for a mapped station category.
+    /// Unsupported records remain visible in the snapshot with their
+    /// fail-closed blocker; this function does not inspect inventory or mutate
+    /// runtime state.
+    [[nodiscard]] std::optional<PreparedFnvCraftingCatalog> prepareFnvCraftingCatalog(
+        const FnvCraftingCatalogSource& source, FnvCraftingPreparationError* error = nullptr);
 
     /// Mutation boundary for the headless planner. Implementations must apply
     /// all deltas or none of them; they must not clone an InventoryStore.

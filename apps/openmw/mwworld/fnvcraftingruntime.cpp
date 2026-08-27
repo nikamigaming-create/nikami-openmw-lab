@@ -6,6 +6,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <string>
 #include <utility>
 
 #include <components/esm/defs.hpp>
@@ -112,6 +113,99 @@ namespace
         }
     }
 
+    std::string recordName(std::string_view fullName, std::string_view editorId, ESM::FormId id)
+    {
+        if (!fullName.empty())
+            return std::string(fullName);
+        if (!editorId.empty())
+            return std::string(editorId);
+        return ESM::RefId(id).toDebugString();
+    }
+
+    template <class Record>
+    std::string typedItemName(const MWWorld::ESMStore& store, const ESM::RefId& id)
+    {
+        const Record* record = store.get<Record>().search(id);
+        if (record == nullptr)
+            return id.toDebugString();
+        return recordName(record->mFullName, record->mEditorId, record->mId);
+    }
+
+    std::string itemName(const MWWorld::ESMStore& store, ESM::FormId form)
+    {
+        const ESM::RefId id(form);
+        switch (store.find(id))
+        {
+            case ESM::REC_MISC4:
+                return typedItemName<ESM4::MiscItem>(store, id);
+            case ESM::REC_ALCH4:
+                return typedItemName<ESM4::Potion>(store, id);
+            case ESM::REC_AMMO4:
+                return typedItemName<ESM4::Ammunition>(store, id);
+            case ESM::REC_WEAP4:
+                return typedItemName<ESM4::Weapon>(store, id);
+            case ESM::REC_ARMO4:
+                return typedItemName<ESM4::Armor>(store, id);
+            default:
+                return id.toDebugString();
+        }
+    }
+
+    MWWorld::FnvCraftingPreparationError itemError(ItemValidation value);
+
+    MWWorld::FnvCraftingPreparationError validateCatalogRecipe(const MWWorld::ESMStore& store,
+        ESM::FormId expectedCategory, const ESM4::Recipe& recipe, const ESM4::RecipeCategory** subCategory)
+    {
+        if (subCategory != nullptr)
+            *subCategory = nullptr;
+        if (isDeleted(recipe.mFlags))
+            return MWWorld::FnvCraftingPreparationError::DeletedRecord;
+        if (!recipe.mConditions.empty())
+            return MWWorld::FnvCraftingPreparationError::ConditionalRecipe;
+        if (recipe.mData.mCategory.isZeroOrUnset() || recipe.mData.mCategory != expectedCategory)
+            return MWWorld::FnvCraftingPreparationError::RecipeCategoryMismatch;
+        if (recipe.mData.mSubCategory.isZeroOrUnset())
+            return MWWorld::FnvCraftingPreparationError::MissingSubCategory;
+        const ESM4::RecipeCategory* storedSubCategory
+            = findExactRecord<ESM4::RecipeCategory>(store, recipe.mData.mSubCategory);
+        if (storedSubCategory == nullptr)
+            return MWWorld::FnvCraftingPreparationError::SubCategoryNotInStore;
+        if (isDeleted(storedSubCategory->mFlags))
+            return MWWorld::FnvCraftingPreparationError::DeletedRecord;
+        if (subCategory != nullptr)
+            *subCategory = storedSubCategory;
+
+        if (recipe.mData.mRequiredSkill == ESM4::Fallout::kRecipeDefaultRequiredSkill)
+        {
+            if (recipe.mData.mRequiredSkillLevel != ESM4::Fallout::kRecipeDefaultRequiredSkillLevel)
+                return MWWorld::FnvCraftingPreparationError::InvalidNoSkillGate;
+        }
+        else if (recipe.mData.mRequiredSkill < 0
+            || static_cast<std::uint32_t>(recipe.mData.mRequiredSkill) < ESM4::Fallout::kRecipeSkillActorValueBegin
+            || static_cast<std::uint32_t>(recipe.mData.mRequiredSkill) > ESM4::Fallout::kRecipeSkillActorValueEnd)
+        {
+            return MWWorld::FnvCraftingPreparationError::UnsupportedSkill;
+        }
+
+        if (recipe.mIngredients.empty() || recipe.mOutputs.empty())
+            return MWWorld::FnvCraftingPreparationError::MissingItem;
+        const auto validateItems = [&](const std::vector<ESM4::Recipe::Item>& items) {
+            for (const ESM4::Recipe::Item& item : items)
+            {
+                if (const ItemValidation validation = validateItem(store, item.mItem);
+                    validation != ItemValidation::Supported)
+                    return itemError(validation);
+                if (!decodeQuantity(item.mQuantity))
+                    return MWWorld::FnvCraftingPreparationError::InvalidQuantity;
+            }
+            return MWWorld::FnvCraftingPreparationError::None;
+        };
+        const MWWorld::FnvCraftingPreparationError ingredientError = validateItems(recipe.mIngredients);
+        if (ingredientError != MWWorld::FnvCraftingPreparationError::None)
+            return ingredientError;
+        return validateItems(recipe.mOutputs);
+    }
+
     MWWorld::FnvCraftingPreparationError itemError(ItemValidation value)
     {
         switch (value)
@@ -149,10 +243,88 @@ namespace
             *output = value;
         return std::nullopt;
     }
+
+    std::optional<MWWorld::PreparedFnvCraftingCatalog> failCatalog(
+        MWWorld::FnvCraftingPreparationError value, MWWorld::FnvCraftingPreparationError* output)
+    {
+        if (output != nullptr)
+            *output = value;
+        return std::nullopt;
+    }
 }
 
 namespace MWWorld
 {
+    std::optional<ESM::FormId> getFnvCraftingStationCategory(
+        const ESM4::Activator& station, std::span<const FnvCraftingStationRule> rules)
+    {
+        const std::optional<StationMapping> mapping = getStationMapping(station, rules);
+        return mapping ? std::optional<ESM::FormId>(mapping->mCategory) : std::nullopt;
+    }
+
+    std::optional<PreparedFnvCraftingCatalog> prepareFnvCraftingCatalog(
+        const FnvCraftingCatalogSource& source, FnvCraftingPreparationError* error)
+    {
+        if (error != nullptr)
+            *error = FnvCraftingPreparationError::None;
+        if (source.mGame != ESM4Game::FalloutNewVegas)
+            return failCatalog(FnvCraftingPreparationError::NotFalloutNewVegas, error);
+        if (source.mStore == nullptr)
+            return failCatalog(FnvCraftingPreparationError::MissingStore, error);
+        const ESMStore& store = *source.mStore;
+        if (source.mStation == nullptr || source.mStation->mId.isZeroOrUnset())
+            return failCatalog(FnvCraftingPreparationError::MissingStation, error);
+        const ESM4::Activator* storedStation = findExactRecord<ESM4::Activator>(store, source.mStation->mId);
+        if (storedStation == nullptr || storedStation != source.mStation)
+            return failCatalog(FnvCraftingPreparationError::StationNotInStore, error);
+        if (isDeleted(source.mStation->mFlags))
+            return failCatalog(FnvCraftingPreparationError::DeletedRecord, error);
+        const std::optional<ESM::FormId> categoryId
+            = getFnvCraftingStationCategory(*source.mStation, source.mStationRules);
+        if (!categoryId)
+            return failCatalog(FnvCraftingPreparationError::UnsupportedStation, error);
+        const ESM4::RecipeCategory* category = findExactRecord<ESM4::RecipeCategory>(store, *categoryId);
+        if (category == nullptr)
+            return failCatalog(FnvCraftingPreparationError::CategoryNotInStore, error);
+        if (isDeleted(category->mFlags))
+            return failCatalog(FnvCraftingPreparationError::DeletedRecord, error);
+
+        PreparedFnvCraftingCatalog catalog;
+        catalog.mStation = source.mStation->mId;
+        catalog.mCategory = *categoryId;
+        catalog.mCategoryName = recordName(category->mFullName, category->mEditorId, category->mId);
+        for (const ESM4::Recipe& recipe : store.get<ESM4::Recipe>())
+        {
+            if (recipe.mData.mCategory != *categoryId || isDeleted(recipe.mFlags))
+                continue;
+
+            const ESM4::RecipeCategory* subCategory = nullptr;
+            const FnvCraftingPreparationError blocker
+                = validateCatalogRecipe(store, *categoryId, recipe, &subCategory);
+            const auto describeItems = [&](const std::vector<ESM4::Recipe::Item>& authored) {
+                std::vector<PreparedFnvCraftingCatalogItem> result;
+                result.reserve(authored.size());
+                for (const ESM4::Recipe::Item& item : authored)
+                {
+                    result.push_back({ { ESM::RefId(item.mItem), std::bit_cast<std::int32_t>(item.mQuantity) },
+                        itemName(store, item.mItem) });
+                }
+                return result;
+            };
+
+            catalog.mEntries.push_back({ recipe.mId,
+                recordName(recipe.mFullName, recipe.mEditorId, recipe.mId), recipe.mData.mSubCategory,
+                subCategory != nullptr
+                    ? recordName(subCategory->mFullName, subCategory->mEditorId, subCategory->mId)
+                    : std::string{},
+                recipe.mData.mRequiredSkill, recipe.mData.mRequiredSkillLevel, describeItems(recipe.mIngredients),
+                describeItems(recipe.mOutputs), blocker });
+        }
+        if (catalog.mEntries.empty())
+            return failCatalog(FnvCraftingPreparationError::MissingRecipe, error);
+        return catalog;
+    }
+
     struct PreparedFnvCraftingPlan::Impl
     {
         ESM::FormId mStation;

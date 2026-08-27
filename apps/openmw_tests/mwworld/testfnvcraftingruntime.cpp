@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -218,6 +219,51 @@ TEST(FnvCraftingRuntimeTest, PlansAndAppliesUsingInjectedStationAndSkillPolicies
     EXPECT_EQ(MWWorld::commitFnvCraftingTransaction(std::move(*plan)), MWWorld::FnvCraftingCommitResult::Applied);
     EXPECT_EQ(fixture.mInventory.mCounts[refId(kIngredient)], 2);
     EXPECT_EQ(fixture.mInventory.mCounts[refId(kOutput)], 2);
+}
+
+TEST(FnvCraftingRuntimeTest, FreezesCatalogFromInjectedStationMapping)
+{
+    CraftingFixture fixture;
+    auto recipe = *fixture.mRecipe;
+    recipe.mFullName = "Authored recipe";
+    fixture.mRecipe = fixture.mStore.overrideRecord(recipe);
+    auto catalog = MWWorld::prepareFnvCraftingCatalog(
+        { MWWorld::ESM4Game::FalloutNewVegas, &fixture.mStore, fixture.mStation, fixture.mRules });
+    ASSERT_TRUE(catalog);
+    EXPECT_EQ(catalog->mStation, ESM::FormId::fromUint32(kWorkbench));
+    EXPECT_EQ(catalog->mCategory, ESM::FormId::fromUint32(kWorkbenchCategory));
+    ASSERT_EQ(catalog->mEntries.size(), 1u);
+    EXPECT_EQ(catalog->mEntries.front().mRecipe, ESM::FormId::fromUint32(kRecipe));
+    EXPECT_EQ(catalog->mEntries.front().mName, "Authored recipe");
+    EXPECT_TRUE(catalog->mEntries.front().isStaticallySupported());
+    ASSERT_EQ(catalog->mEntries.front().mIngredients.size(), 2u);
+    EXPECT_EQ(catalog->mEntries.front().mIngredients.front().mDelta.mItem, refId(kIngredient));
+    EXPECT_EQ(catalog->mEntries.front().mIngredients.front().mName, refId(kIngredient).toDebugString());
+
+    auto blocked = makeRecipe();
+    blocked.mId = ESM::FormId::fromUint32(kOther);
+    blocked.mConditions.emplace_back();
+    fixture.mStore.overrideRecord(blocked);
+    catalog = MWWorld::prepareFnvCraftingCatalog(
+        { MWWorld::ESM4Game::FalloutNewVegas, &fixture.mStore, fixture.mStation, fixture.mRules });
+    ASSERT_TRUE(catalog);
+    ASSERT_EQ(catalog->mEntries.size(), 2u);
+    const auto blockedEntry = std::ranges::find_if(catalog->mEntries, [](const auto& entry) {
+        return entry.mRecipe == ESM::FormId::fromUint32(kOther);
+    });
+    ASSERT_NE(blockedEntry, catalog->mEntries.end());
+    EXPECT_EQ(blockedEntry->mStaticBlocker, MWWorld::FnvCraftingPreparationError::ConditionalRecipe);
+    EXPECT_FALSE(blockedEntry->isStaticallySupported());
+}
+
+TEST(FnvCraftingRuntimeTest, CatalogRequiresAnInjectedStationRule)
+{
+    CraftingFixture fixture;
+    MWWorld::FnvCraftingPreparationError error = MWWorld::FnvCraftingPreparationError::None;
+    const auto catalog = MWWorld::prepareFnvCraftingCatalog(
+        { MWWorld::ESM4Game::FalloutNewVegas, &fixture.mStore, fixture.mStation, {} }, &error);
+    EXPECT_FALSE(catalog);
+    EXPECT_EQ(error, MWWorld::FnvCraftingPreparationError::UnsupportedStation);
 }
 
 TEST(FnvCraftingRuntimeTest, RequiresTheInjectedStationRuleAndSkillProvider)
