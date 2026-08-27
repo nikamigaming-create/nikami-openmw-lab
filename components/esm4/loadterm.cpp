@@ -41,21 +41,22 @@
 
 namespace
 {
-    constexpr std::uint32_t sEmptySubRecordSize = 0;
-    constexpr std::uint32_t sFormIdSerializedSize = sizeof(std::uint32_t);
-    constexpr std::uint32_t sModelDataSizeSmall = 96;
-    constexpr std::uint32_t sModelDataSizeMedium = 120;
-    constexpr std::uint32_t sModelDataSizeLarge = 144;
-    constexpr std::uint32_t sModelDataSizeLargest = 168;
-    constexpr std::uint32_t sModelTextureSwapsSize = 36;
-    constexpr std::uint32_t sModelTextureSwapsWithTerminatorSize = 37;
-    constexpr std::uint32_t sModelTextureSwapsLargeSize = 137;
-    constexpr std::uint32_t sDataSizeLegacy = 3;
-    constexpr std::uint32_t sDataSizeCurrent = 4;
-    constexpr std::uint8_t sMaxMenuFlags = 3;
-    constexpr std::uint16_t sMaxScriptType = 1;
-    constexpr std::uint16_t sMaxScriptFlags = 1;
-    constexpr std::uint32_t sScriptLocalVariableSerializedSize = 24;
+    constexpr auto sEmptySubRecordSize = ESM4::Fallout::kEmptySubrecordBytes;
+    constexpr auto sFormIdSerializedSize = ESM4::Fallout::kOnDiskFormIdBytes;
+    constexpr auto sModelDataSizeSmall = ESM4::Fallout::kTerminalModelDataSmallSerializedSize;
+    constexpr auto sModelDataSizeMedium = ESM4::Fallout::kTerminalModelDataMediumSerializedSize;
+    constexpr auto sModelDataSizeLarge = ESM4::Fallout::kTerminalModelDataLargeSerializedSize;
+    constexpr auto sModelDataSizeLargest = ESM4::Fallout::kTerminalModelDataLargestSerializedSize;
+    constexpr auto sModelTextureSwapsSize = ESM4::Fallout::kTerminalModelTextureSwapsSerializedSize;
+    constexpr auto sModelTextureSwapsWithTerminatorSize
+        = ESM4::Fallout::kTerminalModelTextureSwapsWithTerminatorSerializedSize;
+    constexpr auto sModelTextureSwapsLargeSize = ESM4::Fallout::kTerminalModelTextureSwapsLargeSerializedSize;
+    constexpr auto sDataSizeLegacy = ESM4::Fallout::kTerminalDataLegacySerializedSize;
+    constexpr auto sDataSizeCurrent = ESM4::Fallout::kTerminalDataCurrentSerializedSize;
+    constexpr auto sMaxMenuFlags = ESM4::Fallout::kTerminalMenuFlagsMaximum;
+    constexpr auto sMaxScriptType = ESM4::Fallout::kTerminalScriptTypeMaximum;
+    constexpr auto sMaxScriptFlags = ESM4::Fallout::kTerminalScriptFlagsMaximum;
+    constexpr auto sScriptLocalVariableSerializedSize = ESM4::Fallout::kTerminalScriptLocalVariableSerializedSize;
 
     enum class TopPhase
     {
@@ -90,8 +91,7 @@ namespace
 
     bool isFalloutNewVegas(const ESM4::Reader& reader)
     {
-        const std::uint32_t version = reader.esmVersion();
-        return version == ESM::VER_132 || version == ESM::VER_133 || version == ESM::VER_134;
+        return ESM4::Fallout::isNewVegasVersion(reader.esmVersion());
     }
 
     [[noreturn]] void fail(std::string_view message)

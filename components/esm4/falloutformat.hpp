@@ -177,6 +177,23 @@ namespace ESM4::Fallout
     inline constexpr std::size_t kSpellEffectRangeOffset = 12;
     inline constexpr std::size_t kSpellEffectActorValueOffset = 16;
 
+    // Fallout 3/New Vegas TERM layouts. These widths and validation bounds
+    // are authored record facts shared by the native terminal reader.
+    inline constexpr std::size_t kTerminalObjectBoundsSerializedSize = 12;
+    inline constexpr std::size_t kTerminalModelDataSmallSerializedSize = 96;
+    inline constexpr std::size_t kTerminalModelDataMediumSerializedSize = 120;
+    inline constexpr std::size_t kTerminalModelDataLargeSerializedSize = 144;
+    inline constexpr std::size_t kTerminalModelDataLargestSerializedSize = 168;
+    inline constexpr std::size_t kTerminalModelTextureSwapsSerializedSize = 36;
+    inline constexpr std::size_t kTerminalModelTextureSwapsWithTerminatorSerializedSize = 37;
+    inline constexpr std::size_t kTerminalModelTextureSwapsLargeSerializedSize = 137;
+    inline constexpr std::size_t kTerminalDataLegacySerializedSize = 3;
+    inline constexpr std::size_t kTerminalDataCurrentSerializedSize = 4;
+    inline constexpr std::uint8_t kTerminalMenuFlagsMaximum = 3;
+    inline constexpr std::uint16_t kTerminalScriptTypeMaximum = 1;
+    inline constexpr std::uint16_t kTerminalScriptFlagsMaximum = 1;
+    inline constexpr std::size_t kTerminalScriptLocalVariableSerializedSize = 24;
+
     inline constexpr std::uint32_t kNoteObjectBoundsBytes = 12;
     inline constexpr std::uint32_t kNoteDataBytes = 1;
     inline constexpr std::uint8_t kNoteDataEmpty = 0;

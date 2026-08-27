@@ -38,6 +38,7 @@
 #include <components/esm/formid.hpp>
 #include <components/esm/path.hpp>
 
+#include "falloutformat.hpp"
 #include "script.hpp"
 
 namespace ESM4
@@ -47,7 +48,7 @@ namespace ESM4
 
     struct Terminal
     {
-        static constexpr std::size_t sObjectBoundsSerializedSize = 12;
+        static constexpr std::size_t sObjectBoundsSerializedSize = Fallout::kTerminalObjectBoundsSerializedSize;
 
         struct Data
         {
