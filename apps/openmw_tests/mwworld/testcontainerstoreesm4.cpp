@@ -122,5 +122,34 @@ namespace MWWorld
             EXPECT_FALSE(store.search(ESM::RefId::formIdRefId(ESM::FormId::fromUint32(kAmmunitionId))).isEmpty());
             EXPECT_FALSE(store.search(ESM::RefId::formIdRefId(ESM::FormId::fromUint32(kKeyId))).isEmpty());
         }
+
+        TEST(ESM4ContainerStoreTest, authoredWeaponAndArmorHealthUsesNativeClassContract)
+        {
+            MWClass::registerClasses();
+
+            ESM4::Weapon weapon;
+            weapon.mData.health = 500;
+            ESM::CellRef weaponCell = ESM::makeBlankCellRef();
+            LiveCellRef<ESM4::Weapon> weaponRef(weaponCell, &weapon);
+            const ConstPtr weaponPtr(&weaponRef);
+
+            EXPECT_TRUE(weaponPtr.getClass().hasItemHealth(weaponPtr));
+            EXPECT_EQ(weaponPtr.getClass().getItemMaxHealth(weaponPtr), 500);
+
+            ESM4::Armor armor;
+            armor.mData.health = 275;
+            ESM::CellRef armorCell = ESM::makeBlankCellRef();
+            LiveCellRef<ESM4::Armor> armorRef(armorCell, &armor);
+            const ConstPtr armorPtr(&armorRef);
+
+            EXPECT_TRUE(armorPtr.getClass().hasItemHealth(armorPtr));
+            EXPECT_EQ(armorPtr.getClass().getItemMaxHealth(armorPtr), 275);
+
+            ESM4::MiscItem misc;
+            ESM::CellRef miscCell = ESM::makeBlankCellRef();
+            LiveCellRef<ESM4::MiscItem> miscRef(miscCell, &misc);
+            const ConstPtr miscPtr(&miscRef);
+            EXPECT_FALSE(miscPtr.getClass().hasItemHealth(miscPtr));
+        }
     }
 }

@@ -1,10 +1,17 @@
 #ifndef GAME_MWCLASS_ESM4BASE_H
 #define GAME_MWCLASS_ESM4BASE_H
 
+#include <algorithm>
+
+#include <components/esm4/loadarmo.hpp>
 #include <components/esm4/inventory.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadtree.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/misc/strings/algorithm.hpp>
+
+#include <limits>
+#include <type_traits>
 
 #include "../mwbase/environment.hpp"
 
@@ -103,6 +110,26 @@ namespace MWClass
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return false; }
+
+        bool hasItemHealth(const MWWorld::ConstPtr& ptr) const override
+        {
+            if constexpr (std::is_same_v<Record, ESM4::Weapon> || std::is_same_v<Record, ESM4::Armor>)
+                return ptr.get<Record>()->mBase->mData.health > 0;
+            else
+                return false;
+        }
+
+        int getItemMaxHealth(const MWWorld::ConstPtr& ptr) const override
+        {
+            if constexpr (std::is_same_v<Record, ESM4::Weapon> || std::is_same_v<Record, ESM4::Armor>)
+            {
+                const std::uint32_t health = ptr.get<Record>()->mBase->mData.health;
+                return static_cast<int>(
+                    std::min(health, static_cast<std::uint32_t>(std::numeric_limits<int>::max())));
+            }
+            else
+                return ESM4Base<Record>::getItemMaxHealth(ptr);
+        }
 
         std::string_view getName(const MWWorld::ConstPtr& ptr) const override { return {}; }
 
