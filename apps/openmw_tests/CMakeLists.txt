@@ -15,6 +15,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testesm4factionstore.cpp
     mwworld/testesm4recipestore.cpp
     mwworld/testesm4rcpestore.cpp
+    mwworld/testfnvcraftingruntime.cpp
 
     mwdialogue/testkeywordsearch.cpp
 

@@ -74,6 +74,10 @@ namespace ESM4::Fallout
     inline constexpr std::uint32_t kRecipeDefaultRequiredSkillLevel = 0;
     inline constexpr std::uint32_t kRecipeDefaultQuantity = 0;
     inline constexpr std::uint32_t kRecipeMinimumQuantity = 1;
+    // FNV actor-value IDs used by the native skill gate. These are authored
+    // protocol values, not tunable gameplay thresholds.
+    inline constexpr std::uint32_t kRecipeSkillActorValueBegin = 32;
+    inline constexpr std::uint32_t kRecipeSkillActorValueEnd = 45;
 
     inline constexpr std::uint32_t kNoteObjectBoundsBytes = 12;
     inline constexpr std::uint32_t kNoteDataBytes = 1;
