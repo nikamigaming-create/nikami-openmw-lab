@@ -83,6 +83,18 @@ namespace MWWorld
             ESM4::Key key;
             ESM4::Light light;
 
+            ammunition.mData.mWeight = 1.f;
+            armor.mData.weight = 2.f;
+            miscellaneous.mData.weight = 3.f;
+            weapon.mData.weight = 4.f;
+            potion.mData.weight = 5.f;
+            book.mData.weight = 6.f;
+            clothing.mData.weight = 7.f;
+            ingredient.mData.weight = 8.f;
+            itemMod.mData.mWeight = 9.f;
+            key.mData.weight = 10.f;
+            light.mData.weight = 11.f;
+
             TestContainerStore store;
             store.addRecord(ammunition, kAmmunitionId, 1);
             store.addRecord(armor, kArmorId, 2);
@@ -106,6 +118,9 @@ namespace MWWorld
 
             EXPECT_EQ(recordTypes.size(), 11u);
             EXPECT_EQ(totalCount, 66);
+            EXPECT_FLOAT_EQ(store.getWeight(), 506.f);
+            EXPECT_FALSE(store.search(ESM::RefId::formIdRefId(ESM::FormId::fromUint32(kAmmunitionId))).isEmpty());
+            EXPECT_FALSE(store.search(ESM::RefId::formIdRefId(ESM::FormId::fromUint32(kKeyId))).isEmpty());
         }
     }
 }
