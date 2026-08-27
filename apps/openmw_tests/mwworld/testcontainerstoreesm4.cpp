@@ -1,4 +1,5 @@
 #include "apps/openmw/mwclass/classes.hpp"
+#include "apps/openmw/mwworld/class.hpp"
 #include "apps/openmw/mwworld/containerstore.hpp"
 #include "apps/openmw/mwworld/livecellref.hpp"
 
