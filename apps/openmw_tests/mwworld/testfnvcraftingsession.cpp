@@ -163,6 +163,9 @@ TEST(FnvCraftingSessionTest, StopsAtInjectedRedrawLimit)
 
     presenter.mPages = { { MWWorld::FnvCraftingSessionPageSelection::Entry, 0 },
         { MWWorld::FnvCraftingSessionPageSelection::Entry, 0 } };
+    presenter.mPage = 0;
+    presenter.mDecision = 0;
+    presenter.mNotice = 0;
     presenter.mDecisions = { MWWorld::FnvCraftingSessionEntryDecision::Back,
         MWWorld::FnvCraftingSessionEntryDecision::Back };
     EXPECT_EQ(MWWorld::runPreparedFnvCraftingSession(catalog, { kPageSize, 2 }, presenter, backend),
