@@ -79,6 +79,20 @@ namespace ESM4::Fallout
     inline constexpr std::uint32_t kRecipeSkillActorValueBegin = 32;
     inline constexpr std::uint32_t kRecipeSkillActorValueEnd = 45;
 
+    // Fallout 3/New Vegas LIP container facts. These values describe the
+    // authored binary format and are shared by the decoder and its API.
+    inline constexpr std::uint32_t kLipVersion = 1;
+    inline constexpr std::uint32_t kLipCompressedFlag = 0x1;
+    inline constexpr std::uint32_t kLipBigEndianFlag = 0x2;
+    inline constexpr std::uint32_t kLipSupportedFlags = kLipCompressedFlag | kLipBigEndianFlag;
+    inline constexpr std::uint32_t kLipUncompressedPayloadMarker = 2;
+    inline constexpr std::size_t kLipFileHeaderBytes = 3 * sizeof(std::uint32_t);
+    inline constexpr std::size_t kLipDecodedHeaderBytes = 3 * sizeof(std::uint32_t);
+    inline constexpr std::size_t kLipStoredSizeOverheadBytes = 16;
+    inline constexpr std::size_t kLipImplicitTailBytes = 4;
+    inline constexpr std::size_t kLipTargetCount = 33;
+    inline constexpr float kLipFramesPerSecond = 30.f;
+
     inline constexpr std::uint32_t kNoteObjectBoundsBytes = 12;
     inline constexpr std::uint32_t kNoteDataBytes = 1;
     inline constexpr std::uint8_t kNoteDataEmpty = 0;

@@ -8,6 +8,8 @@
 #include <string_view>
 #include <vector>
 
+#include "falloutformat.hpp"
+
 namespace ESM4
 {
     /// Fallout 3/New Vegas LIP animation curves.
@@ -17,8 +19,8 @@ namespace ESM4
     class LipAnimation
     {
     public:
-        static constexpr std::size_t sTargetCount = 33;
-        static constexpr float sFramesPerSecond = 30.f;
+        static constexpr std::size_t sTargetCount = Fallout::kLipTargetCount;
+        static constexpr float sFramesPerSecond = Fallout::kLipFramesPerSecond;
 
         // Resource-safety defaults are injectable for callers that own a
         // different loading policy; the file-format constants above are not.

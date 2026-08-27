@@ -14,16 +14,6 @@ namespace ESM4
 {
     namespace
     {
-        constexpr std::uint32_t kLipVersion = 1;
-        constexpr std::uint32_t kCompressedFlag = 0x1;
-        constexpr std::uint32_t kBigEndianFlag = 0x2;
-        constexpr std::uint32_t kSupportedFlags = kCompressedFlag | kBigEndianFlag;
-        constexpr std::uint32_t kUncompressedPayloadMarker = 2;
-        constexpr std::size_t kFileHeaderBytes = 3 * sizeof(std::uint32_t);
-        constexpr std::size_t kDecodedHeaderBytes = 3 * sizeof(std::uint32_t);
-        constexpr std::size_t kStoredSizeOverheadBytes = 16;
-        constexpr std::size_t kImplicitTailBytes = 4;
-
         constexpr std::array<std::string_view, LipAnimation::sTargetCount> kTargetNames{
             "Aah", "BigAah", "BMP", "ChJSh", "DST", "Eee", "Eh", "FV", "I", "K", "N", "Oh",
             "OohQ", "R", "Th", "W", "BlinkLeft", "BlinkRight", "BrowDownLeft", "BrowDownRight",
@@ -54,7 +44,7 @@ namespace ESM4
         {
             std::vector<std::uint8_t> result;
             result.reserve(expectedSize);
-            for (std::size_t offset = kFileHeaderBytes; offset < file.size();)
+            for (std::size_t offset = Fallout::kLipFileHeaderBytes; offset < file.size();)
             {
                 const std::uint8_t value = file[offset++];
                 if (value != 0)
@@ -100,32 +90,33 @@ namespace ESM4
         const std::vector<std::uint8_t> file{
             std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()
         };
-        if (file.size() < kFileHeaderBytes)
+        if (file.size() < Fallout::kLipFileHeaderBytes)
             throw std::runtime_error("Truncated Fallout LIP header");
 
         const std::uint32_t version = readUint32(file, 0);
         const std::uint32_t storedSize = readUint32(file, sizeof(std::uint32_t));
         const std::uint32_t flags = readUint32(file, 2 * sizeof(std::uint32_t));
-        if (version != kLipVersion)
+        if (version != Fallout::kLipVersion)
             throw std::runtime_error("Unsupported Fallout LIP version");
-        if ((flags & kBigEndianFlag) != 0)
+        if ((flags & Fallout::kLipBigEndianFlag) != 0)
             throw std::runtime_error("Big-endian Fallout LIP is not supported");
-        if ((flags & ~kSupportedFlags) != 0)
+        if ((flags & ~Fallout::kLipSupportedFlags) != 0)
             throw std::runtime_error("Unsupported Fallout LIP flags");
-        if (storedSize < kStoredSizeOverheadBytes || storedSize > limits.mMaxDecodedBytes)
+        if (storedSize < Fallout::kLipStoredSizeOverheadBytes || storedSize > limits.mMaxDecodedBytes)
             throw std::runtime_error("Invalid Fallout LIP decoded size");
 
         std::vector<std::uint8_t> decoded;
-        if ((flags & kCompressedFlag) != 0)
-            decoded = decodeZeroRuns(file, storedSize - kStoredSizeOverheadBytes);
+        if ((flags & Fallout::kLipCompressedFlag) != 0)
+            decoded = decodeZeroRuns(file, storedSize - Fallout::kLipStoredSizeOverheadBytes);
         else
         {
-            if (file.size() <= kFileHeaderBytes || file[kFileHeaderBytes] != kUncompressedPayloadMarker)
+            if (file.size() <= Fallout::kLipFileHeaderBytes
+                || file[Fallout::kLipFileHeaderBytes] != Fallout::kLipUncompressedPayloadMarker)
                 throw std::runtime_error("Invalid uncompressed Fallout LIP payload");
-            decoded.assign(file.begin() + kFileHeaderBytes + sizeof(std::uint8_t), file.end());
+            decoded.assign(file.begin() + Fallout::kLipFileHeaderBytes + sizeof(std::uint8_t), file.end());
         }
 
-        if (decoded.size() < kDecodedHeaderBytes)
+        if (decoded.size() < Fallout::kLipDecodedHeaderBytes)
             throw std::runtime_error("Truncated Fallout LIP animation header");
         const std::uint32_t frameCount = readUint32(decoded, 0);
         const std::int32_t startFrame = static_cast<std::int32_t>(readUint32(decoded, sizeof(std::uint32_t)));
@@ -134,18 +125,19 @@ namespace ESM4
             throw std::runtime_error("Invalid Fallout LIP frame count");
 
         constexpr std::size_t kFrameBytes = LipAnimation::sTargetCount * sizeof(float);
-        if (frameCount > (limits.mMaxDecodedBytes - kDecodedHeaderBytes) / kFrameBytes)
+        if (frameCount > (limits.mMaxDecodedBytes - Fallout::kLipDecodedHeaderBytes) / kFrameBytes)
             throw std::runtime_error("Fallout LIP frame data exceeds decode limit");
-        const std::size_t requiredSize = kDecodedHeaderBytes + static_cast<std::size_t>(frameCount) * kFrameBytes;
-        if (decoded.size() > limits.mMaxDecodedBytes - kImplicitTailBytes
-            || decoded.size() + kImplicitTailBytes < requiredSize || decoded.size() > requiredSize)
+        const std::size_t requiredSize
+            = Fallout::kLipDecodedHeaderBytes + static_cast<std::size_t>(frameCount) * kFrameBytes;
+        if (decoded.size() > limits.mMaxDecodedBytes - Fallout::kLipImplicitTailBytes
+            || decoded.size() + Fallout::kLipImplicitTailBytes < requiredSize || decoded.size() > requiredSize)
             throw std::runtime_error("Unexpected Fallout LIP target payload size");
         decoded.resize(requiredSize, 0);
 
         LipAnimation result;
         result.mStartFrame = startFrame;
         result.mFrames.resize(frameCount);
-        std::size_t offset = kDecodedHeaderBytes;
+        std::size_t offset = Fallout::kLipDecodedHeaderBytes;
         for (auto& frame : result.mFrames)
         {
             for (float& value : frame)
