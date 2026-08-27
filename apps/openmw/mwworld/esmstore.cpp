@@ -410,6 +410,7 @@ namespace MWWorld
             case ESM::REC_FLOR4:
             case ESM::REC_FURN4:
             case ESM::REC_IMOD4:
+            case ESM::REC_KEYM4:
             case ESM::REC_IPCT4:
             case ESM::REC_IPDS4:
             case ESM::REC_INGR4:

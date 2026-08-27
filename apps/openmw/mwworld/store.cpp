@@ -1271,6 +1271,7 @@ template class MWWorld::TypedDynamicStore<ESM4::Hair>;
 template class MWWorld::TypedDynamicStore<ESM4::HeadPart>;
 template class MWWorld::TypedDynamicStore<ESM4::Ingredient>;
 template class MWWorld::TypedDynamicStore<ESM4::ItemMod>;
+template class MWWorld::TypedDynamicStore<ESM4::Key>;
 template class MWWorld::TypedDynamicStore<ESM4::Land>;
 template class MWWorld::TypedDynamicStore<ESM4::LandTexture>;
 template class MWWorld::TypedDynamicStore<ESM4::LevelledCreature>;

@@ -1,5 +1,9 @@
 #include "manualref.hpp"
 #include <components/esm/records.hpp>
+#include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
+#include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadstat.hpp>
 
 #include "esmstore.hpp"
@@ -79,6 +83,14 @@ namespace
                 return func(store.get<ESM4::Static>());
             case ESM::REC_TERM4:
                 return func(store.get<ESM4::Terminal>());
+            case ESM::REC_IMOD4:
+                return func(store.get<ESM4::ItemMod>());
+            case ESM::REC_INGR4:
+                return func(store.get<ESM4::Ingredient>());
+            case ESM::REC_KEYM4:
+                return func(store.get<ESM4::Key>());
+            case ESM::REC_LIGH4:
+                return func(store.get<ESM4::Light>());
             case 0:
                 throw std::logic_error(
                     "failed to create manual cell ref for " + name.toDebugString() + " (unknown ID)");
