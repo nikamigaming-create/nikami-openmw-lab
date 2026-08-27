@@ -28,6 +28,7 @@
 
 #include <stdexcept>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 //#include "writer.hpp"
 
@@ -45,12 +46,12 @@ void ESM4::SoundReference::load(ESM4::Reader& reader)
                 reader.getZString(mEditorId);
                 break;
             case ESM::fourCC("CTDA"):
-                reader.get(&mTargetCondition, 20);
+                reader.get(&mTargetCondition, Fallout::kTargetConditionFalloutBytes);
                 reader.get(mTargetCondition.runOn);
                 reader.get(mTargetCondition.reference);
                 if (mTargetCondition.reference)
                     reader.adjustFormId(mTargetCondition.reference);
-                reader.skipSubRecordData(4); // unknown
+                reader.skipSubRecordData(Fallout::kTargetConditionTes5TailBytes); // unknown
                 break;
             case ESM::fourCC("GNAM"):
                 reader.getFormId(mSoundCategory);

@@ -13,9 +13,10 @@ upstream OpenMW numerics. A literal is acceptable only when it is one of:
 
 `components/esm4/falloutformat.hpp` is the single owner for Fallout ESM4 and
 LIP layout facts used by the public slices. This includes record widths,
-version gates, FormID widths, masks, LIP container flags/header sizes, and
-authored LIP target count/frame rate. The LIP decoder now consumes those
-shared constants instead of maintaining a second local table.
+version gates, FormID widths, masks, LIP container flags/header sizes,
+authored LIP target count/frame rate, and CTDA target-condition variants. The
+LIP and CTDA decoders now consume those shared constants instead of maintaining
+second local tables.
 
 Runtime policy is injected at its boundary: collision behavior uses
 `NifBullet::FalloutCollisionFilterConfig`; crafting station/category mapping

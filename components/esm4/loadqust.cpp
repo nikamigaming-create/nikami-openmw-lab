@@ -29,6 +29,7 @@
 #include <cstring>
 #include <stdexcept>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 //#include "writer.hpp"
 
@@ -71,14 +72,14 @@ void ESM4::Quest::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("CTDA"): // FIXME: how to detect if 1st/2nd param is a formid?
             {
-                if (subHdr.dataSize == 24) // TES4
+                if (subHdr.dataSize == Fallout::kTargetConditionTes4Bytes) // TES4
                 {
                     TargetCondition cond;
-                    reader.get(&cond, 24);
+                    reader.get(&cond, Fallout::kTargetConditionTes4Bytes);
                     cond.reference = 0; // unused in TES4 but keep it clean
                     mTargetConditions.push_back(cond);
                 }
-                else if (subHdr.dataSize == 28)
+                else if (subHdr.dataSize == Fallout::kTargetConditionNativeBytes)
                 {
                     TargetCondition cond;
                     reader.get(cond); // FO3/FONV

@@ -93,6 +93,15 @@ namespace ESM4::Fallout
     inline constexpr std::size_t kLipTargetCount = 33;
     inline constexpr float kLipFramesPerSecond = 30.f;
 
+    // CTDA target-condition payload variants used by the Fallout/TES loaders.
+    // The widths and tail are authored container facts, not runtime policy.
+    inline constexpr std::uint32_t kTargetConditionTes4Bytes = 24;
+    inline constexpr std::uint32_t kTargetConditionFalloutBytes = 20;
+    inline constexpr std::uint32_t kTargetConditionNativeBytes = 7 * sizeof(std::uint32_t);
+    inline constexpr std::uint32_t kTargetConditionTes5PrefixBytes = 20;
+    inline constexpr std::uint32_t kTargetConditionTes5Bytes = 36;
+    inline constexpr std::uint32_t kTargetConditionTes5TailBytes = 4;
+
     inline constexpr std::uint32_t kNoteObjectBoundsBytes = 12;
     inline constexpr std::uint32_t kNoteDataBytes = 1;
     inline constexpr std::uint8_t kNoteDataEmpty = 0;

@@ -31,6 +31,7 @@
 
 #include <components/esm/refid.hpp>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 //#include "writer.hpp"
 
@@ -80,11 +81,11 @@ void ESM4::DialogInfo::load(ESM4::Reader& reader)
                 break; // not in TES4
             case ESM::fourCC("CTDA"): // FIXME: how to detect if 1st/2nd param is a formid?
             {
-                if (subHdr.dataSize == 24) // TES4
-                    reader.get(&mTargetCondition, 24);
-                else if (subHdr.dataSize == 20) // FO3
-                    reader.get(&mTargetCondition, 20);
-                else if (subHdr.dataSize == 28)
+                if (subHdr.dataSize == Fallout::kTargetConditionTes4Bytes) // TES4
+                    reader.get(&mTargetCondition, Fallout::kTargetConditionTes4Bytes);
+                else if (subHdr.dataSize == Fallout::kTargetConditionFalloutBytes) // FO3
+                    reader.get(&mTargetCondition, Fallout::kTargetConditionFalloutBytes);
+                else if (subHdr.dataSize == Fallout::kTargetConditionNativeBytes)
                 {
                     reader.get(mTargetCondition); // FO3/FONV
                     if (mTargetCondition.reference)
@@ -92,14 +93,14 @@ void ESM4::DialogInfo::load(ESM4::Reader& reader)
                 }
                 else // TES5
                 {
-                    reader.get(&mTargetCondition, 20);
-                    if (subHdr.dataSize == 36)
+                    reader.get(&mTargetCondition, Fallout::kTargetConditionTes5PrefixBytes);
+                    if (subHdr.dataSize == Fallout::kTargetConditionTes5Bytes)
                         reader.getFormId(mParam3);
                     reader.get(mTargetCondition.runOn);
                     reader.get(mTargetCondition.reference);
                     if (mTargetCondition.reference)
                         reader.adjustFormId(mTargetCondition.reference);
-                    reader.skipSubRecordData(4); // unknown
+                    reader.skipSubRecordData(Fallout::kTargetConditionTes5TailBytes); // unknown
                 }
 
                 break;

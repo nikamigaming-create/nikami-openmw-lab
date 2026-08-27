@@ -61,7 +61,7 @@ namespace
 
     ESM4::TargetCondition readCondition(ESM4::Reader& reader)
     {
-        requireSize(reader.subRecordHeader(), static_cast<std::uint32_t>(sizeof(ESM4::TargetCondition)));
+        requireSize(reader.subRecordHeader(), ESM4::Fallout::kTargetConditionNativeBytes);
         ESM4::TargetCondition condition;
         if (!ESM4::loadTargetCondition(reader, condition))
             fail("could not read CTDA");

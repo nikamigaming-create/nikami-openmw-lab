@@ -4,18 +4,13 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 
 namespace
 {
-    // CTDA payload sizes are format-defined variants, not parser policy. The
-    // named constants make the supported layouts explicit at the call site.
-    constexpr std::size_t sTes4TargetConditionSize = 24;
-    constexpr std::size_t sFo3TargetConditionSize = 20;
     constexpr std::size_t sFnvTargetConditionSize = sizeof(ESM4::TargetCondition);
-    constexpr std::size_t sTes5TargetConditionPrefixSize = 20;
-    constexpr std::size_t sTes5TargetConditionSize = 36;
-    constexpr std::size_t sTes5UnknownTailSize = 4;
+    static_assert(sFnvTargetConditionSize == ESM4::Fallout::kTargetConditionNativeBytes);
 }
 
 bool ESM4::loadTargetCondition(Reader& reader, TargetCondition& condition, ESM::FormId* parameter3)
@@ -27,18 +22,18 @@ bool ESM4::loadTargetCondition(Reader& reader, TargetCondition& condition, ESM::
     bool loaded = false;
     switch (reader.subRecordHeader().dataSize)
     {
-        case sTes4TargetConditionSize:
-            loaded = reader.get(&condition, sTes4TargetConditionSize);
+        case Fallout::kTargetConditionTes4Bytes:
+            loaded = reader.get(&condition, Fallout::kTargetConditionTes4Bytes);
             break;
-        case sFo3TargetConditionSize:
-            loaded = reader.get(&condition, sFo3TargetConditionSize);
+        case Fallout::kTargetConditionFalloutBytes:
+            loaded = reader.get(&condition, Fallout::kTargetConditionFalloutBytes);
             break;
         case sFnvTargetConditionSize:
             loaded = reader.getExact(condition);
             break;
-        case sTes5TargetConditionSize:
+        case Fallout::kTargetConditionTes5Bytes:
         {
-            loaded = reader.get(&condition, sTes5TargetConditionPrefixSize);
+            loaded = reader.get(&condition, Fallout::kTargetConditionTes5PrefixBytes);
             ESM::FormId32 rawParameter3 = 0;
             if (loaded)
                 loaded = reader.getExact(rawParameter3);
@@ -53,7 +48,7 @@ bool ESM4::loadTargetCondition(Reader& reader, TargetCondition& condition, ESM::
             if (loaded)
                 loaded = reader.getExact(condition.reference);
             if (loaded)
-                reader.skipSubRecordData(sTes5UnknownTailSize);
+                reader.skipSubRecordData(Fallout::kTargetConditionTes5TailBytes);
             break;
         }
         default:

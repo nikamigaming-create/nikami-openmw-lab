@@ -35,6 +35,7 @@
 #include <utility>
 #include <vector>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 // #include "writer.hpp"
 
@@ -54,7 +55,6 @@ namespace
     constexpr std::uint8_t sMaxMenuFlags = 3;
     constexpr std::uint16_t sMaxScriptType = 1;
     constexpr std::uint16_t sMaxScriptFlags = 1;
-    constexpr std::uint32_t sTargetConditionSerializedSize = 28;
     constexpr std::uint32_t sScriptLocalVariableSerializedSize = 24;
 
     enum class TopPhase
@@ -154,7 +154,7 @@ namespace
 
     ESM4::TargetCondition readCondition(ESM4::Reader& reader)
     {
-        requireSize(reader.subRecordHeader(), sTargetConditionSerializedSize);
+        requireSize(reader.subRecordHeader(), ESM4::Fallout::kTargetConditionNativeBytes);
         ESM4::TargetCondition condition{};
         readExact(reader, condition, "CTDA");
 
