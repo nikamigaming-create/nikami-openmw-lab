@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -49,7 +50,7 @@ namespace
         std::size_t mDecision{};
         std::size_t mNotice{};
 
-        FnvCraftingSessionPageRequest selectPage(const MWWorld::PreparedFnvCraftingCatalog&, std::size_t page,
+        MWWorld::FnvCraftingSessionPageRequest selectPage(const MWWorld::PreparedFnvCraftingCatalog&, std::size_t page,
             std::size_t pageCount, std::span<const MWWorld::PreparedFnvCraftingCatalogEntry> entries) override
         {
             mPageNumbers.push_back(page);
