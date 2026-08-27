@@ -1,7 +1,7 @@
 # OpenMW Fallout lab zero-magic audit — 2026-08-27
 
 This audit covers the Fallout-specific production and test surface added to
-the clean public lane through `5b22b49243`. It does not rewrite unrelated
+the clean public lane through the current actor-effect format-owner slice. It does not rewrite unrelated
 upstream OpenMW numerics. A literal is acceptable only when it is one of:
 
 - a named Fallout file-format fact or protocol enum;
@@ -15,9 +15,10 @@ upstream OpenMW numerics. A literal is acceptable only when it is one of:
 LIP layout facts used by the public slices. This includes record widths,
 version gates, FormID widths, masks, LIP container flags/header sizes,
 authored LIP target count/frame rate, CTDA target-condition variants, Fallout
-WTHR DATA payload offsets, and CLMT weather-list/timing fields. The LIP, CTDA,
-WTHR, and CLMT decoders now consume those shared constants instead of
-maintaining second local tables.
+WTHR DATA payload offsets, CLMT weather-list/timing fields, and MGEF/SPEL
+actor-effect payload widths and offsets. The LIP, CTDA, WTHR, CLMT, MGEF, and
+SPEL decoders now consume those shared constants instead of maintaining second
+local tables.
 
 Runtime policy is injected at its boundary: collision behavior uses
 `NifBullet::FalloutCollisionFilterConfig`; crafting station/category mapping

@@ -10,6 +10,8 @@
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
 
+#include "falloutformat.hpp"
+
 namespace ESM4
 {
     class Reader;
@@ -21,25 +23,29 @@ namespace ESM4
         // Fallout 3/New Vegas MGEF.DATA is a fixed native layout. Keep the
         // offsets named so binary parsing cannot silently drift into a field
         // at an unexplained byte position.
-        static constexpr std::size_t sDataSerializedSize = 72;
-        static constexpr std::size_t sDataFlagsOffset = 0;
-        static constexpr std::size_t sDataBaseCostOffset = 4;
-        static constexpr std::size_t sDataAssociatedItemOffset = 8;
-        static constexpr std::size_t sDataSchoolOffset = 12;
-        static constexpr std::size_t sDataResistanceActorValueOffset = 16;
-        static constexpr std::size_t sDataCounterEffectCountOffset = 20;
-        static constexpr std::size_t sDataLightOffset = 24;
-        static constexpr std::size_t sDataProjectileSpeedOffset = 28;
-        static constexpr std::size_t sDataEffectShaderOffset = 32;
-        static constexpr std::size_t sDataObjectDisplayShaderOffset = 36;
-        static constexpr std::size_t sDataEffectSoundOffset = 40;
-        static constexpr std::size_t sDataBoltSoundOffset = 44;
-        static constexpr std::size_t sDataHitSoundOffset = 48;
-        static constexpr std::size_t sDataAreaSoundOffset = 52;
-        static constexpr std::size_t sDataEnchantmentFactorOffset = 56;
-        static constexpr std::size_t sDataBarterFactorOffset = 60;
-        static constexpr std::size_t sDataArchetypeOffset = 64;
-        static constexpr std::size_t sDataActorValueOffset = 68;
+        static constexpr std::size_t sDataSerializedSize = Fallout::kMagicEffectDataSerializedSize;
+        static constexpr std::size_t sDataFlagsOffset = Fallout::kMagicEffectDataFlagsOffset;
+        static constexpr std::size_t sDataBaseCostOffset = Fallout::kMagicEffectDataBaseCostOffset;
+        static constexpr std::size_t sDataAssociatedItemOffset = Fallout::kMagicEffectDataAssociatedItemOffset;
+        static constexpr std::size_t sDataSchoolOffset = Fallout::kMagicEffectDataSchoolOffset;
+        static constexpr std::size_t sDataResistanceActorValueOffset
+            = Fallout::kMagicEffectDataResistanceActorValueOffset;
+        static constexpr std::size_t sDataCounterEffectCountOffset
+            = Fallout::kMagicEffectDataCounterEffectCountOffset;
+        static constexpr std::size_t sDataLightOffset = Fallout::kMagicEffectDataLightOffset;
+        static constexpr std::size_t sDataProjectileSpeedOffset = Fallout::kMagicEffectDataProjectileSpeedOffset;
+        static constexpr std::size_t sDataEffectShaderOffset = Fallout::kMagicEffectDataEffectShaderOffset;
+        static constexpr std::size_t sDataObjectDisplayShaderOffset
+            = Fallout::kMagicEffectDataObjectDisplayShaderOffset;
+        static constexpr std::size_t sDataEffectSoundOffset = Fallout::kMagicEffectDataEffectSoundOffset;
+        static constexpr std::size_t sDataBoltSoundOffset = Fallout::kMagicEffectDataBoltSoundOffset;
+        static constexpr std::size_t sDataHitSoundOffset = Fallout::kMagicEffectDataHitSoundOffset;
+        static constexpr std::size_t sDataAreaSoundOffset = Fallout::kMagicEffectDataAreaSoundOffset;
+        static constexpr std::size_t sDataEnchantmentFactorOffset
+            = Fallout::kMagicEffectDataEnchantmentFactorOffset;
+        static constexpr std::size_t sDataBarterFactorOffset = Fallout::kMagicEffectDataBarterFactorOffset;
+        static constexpr std::size_t sDataArchetypeOffset = Fallout::kMagicEffectDataArchetypeOffset;
+        static constexpr std::size_t sDataActorValueOffset = Fallout::kMagicEffectDataActorValueOffset;
 
         enum Flags : std::uint32_t
         {

@@ -137,6 +137,40 @@ namespace ESM4::Fallout
     inline constexpr std::uint8_t kClimateSecundaFlag = 0x40;
     inline constexpr std::uint8_t kClimateMasserFlag = 0x80;
 
+    // Fallout 3/New Vegas actor-effect layouts. These widths and offsets are
+    // authored record facts shared by the MGEF and SPEL readers.
+    inline constexpr std::size_t kMagicEffectDataSerializedSize = 72;
+    inline constexpr std::size_t kMagicEffectDataFlagsOffset = 0;
+    inline constexpr std::size_t kMagicEffectDataBaseCostOffset = 4;
+    inline constexpr std::size_t kMagicEffectDataAssociatedItemOffset = 8;
+    inline constexpr std::size_t kMagicEffectDataSchoolOffset = 12;
+    inline constexpr std::size_t kMagicEffectDataResistanceActorValueOffset = 16;
+    inline constexpr std::size_t kMagicEffectDataCounterEffectCountOffset = 20;
+    inline constexpr std::size_t kMagicEffectDataLightOffset = 24;
+    inline constexpr std::size_t kMagicEffectDataProjectileSpeedOffset = 28;
+    inline constexpr std::size_t kMagicEffectDataEffectShaderOffset = 32;
+    inline constexpr std::size_t kMagicEffectDataObjectDisplayShaderOffset = 36;
+    inline constexpr std::size_t kMagicEffectDataEffectSoundOffset = 40;
+    inline constexpr std::size_t kMagicEffectDataBoltSoundOffset = 44;
+    inline constexpr std::size_t kMagicEffectDataHitSoundOffset = 48;
+    inline constexpr std::size_t kMagicEffectDataAreaSoundOffset = 52;
+    inline constexpr std::size_t kMagicEffectDataEnchantmentFactorOffset = 56;
+    inline constexpr std::size_t kMagicEffectDataBarterFactorOffset = 60;
+    inline constexpr std::size_t kMagicEffectDataArchetypeOffset = 64;
+    inline constexpr std::size_t kMagicEffectDataActorValueOffset = 68;
+
+    inline constexpr std::size_t kSpellDataSerializedSize = 16;
+    inline constexpr std::size_t kSpellDataTypeOffset = 0;
+    inline constexpr std::size_t kSpellDataCostOffset = 4;
+    inline constexpr std::size_t kSpellDataLevelOffset = 8;
+    inline constexpr std::size_t kSpellDataFlagsOffset = 12;
+    inline constexpr std::size_t kSpellEffectSerializedSize = 20;
+    inline constexpr std::size_t kSpellEffectMagnitudeOffset = 0;
+    inline constexpr std::size_t kSpellEffectAreaOffset = 4;
+    inline constexpr std::size_t kSpellEffectDurationOffset = 8;
+    inline constexpr std::size_t kSpellEffectRangeOffset = 12;
+    inline constexpr std::size_t kSpellEffectActorValueOffset = 16;
+
     inline constexpr std::uint32_t kNoteObjectBoundsBytes = 12;
     inline constexpr std::uint32_t kNoteDataBytes = 1;
     inline constexpr std::uint8_t kNoteDataEmpty = 0;

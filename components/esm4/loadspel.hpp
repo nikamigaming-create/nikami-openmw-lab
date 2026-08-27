@@ -10,6 +10,7 @@
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
 
+#include "falloutformat.hpp"
 #include "script.hpp"
 
 namespace ESM4
@@ -23,18 +24,18 @@ namespace ESM4
         // Fallout 3/New Vegas serializes SPIT and EFIT as fixed-size native
         // records. Named offsets keep the parser tied to the documented
         // layout instead of scattering unexplained literals through it.
-        static constexpr std::size_t sDataSerializedSize = 16;
-        static constexpr std::size_t sDataTypeOffset = 0;
-        static constexpr std::size_t sDataCostOffset = 4;
-        static constexpr std::size_t sDataLevelOffset = 8;
-        static constexpr std::size_t sDataFlagsOffset = 12;
+        static constexpr std::size_t sDataSerializedSize = Fallout::kSpellDataSerializedSize;
+        static constexpr std::size_t sDataTypeOffset = Fallout::kSpellDataTypeOffset;
+        static constexpr std::size_t sDataCostOffset = Fallout::kSpellDataCostOffset;
+        static constexpr std::size_t sDataLevelOffset = Fallout::kSpellDataLevelOffset;
+        static constexpr std::size_t sDataFlagsOffset = Fallout::kSpellDataFlagsOffset;
 
-        static constexpr std::size_t sEffectSerializedSize = 20;
-        static constexpr std::size_t sEffectMagnitudeOffset = 0;
-        static constexpr std::size_t sEffectAreaOffset = 4;
-        static constexpr std::size_t sEffectDurationOffset = 8;
-        static constexpr std::size_t sEffectRangeOffset = 12;
-        static constexpr std::size_t sEffectActorValueOffset = 16;
+        static constexpr std::size_t sEffectSerializedSize = Fallout::kSpellEffectSerializedSize;
+        static constexpr std::size_t sEffectMagnitudeOffset = Fallout::kSpellEffectMagnitudeOffset;
+        static constexpr std::size_t sEffectAreaOffset = Fallout::kSpellEffectAreaOffset;
+        static constexpr std::size_t sEffectDurationOffset = Fallout::kSpellEffectDurationOffset;
+        static constexpr std::size_t sEffectRangeOffset = Fallout::kSpellEffectRangeOffset;
+        static constexpr std::size_t sEffectActorValueOffset = Fallout::kSpellEffectActorValueOffset;
 
         enum class Type : std::uint32_t
         {
