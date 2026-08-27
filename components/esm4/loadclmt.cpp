@@ -7,6 +7,7 @@
 
 #include <components/esm/fourcc.hpp>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 
 namespace
@@ -21,13 +22,6 @@ namespace
     constexpr std::uint32_t sModelTexture = ESM::fourCC("MODT");
     constexpr std::uint32_t sModelAlternateTextures = ESM::fourCC("MODS");
     constexpr std::uint32_t sModelData = ESM::fourCC("MODD");
-    constexpr std::size_t sTimingSunriseBegin = 0;
-    constexpr std::size_t sTimingSunriseEnd = 1;
-    constexpr std::size_t sTimingSunsetBegin = 2;
-    constexpr std::size_t sTimingSunsetEnd = 3;
-    constexpr std::size_t sTimingVolatility = 4;
-    constexpr std::size_t sTimingMoonInfo = 5;
-
     [[noreturn]] void failSize(
         ESM4::Reader& reader, std::string_view field, std::size_t expected, std::size_t actual)
     {
@@ -92,12 +86,12 @@ void ESM4::Climate::load(Reader& reader)
 
                 std::array<std::uint8_t, sTimingSerializedSize> raw{};
                 reader.get(raw.data(), raw.size());
-                mTiming.mSunriseBegin = raw[sTimingSunriseBegin];
-                mTiming.mSunriseEnd = raw[sTimingSunriseEnd];
-                mTiming.mSunsetBegin = raw[sTimingSunsetBegin];
-                mTiming.mSunsetEnd = raw[sTimingSunsetEnd];
-                mTiming.mVolatility = raw[sTimingVolatility];
-                mTiming.mMoonInfo = raw[sTimingMoonInfo];
+                mTiming.mSunriseBegin = raw[ESM4::Fallout::kClimateTimingSunriseBeginOffset];
+                mTiming.mSunriseEnd = raw[ESM4::Fallout::kClimateTimingSunriseEndOffset];
+                mTiming.mSunsetBegin = raw[ESM4::Fallout::kClimateTimingSunsetBeginOffset];
+                mTiming.mSunsetEnd = raw[ESM4::Fallout::kClimateTimingSunsetEndOffset];
+                mTiming.mVolatility = raw[ESM4::Fallout::kClimateTimingVolatilityOffset];
+                mTiming.mMoonInfo = raw[ESM4::Fallout::kClimateTimingMoonInfoOffset];
                 mHasTiming = true;
                 break;
             }

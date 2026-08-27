@@ -9,6 +9,8 @@
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
 
+#include "falloutformat.hpp"
+
 namespace ESM4
 {
     class Reader;
@@ -16,11 +18,11 @@ namespace ESM4
     struct Climate
     {
         static constexpr std::size_t sWeatherTypeSerializedSize
-            = sizeof(ESM::FormId32) + sizeof(std::int32_t) + sizeof(ESM::FormId32);
-        static constexpr std::size_t sTimingSerializedSize = 6;
-        static constexpr std::uint8_t sMoonPhaseLengthMask = 0x3f;
-        static constexpr std::uint8_t sSecundaFlag = 0x40;
-        static constexpr std::uint8_t sMasserFlag = 0x80;
+            = Fallout::kClimateWeatherTypeSerializedSize;
+        static constexpr std::size_t sTimingSerializedSize = Fallout::kClimateTimingSerializedSize;
+        static constexpr std::uint8_t sMoonPhaseLengthMask = Fallout::kClimateMoonPhaseLengthMask;
+        static constexpr std::uint8_t sSecundaFlag = Fallout::kClimateSecundaFlag;
+        static constexpr std::uint8_t sMasserFlag = Fallout::kClimateMasserFlag;
 
         struct WeatherType
         {

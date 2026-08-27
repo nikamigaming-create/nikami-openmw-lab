@@ -122,6 +122,21 @@ namespace ESM4::Fallout
     inline constexpr std::size_t kWeatherDataLightningColorGreenOffset = 13;
     inline constexpr std::size_t kWeatherDataLightningColorBlueOffset = 14;
 
+    // Fallout CLMT weather-list and TNAM timing layouts. The masks are the
+    // authored bit assignments in the compact moon-information byte.
+    inline constexpr std::size_t kClimateWeatherTypeSerializedSize
+        = 2 * sizeof(std::uint32_t) + sizeof(std::int32_t);
+    inline constexpr std::size_t kClimateTimingSerializedSize = 6;
+    inline constexpr std::size_t kClimateTimingSunriseBeginOffset = 0;
+    inline constexpr std::size_t kClimateTimingSunriseEndOffset = 1;
+    inline constexpr std::size_t kClimateTimingSunsetBeginOffset = 2;
+    inline constexpr std::size_t kClimateTimingSunsetEndOffset = 3;
+    inline constexpr std::size_t kClimateTimingVolatilityOffset = 4;
+    inline constexpr std::size_t kClimateTimingMoonInfoOffset = 5;
+    inline constexpr std::uint8_t kClimateMoonPhaseLengthMask = 0x3f;
+    inline constexpr std::uint8_t kClimateSecundaFlag = 0x40;
+    inline constexpr std::uint8_t kClimateMasserFlag = 0x80;
+
     inline constexpr std::uint32_t kNoteObjectBoundsBytes = 12;
     inline constexpr std::uint32_t kNoteDataBytes = 1;
     inline constexpr std::uint8_t kNoteDataEmpty = 0;
