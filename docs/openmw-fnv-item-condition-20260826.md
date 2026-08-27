@@ -27,4 +27,3 @@ separate evidence-backed slices once ESM4 actor/container ownership is ready.
 `apps/openmw_tests/mwworld/testcontainerstoreesm4.cpp` constructs typed ESM4
 weapon, armor, and miscellaneous records and verifies the class contract. The
 full OpenMW CI matrix remains authoritative for compilation and test execution.
-
