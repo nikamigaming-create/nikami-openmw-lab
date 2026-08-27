@@ -57,6 +57,7 @@
 #include <components/esm4/loadfurn.hpp>
 #include <components/esm4/loadimod.hpp>
 #include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
 #include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadmstt.hpp>
