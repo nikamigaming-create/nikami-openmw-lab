@@ -4,6 +4,9 @@ DEPS_DIR="/tmp"
 
 source ./CI/macos/deps_versions.sh
 
+# Hosted macOS images can retain a stale untrusted tap. Remove it before
+# Homebrew updates so dependency setup is deterministic across runner images.
+brew untap aws/tap >/dev/null 2>&1 || true
 brew tap --repair
 brew update --quiet
 
