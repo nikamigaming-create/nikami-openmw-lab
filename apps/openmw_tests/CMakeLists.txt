@@ -20,6 +20,8 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testcontainerstoreesm4.cpp
     mwworld/testesm4specialinventorystore.cpp
 
+    mwmechanics/testfalloutammoeffects.cpp
+
     mwdialogue/testkeywordsearch.cpp
 
     mwgui/tooltips.cpp
