@@ -27,14 +27,25 @@
 #include "loadmisc.hpp"
 
 #include <stdexcept>
+#include <utility>
 
 #include "reader.hpp"
 //#include "writer.hpp"
 
 void ESM4::MiscItem::load(ESM4::Reader& reader)
 {
-    mId = reader.getFormIdFromHeader();
-    mFlags = reader.hdr().record.flags;
+    MiscItem value;
+    value.mOriginalRecordType = reader.hdr().record.typeId;
+    const bool ordinaryMisc = value.mOriginalRecordType == ESM4::REC_MISC;
+    const bool casinoChip = value.mOriginalRecordType == ESM4::REC_CHIP;
+    const bool caravanCard = value.mOriginalRecordType == ESM4::REC_CCRD;
+    const bool caravanMoney = value.mOriginalRecordType == ESM4::REC_CMNY;
+    if (!ordinaryMisc && !casinoChip && !caravanCard && !caravanMoney)
+        throw std::runtime_error("ESM4::MiscItem::load - unsupported record type "
+            + ESM::printName(value.mOriginalRecordType));
+
+    value.mId = reader.getFormIdFromHeader();
+    value.mFlags = reader.hdr().record.flags;
 
     while (reader.getSubRecordHeader())
     {
@@ -42,34 +53,57 @@ void ESM4::MiscItem::load(ESM4::Reader& reader)
         switch (subHdr.typeId)
         {
             case ESM::fourCC("EDID"):
-                reader.getZString(mEditorId);
+                reader.getZString(value.mEditorId);
                 break;
             case ESM::fourCC("FULL"):
-                reader.getLocalizedString(mFullName);
+                reader.getLocalizedString(value.mFullName);
                 break;
             case ESM::fourCC("MODL"):
-                reader.getZString(mModel);
+                reader.getZString(value.mModel);
                 break;
             case ESM::fourCC("ICON"):
-                reader.getZString(mIcon);
+                reader.getZString(value.mIcon);
                 break;
             case ESM::fourCC("MICO"):
-                reader.getZString(mMiniIcon);
+                reader.getZString(value.mMiniIcon);
                 break; // FO3
             case ESM::fourCC("SCRI"):
-                reader.getFormId(mScriptId);
+                reader.getFormId(value.mScriptId);
                 break;
             case ESM::fourCC("DATA"):
-                reader.get(mData);
+                if (ordinaryMisc)
+                    reader.get(value.mData);
+                else
+                    reader.get(value.mData.value);
                 break;
             case ESM::fourCC("MODB"):
-                reader.get(mBoundRadius);
+                reader.get(value.mBoundRadius);
                 break;
             case ESM::fourCC("YNAM"):
-                reader.getFormId(mPickUpSound);
+                reader.getFormId(value.mPickUpSound);
                 break;
             case ESM::fourCC("ZNAM"):
-                reader.getFormId(mDropSound);
+                reader.getFormId(value.mDropSound);
+                break;
+            case ESM::fourCC("TX00"):
+                if (!caravanCard)
+                    throw std::runtime_error("ESM4::MiscItem::load - TX00 outside CCRD");
+                reader.getZString(value.mCardFaceTexture);
+                break;
+            case ESM::fourCC("TX01"):
+                if (!caravanCard)
+                    throw std::runtime_error("ESM4::MiscItem::load - TX01 outside CCRD");
+                reader.getZString(value.mCardBackTexture);
+                break;
+            case ESM::fourCC("INTV"):
+                if (!caravanCard)
+                    throw std::runtime_error("ESM4::MiscItem::load - INTV outside CCRD");
+                if (value.mCardSuit == 0)
+                    reader.get(value.mCardSuit);
+                else if (value.mCardRank == 0)
+                    reader.get(value.mCardRank);
+                else
+                    throw std::runtime_error("ESM4::MiscItem::load - too many CCRD INTV fields");
                 break;
             case ESM::fourCC("MODT"): // Model data
             case ESM::fourCC("MODC"):
@@ -99,6 +133,8 @@ void ESM4::MiscItem::load(ESM4::Reader& reader)
                 throw std::runtime_error("ESM4::MISC::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }
+
+    *this = std::move(value);
 }
 
 // void ESM4::MiscItem::save(ESM4::Writer& writer) const

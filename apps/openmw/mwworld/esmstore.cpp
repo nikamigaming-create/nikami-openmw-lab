@@ -308,7 +308,10 @@ namespace MWWorld
             {
                 if constexpr (ESM::isESM4Rec(T::sRecordId))
                 {
-                    if (T::sRecordId == esm4RecName)
+                    const bool falloutMiscAlias = std::is_same_v<T, ESM4::MiscItem>
+                        && (recordType == ESM4::REC_CHIP || recordType == ESM4::REC_CCRD
+                            || recordType == ESM4::REC_CMNY);
+                    if (T::sRecordId == esm4RecName || falloutMiscAlias)
                     {
                         reader.getRecordData();
                         T value;
@@ -324,7 +327,8 @@ namespace MWWorld
         static bool readRecord(ESM4::Reader& reader, ESMStore& store)
         {
             const auto recordType = static_cast<ESM4::RecordTypes>(reader.hdr().record.typeId);
-            if ((recordType == ESM4::REC_FACT || recordType == ESM4::REC_NOTE || recordType == ESM4::REC_RCCT
+            if ((recordType == ESM4::REC_CHIP || recordType == ESM4::REC_CCRD || recordType == ESM4::REC_CMNY
+                    || recordType == ESM4::REC_FACT || recordType == ESM4::REC_NOTE || recordType == ESM4::REC_RCCT
                     || recordType == ESM4::REC_RCPE)
                 && store.mESM4Game != ESM4Game::FalloutNewVegas)
                 return false;

@@ -34,6 +34,8 @@
 #include <components/esm/formid.hpp>
 #include <components/esm/path.hpp>
 
+#include "common.hpp"
+
 namespace ESM4
 {
     class Reader;
@@ -49,8 +51,12 @@ namespace ESM4
         };
 #pragma pack(pop)
 
-        ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
+
+        // FNV's CHIP, CCRD and CMNY records share the native misc-item store.
+        // Preserve the authored tag so later systems can distinguish them.
+        std::uint32_t mOriginalRecordType = ESM4::REC_MISC;
 
         std::string mEditorId;
         std::string mFullName;
@@ -58,13 +64,17 @@ namespace ESM4
         std::string mIcon; // inventory
         std::string mMiniIcon; // inventory
 
-        ESM::FormId mPickUpSound;
-        ESM::FormId mDropSound;
+        ESM::FormId mPickUpSound{};
+        ESM::FormId mDropSound{};
 
-        float mBoundRadius;
-        ESM::FormId mScriptId;
+        float mBoundRadius = 0.f;
+        ESM::FormId mScriptId{};
 
-        Data mData;
+        Data mData{ 0, 0.f };
+        std::string mCardFaceTexture;
+        std::string mCardBackTexture;
+        std::uint32_t mCardSuit = 0;
+        std::uint32_t mCardRank = 0;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;
