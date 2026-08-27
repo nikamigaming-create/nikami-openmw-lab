@@ -120,8 +120,8 @@ namespace MWWorld
             EXPECT_EQ(recordTypes.size(), 11u);
             EXPECT_EQ(totalCount, 66);
             EXPECT_FLOAT_EQ(store.getWeight(), 506.f);
-            EXPECT_FALSE(store.search(ESM::RefId::formIdRefId(ESM::FormId::fromUint32(kAmmunitionId))).isEmpty());
-            EXPECT_FALSE(store.search(ESM::RefId::formIdRefId(ESM::FormId::fromUint32(kKeyId))).isEmpty());
+            EXPECT_EQ(store.count(ESM::RefId::formIdRefId(ESM::FormId::fromUint32(kAmmunitionId))), 1);
+            EXPECT_EQ(store.count(ESM::RefId::formIdRefId(ESM::FormId::fromUint32(kKeyId))), 10);
         }
 
         TEST(ESM4ContainerStoreTest, authoredWeaponAndArmorHealthUsesNativeClassContract)
