@@ -128,7 +128,7 @@ namespace MWClass
                     std::min(health, static_cast<std::uint32_t>(std::numeric_limits<int>::max())));
             }
             else
-                return ESM4Base<Record>::getItemMaxHealth(ptr);
+                return MWWorld::Class::getItemMaxHealth(ptr);
         }
 
         std::string_view getName(const MWWorld::ConstPtr& ptr) const override { return {}; }
