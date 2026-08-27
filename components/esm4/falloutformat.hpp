@@ -102,6 +102,26 @@ namespace ESM4::Fallout
     inline constexpr std::uint32_t kTargetConditionTes5Bytes = 36;
     inline constexpr std::uint32_t kTargetConditionTes5TailBytes = 4;
 
+    // Fallout WTHR DATA is a byte-packed fifteen-channel payload. Keep the
+    // field offsets here with the other authored record-layout facts so the
+    // loader cannot drift from the reviewed on-disk schema.
+    inline constexpr std::size_t kWeatherDataSerializedSize = 15;
+    inline constexpr std::size_t kWeatherDataWindSpeedOffset = 0;
+    inline constexpr std::size_t kWeatherDataLowerCloudSpeedOffset = 1;
+    inline constexpr std::size_t kWeatherDataUpperCloudSpeedOffset = 2;
+    inline constexpr std::size_t kWeatherDataTransitionDeltaOffset = 3;
+    inline constexpr std::size_t kWeatherDataSunGlareOffset = 4;
+    inline constexpr std::size_t kWeatherDataSunDamageOffset = 5;
+    inline constexpr std::size_t kWeatherDataPrecipitationBeginFadeInOffset = 6;
+    inline constexpr std::size_t kWeatherDataPrecipitationEndFadeOutOffset = 7;
+    inline constexpr std::size_t kWeatherDataLightningBeginFadeInOffset = 8;
+    inline constexpr std::size_t kWeatherDataLightningEndFadeOutOffset = 9;
+    inline constexpr std::size_t kWeatherDataLightningFrequencyOffset = 10;
+    inline constexpr std::size_t kWeatherDataClassificationOffset = 11;
+    inline constexpr std::size_t kWeatherDataLightningColorRedOffset = 12;
+    inline constexpr std::size_t kWeatherDataLightningColorGreenOffset = 13;
+    inline constexpr std::size_t kWeatherDataLightningColorBlueOffset = 14;
+
     inline constexpr std::uint32_t kNoteObjectBoundsBytes = 12;
     inline constexpr std::uint32_t kNoteDataBytes = 1;
     inline constexpr std::uint8_t kNoteDataEmpty = 0;

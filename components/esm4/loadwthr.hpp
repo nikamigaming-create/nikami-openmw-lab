@@ -10,6 +10,8 @@
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
 
+#include "falloutformat.hpp"
+
 namespace ESM4
 {
     class Reader;
@@ -25,7 +27,7 @@ namespace ESM4
         static constexpr std::size_t sUnusedImageSpaceDataSize = 304;
         static constexpr std::size_t sUnusedImageSpaceBytes = sUnusedImageSpaceDataSize;
         // DATA serializes the twelve scalar channels and lightning RGB; Color::unused is in-memory padding.
-        static constexpr std::size_t sDataSerializedSize = 15;
+        static constexpr std::size_t sDataSerializedSize = Fallout::kWeatherDataSerializedSize;
 
         enum Time : std::size_t
         {

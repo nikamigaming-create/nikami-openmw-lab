@@ -6,6 +6,7 @@
 
 #include <components/esm/fourcc.hpp>
 
+#include "falloutformat.hpp"
 #include "reader.hpp"
 
 namespace
@@ -13,22 +14,6 @@ namespace
     // SNAM stores a compact ESM4 FormID, not the in-memory adjusted FormId pair.
     constexpr std::size_t sSoundDataSize = sizeof(ESM::FormId32) + sizeof(std::uint32_t);
     constexpr std::uint32_t sImageSpaceIndexMask = 0xffu;
-
-    constexpr std::size_t sDataWindSpeed = 0;
-    constexpr std::size_t sDataLowerCloudSpeed = 1;
-    constexpr std::size_t sDataUpperCloudSpeed = 2;
-    constexpr std::size_t sDataTransitionDelta = 3;
-    constexpr std::size_t sDataSunGlare = 4;
-    constexpr std::size_t sDataSunDamage = 5;
-    constexpr std::size_t sDataPrecipitationBeginFadeIn = 6;
-    constexpr std::size_t sDataPrecipitationEndFadeOut = 7;
-    constexpr std::size_t sDataLightningBeginFadeIn = 8;
-    constexpr std::size_t sDataLightningEndFadeOut = 9;
-    constexpr std::size_t sDataLightningFrequency = 10;
-    constexpr std::size_t sDataClassification = 11;
-    constexpr std::size_t sDataLightningColorRed = 12;
-    constexpr std::size_t sDataLightningColorGreen = 13;
-    constexpr std::size_t sDataLightningColorBlue = 14;
 
     constexpr std::uint32_t sEditorId = ESM::fourCC("EDID");
     constexpr std::uint32_t sSunriseImageSpace = ESM::fourCC("\0IAD");
@@ -96,22 +81,24 @@ namespace
 
     void readData(ESM4::Reader& reader, ESM4::Weather::Data& output)
     {
-        std::array<std::uint8_t, ESM4::Weather::sDataSerializedSize> raw{};
+        std::array<std::uint8_t, ESM4::Fallout::kWeatherDataSerializedSize> raw{};
         reader.get(raw.data(), raw.size());
-        output.windSpeed = raw[sDataWindSpeed];
-        output.lowerCloudSpeed = raw[sDataLowerCloudSpeed];
-        output.upperCloudSpeed = raw[sDataUpperCloudSpeed];
-        output.transitionDelta = raw[sDataTransitionDelta];
-        output.sunGlare = raw[sDataSunGlare];
-        output.sunDamage = raw[sDataSunDamage];
-        output.precipitationBeginFadeIn = raw[sDataPrecipitationBeginFadeIn];
-        output.precipitationEndFadeOut = raw[sDataPrecipitationEndFadeOut];
-        output.lightningBeginFadeIn = raw[sDataLightningBeginFadeIn];
-        output.lightningEndFadeOut = raw[sDataLightningEndFadeOut];
-        output.lightningFrequency = raw[sDataLightningFrequency];
-        output.classification = raw[sDataClassification];
+        output.windSpeed = raw[ESM4::Fallout::kWeatherDataWindSpeedOffset];
+        output.lowerCloudSpeed = raw[ESM4::Fallout::kWeatherDataLowerCloudSpeedOffset];
+        output.upperCloudSpeed = raw[ESM4::Fallout::kWeatherDataUpperCloudSpeedOffset];
+        output.transitionDelta = raw[ESM4::Fallout::kWeatherDataTransitionDeltaOffset];
+        output.sunGlare = raw[ESM4::Fallout::kWeatherDataSunGlareOffset];
+        output.sunDamage = raw[ESM4::Fallout::kWeatherDataSunDamageOffset];
+        output.precipitationBeginFadeIn = raw[ESM4::Fallout::kWeatherDataPrecipitationBeginFadeInOffset];
+        output.precipitationEndFadeOut = raw[ESM4::Fallout::kWeatherDataPrecipitationEndFadeOutOffset];
+        output.lightningBeginFadeIn = raw[ESM4::Fallout::kWeatherDataLightningBeginFadeInOffset];
+        output.lightningEndFadeOut = raw[ESM4::Fallout::kWeatherDataLightningEndFadeOutOffset];
+        output.lightningFrequency = raw[ESM4::Fallout::kWeatherDataLightningFrequencyOffset];
+        output.classification = raw[ESM4::Fallout::kWeatherDataClassificationOffset];
         output.lightningColor
-            = { raw[sDataLightningColorRed], raw[sDataLightningColorGreen], raw[sDataLightningColorBlue], 0 };
+            = { raw[ESM4::Fallout::kWeatherDataLightningColorRedOffset],
+                raw[ESM4::Fallout::kWeatherDataLightningColorGreenOffset],
+                raw[ESM4::Fallout::kWeatherDataLightningColorBlueOffset], 0 };
     }
 }
 
