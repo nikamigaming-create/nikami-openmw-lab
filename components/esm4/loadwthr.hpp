@@ -19,12 +19,12 @@ namespace ESM4
     struct Weather
     {
         // Fallout weather stores four legacy samples plus high-noon and midnight.
-        static constexpr std::size_t sLegacyTimeCount = 4;
-        static constexpr std::size_t sTimeCount = 6;
-        static constexpr std::size_t sColorTypeCount = 10;
-        static constexpr std::size_t sCloudLayerCount = 4;
-        static constexpr std::size_t sFogDistanceCount = sTimeCount;
-        static constexpr std::size_t sUnusedImageSpaceDataSize = 304;
+        static constexpr std::size_t sLegacyTimeCount = Fallout::kWeatherLegacyTimeCount;
+        static constexpr std::size_t sTimeCount = Fallout::kWeatherTimeCount;
+        static constexpr std::size_t sColorTypeCount = Fallout::kWeatherColorTypeCount;
+        static constexpr std::size_t sCloudLayerCount = Fallout::kWeatherCloudLayerCount;
+        static constexpr std::size_t sFogDistanceCount = Fallout::kWeatherFogDistanceCount;
+        static constexpr std::size_t sUnusedImageSpaceDataSize = Fallout::kWeatherUnusedImageSpaceDataBytes;
         static constexpr std::size_t sUnusedImageSpaceBytes = sUnusedImageSpaceDataSize;
         // DATA serializes the twelve scalar channels and lightning RGB; Color::unused is in-memory padding.
         static constexpr std::size_t sDataSerializedSize = Fallout::kWeatherDataSerializedSize;

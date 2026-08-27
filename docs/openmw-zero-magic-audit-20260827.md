@@ -15,10 +15,10 @@ upstream OpenMW numerics. A literal is acceptable only when it is one of:
 LIP layout facts used by the public slices. This includes record widths,
 version gates, FormID widths, masks, LIP container flags/header sizes,
 authored LIP target count/frame rate, CTDA target-condition variants, Fallout
-WTHR DATA payload offsets, CLMT weather-list/timing fields, and MGEF/SPEL
-actor-effect payload widths and offsets. The LIP, CTDA, WTHR, CLMT, MGEF, and
-SPEL decoders now consume those shared constants instead of maintaining second
-local tables.
+WTHR DATA payload offsets and array counts, CLMT weather-list/timing fields,
+and MGEF/SPEL actor-effect payload widths and offsets. The LIP, CTDA, WTHR,
+CLMT, MGEF, and SPEL decoders now consume those shared constants instead of
+maintaining second local tables.
 
 Runtime policy is injected at its boundary: collision behavior uses
 `NifBullet::FalloutCollisionFilterConfig`; crafting station/category mapping

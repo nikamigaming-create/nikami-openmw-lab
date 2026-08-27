@@ -121,6 +121,12 @@ namespace ESM4::Fallout
     inline constexpr std::size_t kWeatherDataLightningColorRedOffset = 12;
     inline constexpr std::size_t kWeatherDataLightningColorGreenOffset = 13;
     inline constexpr std::size_t kWeatherDataLightningColorBlueOffset = 14;
+    inline constexpr std::size_t kWeatherLegacyTimeCount = 4;
+    inline constexpr std::size_t kWeatherTimeCount = 6;
+    inline constexpr std::size_t kWeatherColorTypeCount = 10;
+    inline constexpr std::size_t kWeatherCloudLayerCount = 4;
+    inline constexpr std::size_t kWeatherFogDistanceCount = kWeatherTimeCount;
+    inline constexpr std::size_t kWeatherUnusedImageSpaceDataBytes = 304;
 
     // Fallout CLMT weather-list and TNAM timing layouts. The masks are the
     // authored bit assignments in the compact moon-information byte.
